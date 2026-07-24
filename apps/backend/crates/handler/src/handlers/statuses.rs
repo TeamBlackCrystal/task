@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use axum_valid::Valid;
-use sea_orm::sea_query::{Expr, Func, LockType};
+use sea_orm::sea_query::{CaseStatement, Expr, Func, LockType};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, TransactionTrait, prelude::Uuid,
@@ -285,9 +285,19 @@ pub async fn reorder_statuses(
         .await?;
     require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
+    let txn = state.db.begin().await?;
+    // Same lock order as create_status / update_status: take the stable project
+    // row first, then the whole status set, so concurrent status writes for this
+    // project serialize instead of racing on an unlocked read.
+    projects::Entity::find_by_id(project_id)
+        .lock(LockType::Update)
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let existing = project_statuses::Entity::find()
         .filter(project_statuses::Column::ProjectId.eq(project_id))
-        .all(&state.db)
+        .lock(LockType::Update)
+        .all(&txn)
         .await?;
     if payload.ids.len() != existing.len() {
         return Err(AppError::BadRequest);
@@ -299,24 +309,36 @@ pub async fn reorder_statuses(
         return Err(AppError::BadRequest);
     }
 
-    let txn = state.db.begin().await?;
+    // Reassign every position in a single UPDATE via a CASE expression instead of
+    // the previous per-id find + update loop (N+1). The payload is a bijection
+    // onto the locked status set, and (project_id, position) has no unique
+    // constraint, so reassigning the whole set at once cannot transiently collide.
+    // The final `finally` keeps any unmatched row's current position, guarding the
+    // NOT NULL column even though the bijection means every row is matched.
+    let mut position_case = CaseStatement::new();
     for (pos, sid) in payload.ids.iter().enumerate() {
-        let status = project_statuses::Entity::find_by_id(*sid)
-            .filter(project_statuses::Column::ProjectId.eq(project_id))
-            .one(&txn)
-            .await?
-            .ok_or(AppError::NotFound)?;
-        let mut active: project_statuses::ActiveModel = status.into();
-        active.position = Set(pos as i16);
-        active.update(&txn).await?;
+        position_case = position_case.case(
+            project_statuses::Column::Id.eq(*sid),
+            Expr::value(pos as i16),
+        );
     }
-    txn.commit().await?;
+    project_statuses::Entity::update_many()
+        .col_expr(
+            project_statuses::Column::Position,
+            position_case
+                .finally(Expr::col(project_statuses::Column::Position))
+                .into(),
+        )
+        .filter(project_statuses::Column::ProjectId.eq(project_id))
+        .exec(&txn)
+        .await?;
 
     let updated = project_statuses::Entity::find()
         .filter(project_statuses::Column::ProjectId.eq(project_id))
         .order_by_asc(project_statuses::Column::Position)
-        .all(&state.db)
+        .all(&txn)
         .await?;
+    txn.commit().await?;
     Ok(Json(updated.into_iter().map(Into::into).collect()))
 }
 
