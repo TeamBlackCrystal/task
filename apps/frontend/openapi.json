@@ -2444,6 +2444,25 @@
         }
       }
     },
+    "/v1/auth/oauth/providers": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "有効な OAuth プロバイダー一覧",
+        "operationId": "list_providers",
+        "responses": {
+          "200": {
+            "description": "有効な OAuth プロバイダー一覧",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/oauth/{provider}": {
       "get": {
         "tags": ["Auth"],
@@ -2463,6 +2482,15 @@
             "name": "redirect_after",
             "in": "query",
             "description": "ログイン後のフロント相対パス",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error_redirect_after",
+            "in": "query",
+            "description": "プロバイダーエラー時の戻り先（OAuth ボタンのあるページ）",
             "required": false,
             "schema": {
               "type": "string"
@@ -19121,6 +19149,32 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OAuthConnectionItem"
+            }
+          }
+        }
+      },
+      "OAuthProviderItem": {
+        "type": "object",
+        "required": ["provider", "requires_instance_url"],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "プロバイダー slug（github | gitlab | gitlab_selfhosted | google | oidc）"
+          },
+          "requires_instance_url": {
+            "type": "boolean",
+            "description": "ログイン開始時に self-hosted インスタンス URL の入力が必要か（gitlab_selfhosted のみ true）"
+          }
+        }
+      },
+      "OAuthProvidersResponse": {
+        "type": "object",
+        "required": ["providers"],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OAuthProviderItem"
             }
           }
         }

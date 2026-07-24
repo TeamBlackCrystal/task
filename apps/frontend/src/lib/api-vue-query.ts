@@ -84,6 +84,14 @@ export function useMeQuery(options?: { enabled?: MaybeRefOrGetter<boolean> }) {
   });
 }
 
+/** 有効な OAuth ログインプロバイダー一覧（backend 起動時に固定されるため長めにキャッシュ）。 */
+export function useOAuthProvidersQuery() {
+  return apiClient.useQuery('get', '/v1/auth/oauth/providers', undefined, {
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
 export function useLoginMutation() {
   return apiClient.useMutation('post', '/v1/auth/login');
 }

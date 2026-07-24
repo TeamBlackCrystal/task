@@ -19,6 +19,9 @@ pub struct OAuthStatePayload {
     pub provider: String,
     pub code_verifier: String,
     pub redirect_after: String,
+    /// プロバイダーがエラーを返したときの戻り先。成功用 `redirect_after` とは別に保持し、
+    /// OAuth ボタンを描画するページ（signin/signup）へ戻してエラーを表示するために使う。
+    pub error_redirect_after: String,
     /// アカウント連携時のログイン済みユーザー ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_user_id: Option<Uuid>,

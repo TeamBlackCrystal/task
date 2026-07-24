@@ -196,6 +196,7 @@ impl IntoResponse for OAuthError {
     params(
         ("provider" = String, Path, description = "github | gitlab | gitlab_selfhosted | google | oidc"),
         ("redirect_after" = Option<String>, Query, description = "ログイン後のフロント相対パス"),
+        ("error_redirect_after" = Option<String>, Query, description = "プロバイダーエラー時の戻り先（OAuth ボタンのあるページ）"),
         ("instance_url" = Option<String>, Query, description = "GitLab self-hosted インスタンス URL")
     ),
     responses(
@@ -250,6 +251,16 @@ pub async fn oauth_start(
         OAuthError::SecurityViolation
     })?;
 
+    // プロバイダーがエラーを返したときの戻り先。未指定なら成功用にフォールバックする。
+    let raw_error_redirect = query
+        .error_redirect_after
+        .as_deref()
+        .unwrap_or(raw_redirect);
+    let error_redirect_after = sanitize_redirect_path(raw_error_redirect).map_err(|e| {
+        warn!("oauth error_redirect_after rejected: {e}");
+        OAuthError::SecurityViolation
+    })?;
+
     let link_user_id = optional_auth.0.map(|auth| auth.user_id);
 
     store_state(
@@ -259,6 +270,7 @@ pub async fn oauth_start(
             provider: provider.clone(),
             code_verifier: pkce.code_verifier,
             redirect_after,
+            error_redirect_after,
             link_user_id,
             instance_url: instance_url.clone(),
         },
@@ -319,12 +331,12 @@ pub async fn oauth_callback(
         session.remove(OAUTH_PENDING_STATE_KEY);
         session.remove(OAUTH_PENDING_PROVIDER_KEY);
 
-        let redirect_after = if let Some(state_param) = &query.state {
+        let error_redirect_after = if let Some(state_param) = &query.state {
             consume_state(&state.redis_client, state_param)
                 .await
                 .ok()
                 .flatten()
-                .map(|p| p.redirect_after)
+                .map(|p| p.error_redirect_after)
                 .unwrap_or_else(|| settings.default_redirect_path.clone())
         } else {
             settings.default_redirect_path.clone()
@@ -332,7 +344,7 @@ pub async fn oauth_callback(
 
         let frontend_redirect = build_frontend_oauth_error_redirect(
             &state.settings.email_verification_app_url,
-            &redirect_after,
+            &error_redirect_after,
             settings,
         )
         .map_err(|e| {
@@ -451,6 +463,39 @@ pub async fn oauth_callback(
     })?;
 
     Ok(Redirect::temporary(&frontend_redirect))
+}
+
+/// discovery で列挙する OAuth プロバイダー slug と、self-hosted インスタンス URL 入力の要否。
+const OAUTH_PROVIDER_SLUGS: [(&str, bool); 5] = [
+    ("github", false),
+    ("gitlab", false),
+    ("gitlab_selfhosted", true),
+    ("google", false),
+    ("oidc", false),
+];
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/oauth/providers",
+    tag = "Auth",
+    summary = "有効な OAuth プロバイダー一覧",
+    responses(
+        (status = 200, description = "有効な OAuth プロバイダー一覧", body = OAuthProvidersResponse),
+    )
+)]
+pub async fn list_providers(State(state): State<AppState>) -> Json<OAuthProvidersResponse> {
+    let settings = &state.oauth_settings;
+    let providers = OAUTH_PROVIDER_SLUGS
+        .iter()
+        .filter(|(slug, _)| settings.is_provider_configured(slug))
+        .map(|(slug, requires_instance_url)| OAuthProviderItem {
+            provider: (*slug).to_string(),
+            requires_instance_url: *requires_instance_url,
+        })
+        .collect();
+
+    Json(OAuthProvidersResponse { providers })
 }
 
 #[axum::debug_handler]

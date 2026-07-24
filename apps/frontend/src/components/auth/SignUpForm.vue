@@ -3,6 +3,7 @@ import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
 import { ref } from 'vue';
 import EmailNotVerified from '@/components/auth/EmailNotVerified.vue';
+import OAuthButtons from '@/components/auth/OAuthButtons.vue';
 import PasswordInput from '@/components/auth/PasswordInput.vue';
 import PasswordStrengthBar from '@/components/auth/PasswordStrengthBar.vue';
 import HydrationSafeForm from '@/components/HydrationSafeForm.vue';
@@ -180,6 +181,7 @@ const form = useForm({
                 </Field>
               </template>
             </form.Subscribe>
+            <OAuthButtons redirect-after="/" error-redirect-after="/signup" />
             <FieldDescription class="text-center">
               すでにアカウントをお持ちですか？
               <a href="/signin" class="underline underline-offset-4">サインイン</a>

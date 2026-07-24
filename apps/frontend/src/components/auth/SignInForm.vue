@@ -4,6 +4,7 @@ import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
 import { ref } from 'vue';
 import EmailNotVerified from '@/components/auth/EmailNotVerified.vue';
+import OAuthButtons from '@/components/auth/OAuthButtons.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
@@ -153,6 +154,7 @@ const form = useForm({
                 </Field>
               </template>
             </form.Subscribe>
+            <OAuthButtons redirect-after="/" error-redirect-after="/signin" />
             <FieldDescription class="text-center">
               アカウントをお持ちでない方は
               <a href="/signup" class="underline underline-offset-4">新規登録</a>
