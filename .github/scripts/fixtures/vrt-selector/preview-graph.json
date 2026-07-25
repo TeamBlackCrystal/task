@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "apps/frontend/src/components/auth/PasswordInput.vue": {
+      "reasons": []
+    },
+    "apps/frontend/src/components/auth/SignInForm.vue": {
+      "reasons": ["apps/frontend/src/components/auth/PasswordInput.vue"]
+    },
+    "apps/frontend/src/components/auth/SignUpForm.vue": {
+      "reasons": ["apps/frontend/src/components/auth/PasswordInput.vue"]
+    },
+    "./stories/auth/PasswordInput.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/PasswordInput.vue"]
+    },
+    "./stories/auth/SignInForm.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/SignInForm.vue"]
+    },
+    "./stories/auth/SignUpForm.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/SignUpForm.vue"]
+    },
+    "./stories/pages/ResetPassword.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/PasswordInput.vue"]
+    },
+    "./stories/pages/SignIn.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/SignInForm.vue"]
+    },
+    "./stories/pages/SignUp.stories.ts": {
+      "reasons": ["apps/frontend/src/components/auth/SignUpForm.vue"]
+    },
+    "apps/frontend/src/components/tasks/TaskCard.vue": {
+      "reasons": []
+    },
+    "./stories/tasks/TaskCard.stories.ts": {
+      "reasons": ["apps/frontend/src/components/tasks/TaskCard.vue"]
+    }
+  }
+}

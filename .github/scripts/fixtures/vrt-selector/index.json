@@ -1,0 +1,95 @@
+{
+  "v": 5,
+  "entries": {
+    "auth-passwordinput--docs": {
+      "id": "auth-passwordinput--docs",
+      "type": "docs",
+      "importPath": "./stories/auth/PasswordInput.stories.ts"
+    },
+    "auth-passwordinput--password-hidden": {
+      "id": "auth-passwordinput--password-hidden",
+      "type": "story",
+      "importPath": "./stories/auth/PasswordInput.stories.ts"
+    },
+    "auth-passwordinput--password-visible": {
+      "id": "auth-passwordinput--password-visible",
+      "type": "story",
+      "importPath": "./stories/auth/PasswordInput.stories.ts"
+    },
+    "auth-signinform--default": {
+      "id": "auth-signinform--default",
+      "type": "story",
+      "importPath": "./stories/auth/SignInForm.stories.ts"
+    },
+    "auth-signupform--default": {
+      "id": "auth-signupform--default",
+      "type": "story",
+      "importPath": "./stories/auth/SignUpForm.stories.ts"
+    },
+    "pages-resetpassword--request-form": {
+      "id": "pages-resetpassword--request-form",
+      "type": "story",
+      "importPath": "./stories/pages/ResetPassword.stories.ts"
+    },
+    "pages-resetpassword--request-success": {
+      "id": "pages-resetpassword--request-success",
+      "type": "story",
+      "importPath": "./stories/pages/ResetPassword.stories.ts"
+    },
+    "pages-resetpassword--complete-form": {
+      "id": "pages-resetpassword--complete-form",
+      "type": "story",
+      "importPath": "./stories/pages/ResetPassword.stories.ts"
+    },
+    "pages-resetpassword--invalid-token": {
+      "id": "pages-resetpassword--invalid-token",
+      "type": "story",
+      "importPath": "./stories/pages/ResetPassword.stories.ts"
+    },
+    "pages-signin--default": {
+      "id": "pages-signin--default",
+      "type": "story",
+      "importPath": "./stories/pages/SignIn.stories.ts"
+    },
+    "pages-signin--login-error": {
+      "id": "pages-signin--login-error",
+      "type": "story",
+      "importPath": "./stories/pages/SignIn.stories.ts"
+    },
+    "pages-signin--login-success": {
+      "id": "pages-signin--login-success",
+      "type": "story",
+      "importPath": "./stories/pages/SignIn.stories.ts"
+    },
+    "pages-signup--default": {
+      "id": "pages-signup--default",
+      "type": "story",
+      "importPath": "./stories/pages/SignUp.stories.ts"
+    },
+    "pages-signup--register-error": {
+      "id": "pages-signup--register-error",
+      "type": "story",
+      "importPath": "./stories/pages/SignUp.stories.ts"
+    },
+    "pages-signup--register-submitting": {
+      "id": "pages-signup--register-submitting",
+      "type": "story",
+      "importPath": "./stories/pages/SignUp.stories.ts"
+    },
+    "pages-signup--register-success": {
+      "id": "pages-signup--register-success",
+      "type": "story",
+      "importPath": "./stories/pages/SignUp.stories.ts"
+    },
+    "pages-signup--register-success-201": {
+      "id": "pages-signup--register-success-201",
+      "type": "story",
+      "importPath": "./stories/pages/SignUp.stories.ts"
+    },
+    "tasks-taskcard--default": {
+      "id": "tasks-taskcard--default",
+      "type": "story",
+      "importPath": "./stories/tasks/TaskCard.stories.ts"
+    }
+  }
+}
