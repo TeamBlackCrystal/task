@@ -4,16 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - apps/frontend/**
-      - .github/workflows/argos.yml
 
 permissions:
   contents: read
 
 concurrency:
   group: argos-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   argos:
@@ -44,10 +41,17 @@ jobs:
       - name: Build Storybook
         run: pnpm build-storybook
 
+      - name: Select visual test scope
+        id: selector
+        working-directory: .
+        run: node .github/scripts/argos-vrt-adapter.mts
+
       - name: Install Playwright browsers
+        if: steps.selector.outputs.mode != 'NONE'
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Serve Storybook and capture every story
+        if: steps.selector.outputs.mode != 'NONE'
         run: |
           pnpm exec http-server storybook-static --port 6006 --silent &
           for attempt in {1..30}; do
@@ -58,10 +62,33 @@ jobs:
             fi
             sleep 1
           done
-          pnpm test-storybook
+          pnpm test-storybook --json --outputFile ../../.vrt/test-results.json
         env:
           ARGOS_ENABLED: "true"
+          VRT_EVIDENCE_DIR: ../../.vrt
+
+      - name: Verify exact capture manifest
+        id: gate
+        if: always() && steps.selector.outcome == 'success'
+        working-directory: .
+        run: node .github/scripts/argos-vrt-gate.mts
 
       - name: Upload screenshots to Argos
-        if: env.ARGOS_TOKEN != ''
-        run: pnpm exec argos upload screenshots
+        if: >-
+          steps.gate.outcome == 'success' &&
+          steps.selector.outputs.mode != 'NONE' &&
+          env.ARGOS_TOKEN != ''
+        run: |
+          upload_args=()
+          if [ "${{ steps.selector.outputs.mode }}" = "PARTIAL" ]; then
+            upload_args+=(--subset)
+          fi
+          pnpm exec argos upload screenshots "${upload_args[@]}"
+
+      - name: Upload VRT selection evidence
+        if: always() && steps.selector.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vrt-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .vrt/
+          if-no-files-found: error

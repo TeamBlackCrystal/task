@@ -6,3 +6,4 @@ docs/retype.manifest
 
 .worktrees/
 node_modules
+.vrt/
