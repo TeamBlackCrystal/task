@@ -726,7 +726,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "auth-core"
 version = "0.1.0"
-source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
  "aes-gcm 0.11.0",
  "anyhow",
@@ -748,7 +748,7 @@ dependencies = [
 [[package]]
 name = "auth-core-github"
 version = "0.1.0"
-source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -760,7 +760,7 @@ dependencies = [
 [[package]]
 name = "auth-core-gitlab"
 version = "0.1.0"
-source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2139,7 +2139,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 [[package]]
 name = "forge-core"
 version = "0.1.0"
-source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2148,7 +2148,7 @@ dependencies = [
 [[package]]
 name = "forge-github"
 version = "0.1.0"
-source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
  "anyhow",
  "async-trait",

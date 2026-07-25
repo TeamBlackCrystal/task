@@ -29,7 +29,7 @@ entity → common → payload → service → job → handler → backend(bin)
 - 新しい DTO は payload、ロジックは service へ。ハンドラー間で共有したい処理も service に降ろす
 - `backend::handlers` 等の再エクスポートは統合テスト互換のためのもの。新規コードは各クレートを直接 use する
 
-#### 外部クレート（`github.com/yupix/auth-core`、git 依存で `rev` 固定）
+#### 外部クレート（`github.com/koyori-app/auth-core`、git 依存で `rev` 固定）
 
 OAuth 認証と Git ホスティング連携の土台。VRT ツールなど他プロジェクトと共有するため
 別リポジトリに置いている。
