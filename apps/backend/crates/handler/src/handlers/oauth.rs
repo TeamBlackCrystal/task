@@ -19,21 +19,21 @@ use tracing::{debug, warn};
 use crate::error::{ServerError, internal_server_error};
 use crate::extractors::{AuthUser, CurrentUser, OptionalAuthUser};
 use crate::openapi::OAuthErrors;
+use auth_core::client::{TokenResponse, exchange_code};
+use auth_core::crypto::encrypt_token;
+use auth_core::pkce::{generate_pkce_pair, generate_state};
+use auth_core::provider::{ProviderUserInfo, build_authorize_url};
+use auth_core::state::{
+    build_frontend_oauth_error_redirect, build_frontend_redirect, sanitize_redirect_path,
+};
+use auth_core::url_guard::normalize_instance_url;
 use entity::{oauth_connections, users};
-use github_integration::oauth::client::{TokenResponse, exchange_code, fetch_user_info};
-use github_integration::oauth::crypto::encrypt_token;
-use github_integration::oauth::pkce::{generate_pkce_pair, generate_state};
-use github_integration::oauth::provider::{
-    ProviderUserInfo, build_authorize_url, get_credentials, normalize_instance_url,
-    resolve_endpoints,
-};
-use github_integration::oauth::state::{
-    OAuthStatePayload, build_frontend_oauth_error_redirect, build_frontend_redirect, consume_state,
-    sanitize_redirect_path, store_state,
-};
 use service::auth::{AuthError, create_password_hash};
 use service::db::{is_postgres_unique_violation, with_transaction};
 use service::email::normalize_email;
+use service::oauth::{
+    OAuthStatePayload, consume_state, get_credentials, resolve_provider, store_state,
+};
 use service::passkeys::count_user_passkeys;
 
 use payload::oauth::*;
@@ -230,14 +230,12 @@ pub async fn oauth_start(
         _ => None,
     };
 
-    let endpoints = resolve_endpoints(
-        &provider,
-        settings,
-        instance_url.as_deref(),
-        &state.http_client,
-    )
-    .await
-    .map_err(OAuthError::Internal)?;
+    let provider_impl = resolve_provider(&provider, settings, instance_url.as_deref())
+        .map_err(OAuthError::Internal)?;
+    let endpoints = provider_impl
+        .endpoints(&state.http_client)
+        .await
+        .map_err(OAuthError::Internal)?;
     let credentials = get_credentials(&provider, settings).map_err(OAuthError::Internal)?;
 
     let pkce = generate_pkce_pair();
@@ -345,7 +343,6 @@ pub async fn oauth_callback(
         let frontend_redirect = build_frontend_oauth_error_redirect(
             &state.settings.email_verification_app_url,
             &error_redirect_after,
-            settings,
         )
         .map_err(|e| {
             warn!("oauth error redirect build failed: {e}");
@@ -384,7 +381,10 @@ pub async fn oauth_callback(
     }
 
     let instance_url = payload.instance_url.as_deref();
-    let endpoints = resolve_endpoints(&provider, settings, instance_url, &state.http_client)
+    let provider_impl =
+        resolve_provider(&provider, settings, instance_url).map_err(OAuthError::Internal)?;
+    let endpoints = provider_impl
+        .endpoints(&state.http_client)
         .await
         .map_err(OAuthError::Internal)?;
     let credentials = get_credentials(&provider, settings).map_err(OAuthError::Internal)?;
@@ -401,14 +401,10 @@ pub async fn oauth_callback(
     .await
     .map_err(OAuthError::Internal)?;
 
-    let provider_info = fetch_user_info(
-        &state.http_client,
-        &provider,
-        &endpoints,
-        &token.access_token,
-    )
-    .await
-    .map_err(OAuthError::Internal)?;
+    let provider_info = provider_impl
+        .fetch_user_info(&state.http_client, &endpoints, &token.access_token)
+        .await
+        .map_err(OAuthError::Internal)?;
 
     let db_provider = settings
         .db_provider_key(&provider)
@@ -455,7 +451,6 @@ pub async fn oauth_callback(
     let frontend_redirect = build_frontend_redirect(
         &state.settings.email_verification_app_url,
         &payload.redirect_after,
-        settings,
     )
     .map_err(|e| {
         warn!("oauth success redirect build failed: {e}");
@@ -1002,7 +997,7 @@ async fn classify_user_unique_violation(
 }
 
 fn resolve_disconnect_provider(
-    settings: &github_integration::oauth::OAuthSettings,
+    settings: &service::oauth::OAuthSettings,
     provider: &str,
 ) -> Result<String, OAuthError> {
     if provider == "oidc" {

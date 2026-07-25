@@ -12,14 +12,14 @@
 
 ```
 entity → common → payload → service → job → handler → backend(bin)
-                ↘ github-integration ↗（service が再エクスポート）
+                              ↑
+        auth-core / forge-* （外部リポジトリ。git 依存）
 ```
 
 | クレート | 置くもの |
 |---|---|
 | `entity` | SeaORM エンティティ（sea-orm-cli 生成物。手で整形しない） |
 | `common` | error / settings / db ヘルパー / 通知定数など最下層の横断コード |
-| `github-integration` | OAuth プロトコル層（client / pkce / state / crypto）・GitHub App API・トークン暗号化。**依存は common ＋外部クレートのみ**（entity / axum 非依存。他プロジェクトへ持ち出し可能に保つ） |
 | `payload` | リクエスト/レスポンス DTO。**依存は entity + common のみに閉じる** |
 | `service` | ビジネスロジック・横断サービス（旧 `src/utils`） |
 | `job` | apalis ジョブ。ワーカーは `AppState` ではなく `JobState` を受け取る |
@@ -28,6 +28,24 @@ entity → common → payload → service → job → handler → backend(bin)
 
 - 新しい DTO は payload、ロジックは service へ。ハンドラー間で共有したい処理も service に降ろす
 - `backend::handlers` 等の再エクスポートは統合テスト互換のためのもの。新規コードは各クレートを直接 use する
+
+#### 外部クレート（`github.com/yupix/auth-core`、git 依存で `rev` 固定）
+
+OAuth 認証と Git ホスティング連携の土台。VRT ツールなど他プロジェクトと共有するため
+別リポジトリに置いている。
+
+| クレート | 置くもの |
+|---|---|
+| `auth-core` | OAuth 2.0 / OIDC のプロトコル層（PKCE / state / トークン暗号化 / SSRF ガード / `OAuthProvider` trait） |
+| `auth-core-github` / `auth-core-gitlab` | 各ホストの OAuth ログインプロバイダー実装 |
+| `forge-core` | ホスト中立の連携抽象（`TokenProvider` trait / `Repository` 型） |
+| `forge-github` | GitHub App API クライアント。`Installation` 系の GitHub 固有語彙はこの中に閉じる |
+
+- **アプリ固有のものを向こうへ入れない。** テナント/プロジェクトに紐づく state、
+  「1 プロジェクト = 1 リポジトリ」前提のリポジトリ選定、環境変数の読み込みは
+  `service::oauth` / `service::github` に置く
+- 向こうを直したら `rev` を上げる必要がある。ワークスペースの `[workspace.dependencies]`
+  に 5 クレート分まとめてあるので、そこを書き換える
 
 ## 検証（backend、コミット前に必ず）
 

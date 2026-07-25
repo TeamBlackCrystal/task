@@ -6,13 +6,14 @@ use std::sync::Arc;
 use apalis_postgres::PgPool;
 use common::cache::redis::RedisConnection;
 use common::settings::Settings;
-use github_integration::oauth::OAuthSettings;
 use job::{
     AlreadyRegisteredEmailStorage, GithubWebhookStorage, PasswordResetEmailStorage,
     VerificationEmailStorage,
 };
 use sea_orm::DatabaseConnection;
-use service::{drive::DriveConfig, smtp::SmtpClient, storage::StorageBackend};
+use service::{
+    drive::DriveConfig, oauth::OAuthSettings, smtp::SmtpClient, storage::StorageBackend,
+};
 use webauthn_rs::prelude::Webauthn;
 
 // 旧 crate::error / crate::settings パス互換のための再公開。

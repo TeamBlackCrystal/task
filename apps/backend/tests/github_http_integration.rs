@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use backend::utils::github_oauth_state::{self, GithubOAuthStatePayload};
+use backend::utils::github::install_state::{self as github_oauth_state, GithubOAuthStatePayload};
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, projects, tenants};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};

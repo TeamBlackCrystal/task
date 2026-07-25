@@ -724,6 +724,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auth-core"
+version = "0.1.0"
+source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+dependencies = [
+ "aes-gcm 0.11.0",
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "hkdf 0.13.0",
+ "rand 0.10.2",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
+name = "auth-core-github"
+version = "0.1.0"
+source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "auth-core",
+ "reqwest 0.13.4",
+ "serde",
+]
+
+[[package]]
+name = "auth-core-gitlab"
+version = "0.1.0"
+source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "auth-core",
+ "reqwest 0.13.4",
+ "serde",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -883,6 +929,7 @@ dependencies = [
  "cookie",
  "dotenvy",
  "entity",
+ "forge-core",
  "handler",
  "hex",
  "hmac 0.13.0",
@@ -2090,6 +2137,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
+name = "forge-core"
+version = "0.1.0"
+source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+dependencies = [
+ "anyhow",
+ "async-trait",
+]
+
+[[package]]
+name = "forge-github"
+version = "0.1.0"
+source = "git+https://github.com/yupix/auth-core.git?rev=8558420684924d935a0ac47f8827c928d0117c2f#8558420684924d935a0ac47f8827c928d0117c2f"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "forge-core",
+ "jsonwebtoken",
+ "reqwest 0.13.4",
+ "serde",
+]
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2302,33 +2372,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
-name = "github-integration"
-version = "0.1.0"
-dependencies = [
- "aes-gcm 0.11.0",
- "anyhow",
- "argon2",
- "base64 0.22.1",
- "chrono",
- "common",
- "dotenvy",
- "hkdf 0.13.0",
- "jsonwebtoken",
- "rand 0.10.2",
- "redis",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2365,6 +2408,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apalis-postgres",
+ "auth-core",
  "axum",
  "axum-valid",
  "axum_session",
@@ -2374,8 +2418,8 @@ dependencies = [
  "chrono",
  "common",
  "entity",
+ "forge-github",
  "futures",
- "github-integration",
  "hex",
  "hmac 0.13.0",
  "job",
@@ -5584,6 +5628,9 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
+ "auth-core",
+ "auth-core-github",
+ "auth-core-gitlab",
  "axum",
  "axum_session",
  "axum_session_redispool",
@@ -5593,8 +5640,9 @@ dependencies = [
  "common",
  "dotenvy",
  "entity",
+ "forge-core",
+ "forge-github",
  "futures",
- "github-integration",
  "hex",
  "hmac 0.13.0",
  "image",

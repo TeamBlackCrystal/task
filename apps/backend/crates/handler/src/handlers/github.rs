@@ -17,13 +17,13 @@ use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use crate::settings::GithubAppSettings;
 use entity::{github_integrations, projects, tenants};
-use github_integration::{
-    github_api,
-    github_oauth_state::{self, GithubOAuthStatePayload},
-    github_token_crypto,
-};
 use job::github_webhook::{self, GithubWebhookJob};
 use payload::github::*;
+use service::github::{
+    github_app,
+    install_state::{self, GithubOAuthStatePayload, TTL_SECS},
+    repositories::fetch_primary_repository,
+};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -136,8 +136,8 @@ pub async fn start_github_install(
         .await?
         .map(|row| row.installation_id);
 
-    let state_token = github_oauth_state::new_state_token();
-    github_oauth_state::store_state(
+    let state_token = install_state::new_state_token();
+    install_state::store_state(
         &state.redis_client,
         &state_token,
         &GithubOAuthStatePayload {
@@ -184,7 +184,7 @@ pub async fn github_callback(
         return Err(AppError::BadRequest);
     }
 
-    let payload = github_oauth_state::consume_state(&state.redis_client, &query.state)
+    let payload = install_state::consume_state(&state.redis_client, &query.state)
         .await
         .map_err(AppError::Internal)?
         .ok_or(AppError::BadRequest)?;
@@ -196,30 +196,32 @@ pub async fn github_callback(
     require_tenant_owner(&state, payload.tenant_id, auth.user_id).await?;
     require_project_in_tenant(&state, payload.tenant_id, payload.project_id).await?;
 
-    let installation = github_api::verify_installation_for_callback(
-        &state.http_client,
-        github,
-        query.installation_id,
-        payload.installation_id,
-    )
-    .await
-    .map_err(|e| {
-        tracing::warn!(error = %e, "github callback installation verification failed");
-        AppError::BadRequest
-    })?;
+    let app = github_app(&state.http_client, github);
+    // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
+    // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
+    let installation = app
+        .verify_installation(
+            query.installation_id,
+            payload.installation_id,
+            chrono::Duration::seconds(TTL_SECS as i64),
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "github callback installation verification failed");
+            AppError::BadRequest
+        })?;
 
-    let access =
-        github_api::fetch_installation_access_token(&state.http_client, github, installation.id)
-            .await
-            .map_err(AppError::Internal)?;
+    let access = app
+        .installation_access_token(installation.id)
+        .await
+        .map_err(AppError::Internal)?;
     let account_login = installation.account_login;
-    let (repo_owner, repo_name) =
-        github_api::fetch_primary_repository(&state.http_client, &access.token, &account_login)
-            .await
-            .map_err(AppError::Internal)?;
+    let (repo_owner, repo_name) = fetch_primary_repository(&app, &access.token, &account_login)
+        .await
+        .map_err(AppError::Internal)?;
 
     let token_enc =
-        github_token_crypto::encrypt_token(&github.github_token_encryption_key, &access.token)
+        auth_core::crypto::encrypt_token(&github.github_token_encryption_key, &access.token)
             .map_err(AppError::Internal)?;
 
     let now = chrono::Utc::now();
@@ -431,12 +433,13 @@ pub async fn delete_github_integration(
 
     let installation_id = row.installation_id;
 
-    // GitHub 側を先に解除する（404/410 は冪等成功として delete_app_installation 内で処理済み）。
+    // GitHub 側を先に解除する（404/410 は冪等成功として delete_installation 内で処理済み）。
     // DB を先に削除すると GitHub 側の失敗時に installation_id が失われ再試行不能になる。
-    github_api::delete_app_installation(&state.http_client, github, installation_id)
+    github_app(&state.http_client, github)
+        .delete_installation(installation_id)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, installation_id, "github delete_app_installation failed");
+            tracing::error!(error = %e, installation_id, "github delete_installation failed");
             AppError::Internal(e)
         })?;
 
