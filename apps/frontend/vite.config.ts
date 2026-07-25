@@ -23,6 +23,10 @@ import { playwright } from '@vitest/browser-playwright';
 import { buildEnv } from './buildSrc/env';
 const dirname =
   typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+// Vue 3.6 RC's default bundler entry re-exports Vapor; this VDOM-only app does not use it.
+const vueRuntimeDom = fileURLToPath(
+  import.meta.resolve('@vue/runtime-dom/dist/runtime-dom.esm-bundler.js'),
+);
 
 dotenv.config({ path: path.resolve(dirname, '.env'), quiet: true });
 
@@ -140,11 +144,15 @@ export default defineConfig({
     vue(),
   ],
   resolve: {
-    alias: {
-      '@/sentry.browser.config': path.resolve(dirname, 'sentry.browser.config.ts'),
-      '#': path.resolve(dirname, 'server'),
-      '@': path.resolve(dirname, 'src'),
-    },
+    alias: [
+      { find: /^vue$/, replacement: vueRuntimeDom },
+      {
+        find: '@/sentry.browser.config',
+        replacement: path.resolve(dirname, 'sentry.browser.config.ts'),
+      },
+      { find: '#', replacement: path.resolve(dirname, 'server') },
+      { find: '@', replacement: path.resolve(dirname, 'src') },
+    ],
   },
   optimizeDeps: {
     include: ['vue', 'reka-ui', '@lucide/vue', '@phosphor-icons/vue'],
