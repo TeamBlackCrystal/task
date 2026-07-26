@@ -86,7 +86,7 @@ selector が直接 seed にできるのは、`apps/frontend/` 以下の Vue、Ja
 CSS、Storybook 設定、lockfile、workflow などの変更は影響範囲を安全に限定できないため FULL になる。
 
 MDX は docs 用 glob に含まれるが、selector の story module seed には含まれない。
-MDX 変更で visual story を追加する運用を導入する場合は、index と graph の対応を fixture で先に証明してから selector の対象拡張が必要になる。
+MDX 変更で visual story を追加する運用を導入する場合は、index と graph の対応を fixture で先に証明してから selector の対象を拡張する必要がある。
 
 rename と copy は変更前後のパスを差分集合へ入れる。
 変更前の module が現行 graph に存在しない場合は解決失敗として FULL へ退避するため、撮影漏れにはならない。
