@@ -90,6 +90,16 @@
       "id": "tasks-taskcard--default",
       "type": "story",
       "importPath": "./stories/tasks/TaskCard.stories.ts"
+    },
+    "newstory--default": {
+      "id": "newstory--default",
+      "type": "story",
+      "importPath": "./stories/NewStory.stories.ts"
+    },
+    "newstory--compact": {
+      "id": "newstory--compact",
+      "type": "story",
+      "importPath": "./stories/NewStory.stories.ts"
     }
   }
 }

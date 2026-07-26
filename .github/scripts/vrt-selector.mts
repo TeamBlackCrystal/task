@@ -257,7 +257,7 @@ export function sourceSeedsFromPaths(paths: string[]): string[] {
   return sortedUnique(
     paths.filter(
       (path) =>
-        normalizePath(path).startsWith("apps/frontend/src/") && /\.(vue|[cm]?[jt]sx?)$/.test(path),
+        normalizePath(path).startsWith("apps/frontend/") && /\.(vue|[cm]?[jt]sx?)$/.test(path),
     ),
   );
 }

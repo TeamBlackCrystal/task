@@ -44,6 +44,8 @@ const expectedPasswordStories = [
   "pages-signup--register-success-201",
 ].sort();
 
+const expectedNewStoryEntries = ["newstory--compact", "newstory--default"];
+
 test("PasswordInput fixture reaches the exact 16-story set and excludes docs", async () => {
   const index = await loadJson<StoryIndex>("index.json");
   const graph = await loadJson<PreviewGraph>("preview-graph.json");
@@ -54,6 +56,53 @@ test("PasswordInput fixture reaches the exact 16-story set and excludes docs", a
   assert.equal(
     normalizeStoryIndex(index).some((entry) => entry.id.endsWith("--docs")),
     false,
+  );
+});
+
+test("a newly added story file selects its story entries as PARTIAL", async () => {
+  const index = await loadJson<StoryIndex>("index.json");
+  const graph = await loadJson<PreviewGraph>("preview-graph.json");
+  const { manifest } = selectVrt({
+    baselineCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+    changedPaths: ["apps/frontend/stories/NewStory.stories.ts"],
+    isMain: false,
+    isDependencyUpdate: false,
+    dependencyPhase: 0,
+    index,
+    graph,
+  });
+  assert.equal(manifest.mode, "PARTIAL");
+  assert.deepEqual(manifest.selected_story_ids, expectedNewStoryEntries);
+  assert.deepEqual(manifest.reason_codes, ["exact_reachability"]);
+});
+
+test("a story entry added to an existing file remains explicit in the exact gate", async () => {
+  const index = await loadJson<StoryIndex>("index.json");
+  const graph = await loadJson<PreviewGraph>("preview-graph.json");
+  const { manifest, filteredIndex } = selectVrt({
+    baselineCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+    changedPaths: ["apps/frontend/stories/NewStory.stories.ts"],
+    isMain: false,
+    isDependencyUpdate: false,
+    dependencyPhase: 0,
+    index,
+    graph,
+  });
+  const filteredSha = sha256(stableJson(filteredIndex));
+  assert.deepEqual(manifest.selected_story_ids, expectedNewStoryEntries);
+  assert.doesNotThrow(() =>
+    assertCaptureGate({
+      manifest,
+      executedStoryIds: expectedNewStoryEntries,
+      capturedStoryIds: expectedNewStoryEntries,
+      servedIndexSha256: filteredSha,
+      pending: 0,
+      skipped: 0,
+      failed: 0,
+      screenshotsOutsideManifest: 0,
+    }),
   );
 });
 

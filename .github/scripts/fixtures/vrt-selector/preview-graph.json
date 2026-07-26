@@ -33,6 +33,12 @@
     },
     "./stories/tasks/TaskCard.stories.ts": {
       "reasons": ["apps/frontend/src/components/tasks/TaskCard.vue"]
+    },
+    "apps/frontend/src/components/NewStory.vue": {
+      "reasons": []
+    },
+    "./stories/NewStory.stories.ts": {
+      "reasons": ["apps/frontend/src/components/NewStory.vue"]
     }
   }
 }
