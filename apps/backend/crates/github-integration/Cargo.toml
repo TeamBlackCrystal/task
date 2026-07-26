@@ -12,7 +12,7 @@ base64 = "0.22.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dotenvy = { workspace = true }
 hkdf = "0.13"
-jsonwebtoken = { version = "9", features = ["use_pem"] }
+jsonwebtoken = { version = "11", features = ["use_pem"] }
 rand = "0.10"
 redis = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
