@@ -1,76 +1,122 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:base"],
-  "ignorePresets": [":prHourlyLimit2"],
-  // "baseBranches": ["develop", "master"],
-  "schedule": ["before 9am on monday"],
-  "timezone": "Asia/Tokyo",
-  // "dependencyDashboard": false,
-  "automerge": false,
-  "prHourlyLimit": 100,
-  "prConcurrentLimit": 100,
-  "branchConcurrentLimit": 100,
-  // "labels": ["type/Dependencies📦"],
-  "labels": ["dependencies"],
-  "packageRules": [
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+  ],
+  ignorePresets: [
+    ':prHourlyLimit2',
+  ],
+  schedule: [
+    'before 9am on monday',
+  ],
+  timezone: 'Asia/Tokyo',
+  automerge: false,
+  prHourlyLimit: 100,
+  prConcurrentLimit: 100,
+  branchConcurrentLimit: 100,
+  labels: [
+    'dependencies',
+  ],
+  packageRules: [
     {
-      "matchManagers": ["github-actions", "gitlabci", "gitlabci-include"],
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      // Apply the same cooldown to CI action updates before automerge.
-      "minimumReleaseAge": "1 day"
+      matchManagers: [
+        'github-actions',
+        'gitlabci',
+        'gitlabci-include',
+      ],
+      automerge: true,
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+      minimumReleaseAge: '1 day',
     },
     {
-      "matchManagers": ["cargo"],
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      // Keep Rust crate automerge on the same cooldown as npm/pnpm.
-      "minimumReleaseAge": "1 day"
+      matchManagers: [
+        'cargo',
+      ],
+      automerge: true,
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+      minimumReleaseAge: '1 day',
     },
     {
-      "matchManagers": ["npm"],
-      // "addLabels": ["topic/JavaScript🧶"]
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      // Align Renovate automerge with pnpm v11's default supply-chain delay.
-      "minimumReleaseAge": "1 day"
+      matchManagers: [
+        'npm',
+      ],
+      automerge: true,
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+      minimumReleaseAge: '1 day',
     },
     {
-      "matchManagers": ["docker-compose", "dockerfile"],
-      // "addLabels": ["topic/Docker⚓"]
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      // Apply the same cooldown to container image updates before automerge.
-      "minimumReleaseAge": "1 day"
+      matchManagers: [
+        'docker-compose',
+        'dockerfile',
+      ],
+      automerge: true,
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+      minimumReleaseAge: '1 day',
     },
     {
-      "matchManagers": ["npm"],
-      "matchPackagePatterns": ["scalar"],
-      "groupName": "scalar"
+      matchManagers: [
+        'npm',
+      ],
+      groupName: 'scalar',
+      matchPackageNames: [
+        '/scalar/',
+      ],
     },
     {
-      "matchManagers": ["npm"],
-      "matchPackagePatterns": ["regle"],
-      "groupName": "regle"
+      matchManagers: [
+        'npm',
+      ],
+      groupName: 'regle',
+      matchPackageNames: [
+        '/regle/',
+      ],
     },
     {
-      "matchManagers": ["npm"],
-      "matchPackagePatterns": ["vueuse"],
-      "groupName": "vueuse"
+      matchManagers: [
+        'npm',
+      ],
+      groupName: 'vueuse',
+      matchPackageNames: [
+        '/vueuse/',
+      ],
     },
     {
-      "matchManagers": ["npm"],
-      "matchPackagePatterns": ["vue-macros"],
-      "groupName": "vue-macros"
+      matchManagers: [
+        'npm',
+      ],
+      groupName: 'vue-macros',
+      matchPackageNames: [
+        '/vue-macros/',
+      ],
     },
     {
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["vite", "vite-plus", "vitest"],
-      // vite-plus bundles a pinned vitest; @vitest/* providers (coverage-v8,
-      // browser-playwright, ...) must match that exact version, so group them
-      // all into one PR to avoid a version-skew split (see #248 / #293).
-      "matchPackagePatterns": ["^@voidzero-dev/", "^@vitest/"],
-      "groupName": "vite-plus"
-    }
-  ]
+      matchManagers: [
+        'npm',
+      ],
+      matchPackageNames: [
+        'vite',
+        'vite-plus',
+        'vitest',
+        '/^@voidzero-dev//',
+        '/^@vitest//',
+      ],
+      groupName: 'vite-plus',
+    },
+  ],
 }
