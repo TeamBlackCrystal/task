@@ -62,6 +62,7 @@ cargo test --workspace --lib
 
 - バグ修正 PR には**修正前の main で fail する回帰テスト**を付ける（バグの証明として機能させる）
 - 統合テストは `tests/common` の `TestApp` を使う。拒否系（403/404）と対照の成功系（200/201、過剰拒否でないこと）をセットで書く
+- Storybook の story を追加・変更するときは、視覚テストが変更差分から撮影対象を選ぶため、`docs/development/visual-regression-new-stories.md` を参照する（新しい story の扱い・未撮影時の調査手順）
 - エラーは握り潰さず `?` で伝播する（`unwrap_or(false)` / `let _ =` でのもみ消しが実バグを隠した前例あり）
 - コミットは Conventional Commits + 日本語（例: `fix(backend): …` / `refactor(workspace): …`）。1 Phase・1 関心 = 1 PR
 - PR 本文も日本語。「概要 / 変更内容 / 挙動の変化 / テスト」の構成
