@@ -65,7 +65,7 @@
     "@storybook/test-runner": "0.24.4",
     "@storybook/vue3-vite": "10.5.2",
     "@tailwindcss/vite": "4.3.3",
-    "@tanstack/devtools-vite": "0.8.1",
+    "@tanstack/devtools-vite": "0.8.3",
     "@tanstack/vue-devtools": "0.2.22",
     "@tanstack/vue-query-devtools": "6.1.36",
     "@types/node": "24.13.3",
