@@ -62,8 +62,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # toolchain は rust-toolchain.toml に一本化する。
+      # 引数なしの install が「アクティブな toolchain」= rust-toolchain.toml を読む。
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        run: rustup toolchain install
 
       - name: Install mold
         run: sudo apt-get install -y mold
