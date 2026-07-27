@@ -1,11 +1,13 @@
 //! OAuth 設定（環境変数から読み込み）。
 
+use auth_core::provider::ProviderConfig;
+
 #[derive(Clone, Debug)]
 pub struct OAuthSettings {
     /// OAuth コールバック URL のベース（例: `http://localhost:3400`）
     pub app_base_url: String,
-    /// AES-256-GCM 暗号化キー（32 バイト）
-    pub encryption_key: [u8; 32],
+    /// トークン暗号化の鍵材料。実際の鍵は HKDF で導出される
+    pub encryption_key: String,
     /// ログイン後のデフォルトリダイレクト先（フロント相対パス）
     pub default_redirect_path: String,
     pub github: Option<ProviderConfig>,
@@ -13,12 +15,6 @@ pub struct OAuthSettings {
     pub gitlab_selfhosted: Option<ProviderConfig>,
     pub google: Option<ProviderConfig>,
     pub oidc: Option<OidcConfig>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ProviderConfig {
-    pub client_id: String,
-    pub client_secret: String,
 }
 
 #[derive(Clone, Debug)]
@@ -141,23 +137,22 @@ fn pair_config(client_id: Option<String>, client_secret: Option<String>) -> Opti
     }
 }
 
-fn parse_encryption_key(raw: Option<&str>, require: bool) -> Result<[u8; 32], anyhow::Error> {
+/// 鍵材料をそのまま保持する（鍵の導出は `auth_core::crypto` 側の HKDF が行う）。
+fn parse_encryption_key(raw: Option<&str>, require: bool) -> Result<String, anyhow::Error> {
     let Some(key_str) = raw.filter(|s| !s.is_empty()) else {
         if require {
             anyhow::bail!(
                 "OAUTH_ENCRYPTION_KEY is required when at least one OAuth provider is configured"
             );
         }
-        return Ok([0u8; 32]);
+        return Ok(String::new());
     };
 
     if key_str.len() < 32 {
         anyhow::bail!("OAUTH_ENCRYPTION_KEY must be at least 32 characters");
     }
 
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_str.as_bytes()[..32]);
-    Ok(key)
+    Ok(key_str.to_string())
 }
 
 #[cfg(test)]
@@ -166,12 +161,23 @@ mod tests {
 
     #[test]
     fn encryption_key_optional_without_providers() {
-        let key = parse_encryption_key(None, false).unwrap();
-        assert_eq!(key, [0u8; 32]);
+        assert_eq!(parse_encryption_key(None, false).unwrap(), "");
     }
 
     #[test]
     fn encryption_key_required_with_providers() {
         assert!(parse_encryption_key(None, true).is_err());
+    }
+
+    #[test]
+    fn encryption_key_rejects_short_value() {
+        assert!(parse_encryption_key(Some(&"a".repeat(31)), true).is_err());
+    }
+
+    #[test]
+    fn encryption_key_keeps_full_material() {
+        // 先頭 32 バイトへの切り詰めをしない（鍵材料全体が HKDF に入る）。
+        let long = "a".repeat(64);
+        assert_eq!(parse_encryption_key(Some(&long), true).unwrap(), long);
     }
 }

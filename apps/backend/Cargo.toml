@@ -1,9 +1,15 @@
 [workspace]
-members = ["crates/entity", "crates/common", "crates/github-integration", "crates/payload", "crates/service", "crates/job", "crates/handler"]
+members = ["crates/entity", "crates/common", "crates/payload", "crates/service", "crates/job", "crates/handler"]
 exclude = ["migration"]
 
 [workspace.dependencies]
 anyhow = "1.0.102"
+# OAuth / Git ホスティング連携の土台。別リポジトリへ切り出して他プロジェクトと共有する。
+auth-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "a9ce1a75df278d6dc96ea62fc19e763581b60a7b" }
+auth-core-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "a9ce1a75df278d6dc96ea62fc19e763581b60a7b" }
+auth-core-gitlab = { git = "https://github.com/koyori-app/auth-core.git", rev = "a9ce1a75df278d6dc96ea62fc19e763581b60a7b" }
+forge-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "a9ce1a75df278d6dc96ea62fc19e763581b60a7b" }
+forge-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "a9ce1a75df278d6dc96ea62fc19e763581b60a7b" }
 axum = { version = "0.8.8", features = ["macros"] }
 config = "0.15.22"
 dotenvy = "0.15"
@@ -54,6 +60,7 @@ utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 [dev-dependencies]
 dotenvy = { workspace = true }
+forge-core = { workspace = true }
 hex = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cookie = "0.18"

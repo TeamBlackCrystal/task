@@ -1,13 +1,14 @@
 //! GitHub App インストールフロー用 CSRF state（Redis）。
 
 use anyhow::Context;
+use auth_core::state::StateStore;
 use base64::Engine;
+use common::cache::redis::RedisConnection;
 use rand::Rng;
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use common::cache::redis::RedisConnection;
+use crate::oauth::state::RedisStateStore;
 
 const KEY_PREFIX: &str = "github_oauth_state:";
 pub const TTL_SECS: u64 = 600;
@@ -33,17 +34,10 @@ pub async fn store_state(
     state: &str,
     payload: &GithubOAuthStatePayload,
 ) -> Result<(), anyhow::Error> {
-    let key = format!("{KEY_PREFIX}{state}");
     let value = serde_json::to_string(payload).context("serialize oauth state")?;
-    let mut conn = redis
-        .conn
-        .acquire()
+    RedisStateStore::new(redis)
+        .store(&format!("{KEY_PREFIX}{state}"), &value, TTL_SECS)
         .await
-        .map_err(|e| anyhow::anyhow!("redis acquire failed: {e}"))?;
-    conn.set_ex::<_, _, ()>(key, value, TTL_SECS)
-        .await
-        .map_err(|e| anyhow::anyhow!("redis set oauth state: {e}"))?;
-    Ok(())
 }
 
 /// 取得と削除を原子的に行う（再利用防止）。
@@ -51,20 +45,13 @@ pub async fn consume_state(
     redis: &RedisConnection,
     state: &str,
 ) -> Result<Option<GithubOAuthStatePayload>, anyhow::Error> {
-    let key = format!("{KEY_PREFIX}{state}");
-    let mut conn = redis
-        .conn
-        .acquire()
-        .await
-        .map_err(|e| anyhow::anyhow!("redis acquire failed: {e}"))?;
-    let value: Option<String> = conn
-        .get_del(key)
-        .await
-        .map_err(|e| anyhow::anyhow!("redis getdel oauth state: {e}"))?;
-    let Some(raw) = value else {
+    let Some(raw) = RedisStateStore::new(redis)
+        .consume(&format!("{KEY_PREFIX}{state}"))
+        .await?
+    else {
         return Ok(None);
     };
-    let payload: GithubOAuthStatePayload =
-        serde_json::from_str(&raw).context("deserialize oauth state")?;
-    Ok(Some(payload))
+    Ok(Some(
+        serde_json::from_str(&raw).context("deserialize oauth state")?,
+    ))
 }

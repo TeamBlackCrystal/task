@@ -3,9 +3,6 @@
 // 旧 crate::error / crate::settings パス互換のための再公開。
 pub use common::{error, settings};
 
-// github-integration クレートへ移設済み。旧 service::oauth 等のパス互換のための再公開。
-pub use github_integration::{github_api, github_oauth_state, github_token_crypto, oauth};
-
 pub mod already_registered_email_delivery;
 pub mod auth;
 pub mod bootstrap_admin;
@@ -13,9 +10,11 @@ pub mod custom_fields;
 pub mod drive;
 pub mod email;
 pub mod email_verification;
+pub mod github;
 pub mod http;
 pub mod login_session;
 pub mod notifications;
+pub mod oauth;
 pub mod passkey_challenges;
 pub mod passkeys;
 pub mod password_reset;

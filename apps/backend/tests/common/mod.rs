@@ -31,7 +31,7 @@ use backend::{
         auth::create_password_hash,
         drive::DriveConfig,
         http::create_http_client,
-        oauth::config::{OAuthSettings, ProviderConfig},
+        oauth::{OAuthSettings, ProviderConfig},
         smtp::SmtpClient,
         storage::setup_storage,
         totp::build_totp,
@@ -543,12 +543,9 @@ impl TestApp {
         let addr: SocketAddr = listener.local_addr().expect("local addr");
         let base_url = format!("http://{addr}");
 
-        let mut encryption_key = [0u8; 32];
-        encryption_key.copy_from_slice(&TEST_OAUTH_ENCRYPTION_KEY.as_bytes()[..32]);
-
         let oauth_settings = OAuthSettings {
             app_base_url: base_url.clone(),
-            encryption_key,
+            encryption_key: TEST_OAUTH_ENCRYPTION_KEY.to_string(),
             default_redirect_path: "/dashboard".to_string(),
             github: None,
             gitlab: None,
