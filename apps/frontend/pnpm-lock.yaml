@@ -115,8 +115,8 @@ importers:
         specifier: 6.5.0
         version: 6.5.0(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/playwright':
-        specifier: 7.3.6
-        version: 7.3.6(@types/node@24.13.3)(supports-color@10.2.2)
+        specifier: 7.4.0
+        version: 7.4.0(@types/node@24.13.3)(supports-color@10.2.2)
       '@chromatic-com/storybook':
         specifier: 5.2.1
         version: 5.2.1(storybook@10.5.5(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite-plus@0.2.5(@types/node@24.13.3)(@vitejs/devtools@0.4.8)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.5)(esbuild@0.28.1)(happy-dom@20.11.1)(jiti@2.7.0)(publint@0.3.21)(typescript@6.0.3)))
@@ -228,10 +228,6 @@ packages:
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
 
-  '@argos-ci/api-client@0.26.0':
-    resolution: {integrity: sha512-bbTW/YBOJ1pkwN+VYxz+Yc2GrScHRCr/SN1fJK19YTWpUI1o+YWM4OZm+ZspOxw6eGRFfUrM93Z1q48uyHKNiQ==}
-    engines: {node: '>=22.0.0'}
-
   '@argos-ci/api-client@0.27.0':
     resolution: {integrity: sha512-3m3skU6SIlDrjikDDdjEpyx80IVHdithkkOWFAEoIVN3Yr5Xh7EjYO3707PjfgmVIKJerTzUN3dU5ZHaOY3o+g==}
     engines: {node: '>=22.0.0'}
@@ -245,20 +241,12 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@argos-ci/core@6.6.1':
-    resolution: {integrity: sha512-QN4PvPT+nPzOWiYWryM9aTEr2PoCGcaDxUd50rUIZ5yeAHDs590evxpEg53uHTjHdfQ+z/BBpNQ3IOD4Sc9Z/w==}
-    engines: {node: '>=22.0.0'}
-
   '@argos-ci/core@6.7.0':
     resolution: {integrity: sha512-OnsshGSq8YcCjservwG5qAr08C0I5LmfJez2NMbcBt0cL/yJFFO7HwNATz9onimqPYOjhF739pQpn9Z72AiNgw==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/playwright@7.3.6':
-    resolution: {integrity: sha512-jotrW91a21OstjhBfYOvb9cIPOT3rlgL/W8sX9eWNSKXAHkCqiWz7uOvvSD6RpKXQ8AvHV3N0ndmJFFHpM5Cbw==}
-    engines: {node: '>=22.0.0'}
-
-  '@argos-ci/util@4.0.4':
-    resolution: {integrity: sha512-n1GW34fXijCXSZTZrgtNLSOVnehniOGZ6cKdV6Hrw8dSiFKCMrXFASMc8huwLKtcH29nE6wOAabFq7IpDCaoTg==}
+  '@argos-ci/playwright@7.4.0':
+    resolution: {integrity: sha512-LfUdxAtz6/WuNH+5JadUBA6Gd5UHEq3hovER9Dw853Wbz4MhS+qZ6UrxYH96YEPiH4AUmBvewuPN+lyz3xLZHw==}
     engines: {node: '>=22.0.0'}
 
   '@argos-ci/util@4.1.0':
@@ -6874,14 +6862,6 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
-  '@argos-ci/api-client@0.26.0(supports-color@10.2.2)':
-    dependencies:
-      debug: 4.4.3(supports-color@10.2.2)
-      openapi-fetch: 0.17.0
-      p-retry: 8.0.0
-    transitivePeerDependencies:
-      - supports-color
-
   '@argos-ci/api-client@0.27.0(supports-color@10.2.2)':
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
@@ -6904,21 +6884,6 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/core@6.6.1(@types/node@24.13.3)(supports-color@10.2.2)':
-    dependencies:
-      '@argos-ci/api-client': 0.26.0(supports-color@10.2.2)
-      '@argos-ci/util': 4.0.4
-      convict: 6.2.5
-      debug: 4.4.3(supports-color@10.2.2)
-      fast-glob: 3.3.3
-      mime-types: 3.0.2
-      p-retry: 8.0.0
-      sharp: 0.35.3(@types/node@24.13.3)
-      tmp: 0.2.7
-    transitivePeerDependencies:
-      - '@types/node'
-      - supports-color
-
   '@argos-ci/core@6.7.0(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
       '@argos-ci/api-client': 0.27.0(supports-color@10.2.2)
@@ -6934,18 +6899,16 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/playwright@7.3.6(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/playwright@7.4.0(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
       '@argos-ci/browser': 6.4.4
-      '@argos-ci/core': 6.6.1(@types/node@24.13.3)(supports-color@10.2.2)
-      '@argos-ci/util': 4.0.4
+      '@argos-ci/core': 6.7.0(@types/node@24.13.3)(supports-color@10.2.2)
+      '@argos-ci/util': 4.1.0
       chalk: 5.6.2
       debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - '@types/node'
       - supports-color
-
-  '@argos-ci/util@4.0.4': {}
 
   '@argos-ci/util@4.1.0': {}
 
