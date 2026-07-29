@@ -22,7 +22,7 @@ importers:
         version: 1.4.10(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))
       '@koyori-app/openapi-vue-query':
         specifier: 0.1.4
-        version: 0.1.4(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(openapi-fetch@0.17.0)(openapi-typescript-helpers@0.1.0)(vue@3.5.40(typescript@6.0.3))
+        version: 0.1.4(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(openapi-fetch@0.17.0)(openapi-typescript-helpers@0.1.0)(vue@3.5.40(typescript@6.0.3))
       '@lucide/vue':
         specifier: 1.25.0
         version: 1.25.0(vue@3.5.40(typescript@6.0.3))
@@ -36,8 +36,8 @@ importers:
         specifier: 1.33.2
         version: 1.33.2(vue@3.5.40(typescript@6.0.3))
       '@tanstack/vue-query':
-        specifier: 5.101.2
-        version: 5.101.2(vue@3.5.40(typescript@6.0.3))
+        specifier: 5.101.4
+        version: 5.101.4(vue@3.5.40(typescript@6.0.3))
       '@tanstack/vue-table':
         specifier: 8.21.3
         version: 8.21.3(vue@3.5.40(typescript@6.0.3))
@@ -106,7 +106,7 @@ importers:
         version: 0.2.6(pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))(vike-vue@0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3)))(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3))
       vike-vue-query:
         specifier: 0.2.3
-        version: 0.2.3(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(vike-vue@0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))
+        version: 0.2.3(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(vike-vue@0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))
       vue:
         specifier: 3.5.40
         version: 3.5.40(typescript@6.0.3)
@@ -151,8 +151,8 @@ importers:
         specifier: 0.2.23
         version: 0.2.23(csstype@3.2.3)(solid-js@1.9.13)
       '@tanstack/vue-query-devtools':
-        specifier: 6.1.36
-        version: 6.1.36(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))
+        specifier: 6.1.38
+        version: 6.1.38(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -2764,11 +2764,11 @@ packages:
     resolution: {integrity: sha512-y/xtNPNt/YeyoVxE/JCx+T7yjEzpezmbb+toK8DDD1P4m7Kzs5YR956+7OKexG3f8aXgC3rLZl7b1V+yNUSy5w==}
     engines: {node: '>=18'}
 
-  '@tanstack/query-core@5.101.2':
-    resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
+  '@tanstack/query-core@5.101.4':
+    resolution: {integrity: sha512-gNwcvOJcRbLWPOLG/2OBm+zM+Yv+MKsXKEOWC57USuZDEsI71hEErQsiEGx5wX9rzWWkfwM0fVSPoiIFSsxfiw==}
 
-  '@tanstack/query-devtools@5.101.2':
-    resolution: {integrity: sha512-o+wHcqgN7Pp0s8v1i0UGq/ZrrEKrxdIiMQmKRdYb2w7NPtylYSJ4+wg/tIn71m9DLstwUwdEGAvROdly6HXP6w==}
+  '@tanstack/query-devtools@5.101.4':
+    resolution: {integrity: sha512-z5IPHnDX3aUWeTWlRKLyooBQekaCAw4xRpZqPQ390RiWTDBcTynjpPT221BArw0u2+pnQMdGvPQI9YNNubBcmA==}
 
   '@tanstack/store@0.11.0':
     resolution: {integrity: sha512-WlzzCt3xi0G6pCAJu1U+2jiECwabETDpQDi3hfkFZvJii9AuZqEKbOiVarX1/bWhTNjU486yQtJCCasi/0q+Cw==}
@@ -2789,14 +2789,14 @@ packages:
     peerDependencies:
       vue: ^3.4.0
 
-  '@tanstack/vue-query-devtools@6.1.36':
-    resolution: {integrity: sha512-1/FuHTIvFyyh3tf+BPdlHtnG6ytCi8o8PRfpYn17B9i2no5WVcKENN9+S+IwXGbjPIui3b0MawHohjssEjZuuA==}
+  '@tanstack/vue-query-devtools@6.1.38':
+    resolution: {integrity: sha512-JrZR8p+0v+eRXANudvTzfj5robfr6xh2rjZEqIiHbbxFgtdoTnQAJpoB7sQBw4xfvO8VCoG/xFaSnpPX1AjihA==}
     peerDependencies:
-      '@tanstack/vue-query': ^5.101.2
+      '@tanstack/vue-query': ^5.101.4
       vue: ^3.3.0
 
-  '@tanstack/vue-query@5.101.2':
-    resolution: {integrity: sha512-nFXKNK4dI/PnKNejyIkQmmobBsJWWXTPcpjPvkgFLkpFPz9DcmqIiKIAF2Pa7MZCipH62/+bt2sxEIA0wNEeOg==}
+  '@tanstack/vue-query@5.101.4':
+    resolution: {integrity: sha512-UYjkUZhnWQIFGNb7SdgjCitAftNyYQfOIVUh6vBUQAG4SQKNMSBKeQERFDubpxLAMpIBJTaOrE8fM4c1kZcIGQ==}
     peerDependencies:
       '@vue/composition-api': ^1.1.2
       vue: ^2.6.0 || ^3.3.0
@@ -7801,9 +7801,9 @@ snapshots:
     dependencies:
       zod: 4.4.3
 
-  '@koyori-app/openapi-vue-query@0.1.4(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(openapi-fetch@0.17.0)(openapi-typescript-helpers@0.1.0)(vue@3.5.40(typescript@6.0.3))':
+  '@koyori-app/openapi-vue-query@0.1.4(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(openapi-fetch@0.17.0)(openapi-typescript-helpers@0.1.0)(vue@3.5.40(typescript@6.0.3))':
     dependencies:
-      '@tanstack/vue-query': 5.101.2(vue@3.5.40(typescript@6.0.3))
+      '@tanstack/vue-query': 5.101.4(vue@3.5.40(typescript@6.0.3))
       openapi-fetch: 0.17.0
       openapi-typescript-helpers: 0.1.0
       vue: 3.5.40(typescript@6.0.3)
@@ -9007,9 +9007,9 @@ snapshots:
 
   '@tanstack/pacer-lite@0.1.1': {}
 
-  '@tanstack/query-core@5.101.2': {}
+  '@tanstack/query-core@5.101.4': {}
 
-  '@tanstack/query-devtools@5.101.2': {}
+  '@tanstack/query-devtools@5.101.4': {}
 
   '@tanstack/store@0.11.0': {}
 
@@ -9034,16 +9034,16 @@ snapshots:
     transitivePeerDependencies:
       - '@vue/composition-api'
 
-  '@tanstack/vue-query-devtools@6.1.36(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))':
+  '@tanstack/vue-query-devtools@6.1.38(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3))':
     dependencies:
-      '@tanstack/query-devtools': 5.101.2
-      '@tanstack/vue-query': 5.101.2(vue@3.5.40(typescript@6.0.3))
+      '@tanstack/query-devtools': 5.101.4
+      '@tanstack/vue-query': 5.101.4(vue@3.5.40(typescript@6.0.3))
       vue: 3.5.40(typescript@6.0.3)
 
-  '@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3))':
+  '@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3))':
     dependencies:
       '@tanstack/match-sorter-utils': 8.19.4
-      '@tanstack/query-core': 5.101.2
+      '@tanstack/query-core': 5.101.4
       '@vue/devtools-api': 6.6.4
       vue: 3.5.40(typescript@6.0.3)
       vue-demi: 0.14.10(vue@3.5.40(typescript@6.0.3))
@@ -9530,7 +9530,7 @@ snapshots:
       sirv: 3.0.2
       tinyrainbow: 3.1.0
       vitest: 4.1.10(@types/node@24.13.3)(@vitest/browser-playwright@4.1.10)(@vitest/browser-preview@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.5)(happy-dom@20.11.1)
-      ws: 8.21.0
+      ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -13158,9 +13158,9 @@ snapshots:
       vike-vue: 0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3))
       vue: 3.5.40(typescript@6.0.3)
 
-  vike-vue-query@0.2.3(@tanstack/vue-query@5.101.2(vue@3.5.40(typescript@6.0.3)))(vike-vue@0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3)):
+  vike-vue-query@0.2.3(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(vike-vue@0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3)))(vue@3.5.40(typescript@6.0.3)):
     dependencies:
-      '@tanstack/vue-query': 5.101.2(vue@3.5.40(typescript@6.0.3))
+      '@tanstack/vue-query': 5.101.4(vue@3.5.40(typescript@6.0.3))
       vike-vue: 0.9.13(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(vike@0.4.260(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.11.17)(supports-color@10.2.2))(vue@3.5.40(typescript@6.0.3))
       vue: 3.5.40(typescript@6.0.3)
 
