@@ -24,8 +24,8 @@ importers:
         specifier: 0.1.4
         version: 0.1.4(@tanstack/vue-query@5.101.4(vue@3.5.40(typescript@6.0.3)))(openapi-fetch@0.17.0)(openapi-typescript-helpers@0.1.0)(vue@3.5.40(typescript@6.0.3))
       '@lucide/vue':
-        specifier: 1.25.0
-        version: 1.25.0(vue@3.5.40(typescript@6.0.3))
+        specifier: 1.27.0
+        version: 1.27.0(vue@3.5.40(typescript@6.0.3))
       '@phosphor-icons/vue':
         specifier: 2.2.1
         version: 2.2.1(vue@3.5.40(typescript@6.0.3))
@@ -1067,8 +1067,8 @@ packages:
       openapi-typescript-helpers: ^0.1.0
       vue: ^3.5.35
 
-  '@lucide/vue@1.25.0':
-    resolution: {integrity: sha512-hkEetV+v48ScIn3uwqwWQ66sI8foeP2q6OMI09GzLFH4SfvBlfe3JHYlMBdBCqFC7WRlhFsndyDn/awRKRc2OQ==}
+  '@lucide/vue@1.27.0':
+    resolution: {integrity: sha512-LKDEZJ0Uo9UaT4vxBMYVwXeK/0dGcWCTdav1AK/aGD/jYsDPtiVvOgfM7jPlx9BVeyGZ1Uf0aQhHA++rmbe7rw==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -7792,7 +7792,7 @@ snapshots:
       openapi-typescript-helpers: 0.1.0
       vue: 3.5.40(typescript@6.0.3)
 
-  '@lucide/vue@1.25.0(vue@3.5.40(typescript@6.0.3))':
+  '@lucide/vue@1.27.0(vue@3.5.40(typescript@6.0.3))':
     dependencies:
       vue: 3.5.40(typescript@6.0.3)
 
