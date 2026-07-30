@@ -49,12 +49,23 @@ jobs:
 
     steps:
       # task リポジトリを checkout。
+      #
       # fetch-depth: 0 は VRT の `--only-changed` が baseline コミットまでの
       # git 履歴を辿って差分撮影を判定するために必須。shallow clone だと
       # 履歴が足りず全撮影にフォールバックしてしまう。
+      #
+      # ref に PR の head コミットを明示するのは 2 つの理由から:
+      #   1. 既定では pull_request イベントで「main へのマージコミット」が
+      #      checkout される。CLI の差分は `git diff <baseline> HEAD` なので、
+      #      マージコミットのままだと main 側の変更まで差分に混ざる。
+      #   2. VRT に記録される commit SHA は GitHub App がコミットステータスを
+      #      貼る先になる。マージコミットは GitHub 上に残らないため、
+      #      PR ブランチに実在する head SHA でなければステータスを貼れない。
+      # push イベントでは pull_request コンテキストが空なので github.sha に落ちる。
       - name: Checkout task
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -139,8 +150,19 @@ jobs:
       #
       # 差分検出 (終了コード 1) でこのジョブを落としたくない場合は、
       # --wait を外すか、このステップに `continue-on-error: true` を付ける。
+      #
+      # --branch を明示するのは、上の checkout が SHA 指定 = detached HEAD に
+      # なるため。CLI は省略時 `git rev-parse --abbrev-ref HEAD` でブランチを
+      # 解決するが、detached HEAD では "HEAD" が返るのでエラーになる。
+      # PR では head_ref (PR 元のブランチ名)、push では ref_name を使う。
+      # commit SHA は checkout した HEAD がそのまま正しいので CLI に任せる。
       - name: Upload to VRT
-        run: .vrt-src/apps/backend/target/release/vrt upload --dir apps/frontend/storybook-static --only-changed --wait
+        run: |
+          .vrt-src/apps/backend/target/release/vrt upload \
+            --dir apps/frontend/storybook-static \
+            --branch "${{ github.head_ref || github.ref_name }}" \
+            --only-changed \
+            --wait
         env:
           VRT_URL: https://vrt.koyori.app
           VRT_PROJECT: koyori/task
