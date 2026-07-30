@@ -23,7 +23,7 @@
   "dependencies": {
     "@elysiajs/static": "1.4.10",
     "@koyori-app/openapi-vue-query": "0.1.4",
-    "@lucide/vue": "1.25.0",
+    "@lucide/vue": "1.27.0",
     "@phosphor-icons/vue": "2.2.1",
     "@sentry/vue": "10.67.0",
     "@tanstack/vue-form": "1.33.2",
