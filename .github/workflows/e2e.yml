@@ -42,7 +42,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: valkey/valkey@sha256:c6d4637d757379a2ff040148b95c85936d85a06c129eafa5fbe582f9e720e12f
+        image: valkey/valkey@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd
         ports:
           - 6379:6379
         options: >-
