@@ -29,7 +29,7 @@
     "@tanstack/vue-form": "1.33.2",
     "@tanstack/vue-query": "5.101.4",
     "@tanstack/vue-table": "8.21.3",
-    "@unhead/vue": "3.1.8",
+    "@unhead/vue": "3.2.3",
     "@universal-middleware/core": "0.4.18",
     "@vikejs/elysia": "0.2.1",
     "@vueuse/core": "14.3.0",
