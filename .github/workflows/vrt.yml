@@ -8,8 +8,8 @@
 #   VRT_TOKEN
 #     VRT の UI の Settings -> Personal access tokens で発行する。
 #     スコープは `write:build` と `read:build` の両方が必要。
-#     (アップロードに write:build、`--wait` で結果を待つために read:build が要る)
-#     トークンは CLI 側でログに出さない実装になっている。
+#     (アップロードに write:build、結果を待つために read:build が要る)
+#     トークンは vrt-actions 側でログに出さない実装になっている。
 
 name: VRT
 
@@ -33,20 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    env:
-      # vrt CLI をソースからビルドするために参照する koyori-app/vrt の ref。
-      # 再現性とキャッシュ健全性のためコミット SHA で固定する。
-      # main のような可動 ref にすると、下のキャッシュキーが変わらないまま
-      # 上流だけ進むため、古いバイナリを使い続けてしまう。
-      # CLI を更新したいときはこの SHA を上げること。
-      VRT_REF: 4a1d37890b26f2fd48b8620bcaff9240f8c7f563 # main @ 2026-07-30
-
-      # Rust ビルド高速化まわり (他ワークフローの流儀に合わせる)
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
-      CARGO_TERM_COLOR: always
-
     steps:
       # task リポジトリを checkout。
       #
@@ -68,55 +54,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      # vrt CLI (バイナリ名 vrt) はリリース配布が無いためソースからビルドする。
-      # ビルド済みバイナリを VRT_REF ごとにキャッシュし、ヒット時は
-      # vrt の checkout / mold / Rust / ビルドを丸ごとスキップする。
-      - name: Cache vrt CLI binary
-        id: cli-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .vrt-src/apps/backend/target/release/vrt
-          key: vrt-cli-${{ runner.os }}-${{ env.VRT_REF }}
-
-      # vrt リポジトリを checkout。ref は再現性のため固定するのが望ましい
-      # (上の VRT_REF コメント参照)。CLI の Cargo ワークスペースはリポジトリ
-      # ルートではなく apps/backend にある。
-      - name: Checkout vrt (CLI source)
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: koyori-app/vrt
-          ref: ${{ env.VRT_REF }}
-          path: .vrt-src
-          persist-credentials: false
-
-      # vrt の apps/backend/.cargo/config.toml が Linux で mold リンカを
-      # 要求する (-C link-arg=-fuse-ld=mold) ため CI では必須。
-      - name: Install mold
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        run: sudo apt-get install -y mold
-
-      # vrt の rust-toolchain.toml (channel = "1.95.0") が自動で使われる。
-      - name: Install Rust
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Setup sccache
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
-
-      - name: Cache Rust dependencies
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: .vrt-src/apps/backend -> target
-
-      # パッケージ名 vrt-cli、出力は .vrt-src/apps/backend/target/release/vrt。
-      - name: Build vrt CLI
-        if: steps.cli-cache.outputs.cache-hit != 'true'
-        run: cargo build --release -p vrt-cli
-        working-directory: .vrt-src/apps/backend
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -141,29 +78,24 @@ jobs:
         run: pnpm build-storybook --stats-json
         working-directory: apps/frontend
 
-      # ビルドした vrt バイナリで Storybook を VRT にアップロードする。
-      # --only-changed: preview-stats.json + git 履歴から変更分だけ撮影
+      # vrt-actions で Storybook を VRT にアップロードする。
+      # only-changed: preview-stats.json + git 履歴から変更分だけ撮影
       #   (baseline 未存在・package.json/lockfile 変更・.storybook/ 配下変更などは
       #    自動的に全撮影へ安全側フォールバックする)
-      # --wait: 比較完了まで待ち、結果を終了コードで返す
+      # wait: 比較完了まで待ち、結果を終了コードで返す
       #   passed=0 / changes_detected=1 / failed=2
       #
       # 差分検出 (終了コード 1) でこのジョブを落としたくない場合は、
-      # --wait を外すか、このステップに `continue-on-error: true` を付ける。
-      #
-      # --branch を明示するのは、上の checkout が SHA 指定 = detached HEAD に
-      # なるため。CLI は省略時 `git rev-parse --abbrev-ref HEAD` でブランチを
-      # 解決するが、detached HEAD では "HEAD" が返るのでエラーになる。
-      # PR では head_ref (PR 元のブランチ名)、push では ref_name を使う。
-      # commit SHA は checkout した HEAD がそのまま正しいので CLI に任せる。
+      # wait を false にするか、このステップに `continue-on-error: true` を付ける。
+      # branch と commit は vrt-actions が PR の head 情報を優先して解決する。
       - name: Upload to VRT
-        run: |
-          .vrt-src/apps/backend/target/release/vrt upload \
-            --dir apps/frontend/storybook-static \
-            --branch "${{ github.head_ref || github.ref_name }}" \
-            --only-changed \
-            --wait
-        env:
-          VRT_URL: https://vrt.koyori.app
-          VRT_PROJECT: koyori/task
-          VRT_TOKEN: ${{ secrets.VRT_TOKEN }}
+        uses: koyori-app/vrt-actions@7d644fc89f122c002733c50355353af25b680e8e # main @ 2026-08-07
+        with:
+          token: ${{ secrets.VRT_TOKEN }}
+          project: koyori/task
+          url: https://vrt.koyori.app
+          mode: storybook
+          dir: apps/frontend/storybook-static
+          only-changed: true
+          stats-json: apps/frontend/storybook-static/preview-stats.json
+          wait: true
