@@ -93,7 +93,7 @@ jobs:
         with:
           token: ${{ secrets.VRT_TOKEN }}
           project: koyori/task
-          url: https://vrt.koyori.app
+          url: https://vrt.koyori.app/api
           mode: storybook
           dir: apps/frontend/storybook-static
           only-changed: true
