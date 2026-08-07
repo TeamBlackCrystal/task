@@ -30,6 +30,11 @@ permissions:
 
 jobs:
   vrt:
+    # fork 由来の PR には repository secret (VRT_TOKEN) が渡らないため、
+    # 実行しても必ず失敗する。fork PR ではジョブごと skip する。
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -99,3 +104,6 @@ jobs:
           only-changed: true
           stats-json: apps/frontend/storybook-static/preview-stats.json
           wait: true
+          # 既定値 latest だと将来の CLI Release 公開で挙動が変わりうるため、
+          # 動作確認済みのバージョンに固定する。更新は Action SHA と同様に明示的な PR で行う。
+          cli-version: cli-v0.1.0
