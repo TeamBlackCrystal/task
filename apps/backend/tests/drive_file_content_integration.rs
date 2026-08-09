@@ -563,3 +563,69 @@ async fn update_content_concurrent_updates_stay_consistent() {
 
     app.cleanup_user(owner.id).await;
 }
+
+/// テナントレベルファイル（project_id が NULL）の配信もテナント所属者に限定される。
+///
+/// 配信エンドポイントは URL に tenant_id を含まずファイル ID だけで引くため、
+/// テナントレベルファイルを無条件に許可すると、ID を知る第三者が未認証で内容を取得できる。
+#[tokio::test]
+async fn tenant_level_file_content_requires_tenant_access() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    // folder_id を指定しないアップロードは project_id が NULL のテナントレベルファイルになる。
+    let uploaded = upload_file(
+        &app,
+        tp.tenant_id,
+        None,
+        "secret.txt",
+        "text/plain",
+        b"tenant secret",
+    )
+    .await;
+    let file_id = file_id_of(&uploaded);
+    let path = format!("/v1/drive/files/{file_id}/content");
+
+    // 対照: アップロードしたテナントのオーナーは従来どおり読める。
+    let allowed = app.get_with_session(&path).await;
+    assert_eq!(
+        allowed.status(),
+        StatusCode::OK,
+        "テナントのオーナーは読める"
+    );
+    assert_eq!(
+        allowed.text().await.expect("content body"),
+        "tenant secret",
+        "内容が欠けずに取得できる"
+    );
+
+    // 未認証では読めない。
+    app.reset_session_client();
+    let anonymous = app.get(&path).await;
+    assert_eq!(
+        anonymous.status(),
+        StatusCode::FORBIDDEN,
+        "未認証では読めない"
+    );
+
+    // 別テナントのユーザーでも読めない。
+    let outsider = app.insert_user(false, false).await;
+    app.insert_tenant_project(outsider.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&outsider.email, &outsider.password)
+        .await;
+    let cross_tenant = app.get(&path).await;
+    assert_eq!(
+        cross_tenant.status(),
+        StatusCode::FORBIDDEN,
+        "別テナントのユーザーは読めない"
+    );
+
+    app.cleanup_user(outsider.id).await;
+    app.cleanup_user(owner.id).await;
+}
