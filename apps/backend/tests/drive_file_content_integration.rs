@@ -563,3 +563,61 @@ async fn update_content_concurrent_updates_stay_consistent() {
 
     app.cleanup_user(owner.id).await;
 }
+
+/// アップロードされた HTML は、ブラウザがその場でレンダリングできない形で配信される。
+///
+/// 配信は API と同一オリジンで行われるため、`Content-Disposition: inline` と
+/// クライアント申告の `Content-Type` をそのまま返すと、保存された HTML がセッション
+/// Cookie の届くオリジンで実行できてしまう（stored XSS）。
+#[tokio::test]
+async fn content_delivery_does_not_render_uploaded_html() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    let body = b"<script>alert(document.domain)</script>";
+    let uploaded = upload_file(&app, tp.tenant_id, None, "payload.html", "text/html", body).await;
+    let file_id = file_id_of(&uploaded);
+
+    let response = app
+        .get_with_session(&format!("/v1/drive/files/{file_id}/content"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let disposition = response
+        .headers()
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Content-Disposition が付く")
+        .to_string();
+    assert!(
+        disposition.starts_with("attachment;"),
+        "HTML は inline ではなく attachment で配信される: {disposition}"
+    );
+
+    let nosniff = response
+        .headers()
+        .get(reqwest::header::HeaderName::from_static(
+            "x-content-type-options",
+        ))
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    assert_eq!(
+        nosniff.as_deref(),
+        Some("nosniff"),
+        "MIME スニッフィングを禁止するヘッダーが付く"
+    );
+
+    // 対照: 配信そのものは成功し、内容も欠けていない（過剰な拒否になっていない）。
+    assert_eq!(
+        response.text().await.expect("content body").as_bytes(),
+        body,
+        "内容は変わらず取得できる"
+    );
+
+    app.cleanup_user(owner.id).await;
+}
