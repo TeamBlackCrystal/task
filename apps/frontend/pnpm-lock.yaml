@@ -115,8 +115,8 @@ importers:
         specifier: 6.6.1
         version: 6.6.1(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/playwright':
-        specifier: 7.4.1
-        version: 7.4.1(@types/node@24.13.3)(supports-color@10.2.2)
+        specifier: 7.4.3
+        version: 7.4.3(@types/node@24.13.3)(supports-color@10.2.2)
       '@chromatic-com/storybook':
         specifier: 5.2.1
         version: 5.2.1(storybook@10.5.5(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite-plus@0.2.5(@types/node@24.13.3)(@vitejs/devtools@0.4.10)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.5)(esbuild@0.28.1)(happy-dom@20.11.1)(jiti@2.7.0)(publint@0.3.21)(typescript@6.0.3)))
@@ -232,8 +232,8 @@ packages:
     resolution: {integrity: sha512-VQjt/WohF49NNXVGBNctMAqHV+mTBL+gE2oa+Sxg7cRdjGY01JO4nBqy0mhNWJ0VUuGsWohyhzrQYHhx35L7PA==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/browser@6.4.4':
-    resolution: {integrity: sha512-fiA4OZBEtQ5dfBxmx3BTV1n9PcogokZoTBHI0+ylNAzBbHTQMqICUgPCqKDVh2fINkmzIEeU5G408nJ2HJ8ffg==}
+  '@argos-ci/browser@6.4.5':
+    resolution: {integrity: sha512-8qWtsOXG752VTAI6iPeHZyMKLSqN9jqdAqZZMk0Q4+j5WSPX76K5a3feV8nBlSqpr1O4RP2/GWYVoxkGdzJr3w==}
     engines: {node: '>=22.0.0'}
 
   '@argos-ci/cli@6.6.1':
@@ -241,16 +241,12 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@argos-ci/core@6.7.1':
-    resolution: {integrity: sha512-sW+y56cOWDP5moJjezrp8XqqyDH/4QKEazZZelc8yWBA7K3zm0cMaSwUPJScxvHSbZL/3g7yiZbGPe8aDFhaJg==}
-    engines: {node: '>=22.0.0'}
-
   '@argos-ci/core@6.7.2':
     resolution: {integrity: sha512-/hKfytEru+xebSt4OctjuIHwOPWFwchsDGR/Odcaszbf6sUcxMzu3IrSj/PDC0FD/hYiUCDTPDsYPfxf564sMg==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/playwright@7.4.1':
-    resolution: {integrity: sha512-lzQCC+dZ4vjDrMVy/p+6HgdMTPJ7AEXuebsNAp2wrw8uUXuCVQIu9LucIID7ahcka7N+tMRwp7XmHpdCs8vZZw==}
+  '@argos-ci/playwright@7.4.3':
+    resolution: {integrity: sha512-qD0ixfr2BmUT4iRT0j55OZ4T1gTgI6YE3BTC2sJwakMYtaQFuAwyIge87HoVHaK4hCF1u+JyqkDqe+3cg8xUmA==}
     engines: {node: '>=22.0.0'}
 
   '@argos-ci/util@4.1.0':
@@ -3784,6 +3780,10 @@ packages:
     resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
 
+  chalk@6.0.0:
+    resolution: {integrity: sha512-2uNTXIuTTxk7ciZgAU1BQcgnchcG0xXnrs6jzkQfj9SsRa9M2s5zE8WT96hS6KmG4MzWHSrvH43DF1m4XRkrFg==}
+    engines: {node: '>=22'}
+
   change-case@5.4.4:
     resolution: {integrity: sha512-HRQyTk2/YPEkt9TnUPbOpr64Uw3KOicFWPVBb+xiHvd6eBx/qPr9xqfBFDT8P2vWsvvz4jbEkfDe71W3VyNu2w==}
 
@@ -6652,7 +6652,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@argos-ci/browser@6.4.4': {}
+  '@argos-ci/browser@6.4.5': {}
 
   '@argos-ci/cli@6.6.1(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
@@ -6661,21 +6661,6 @@ snapshots:
       commander: 15.0.0
       open: 11.0.0
       ora: 9.4.1
-    transitivePeerDependencies:
-      - '@types/node'
-      - supports-color
-
-  '@argos-ci/core@6.7.1(@types/node@24.13.3)(supports-color@10.2.2)':
-    dependencies:
-      '@argos-ci/api-client': 0.28.0(supports-color@10.2.2)
-      '@argos-ci/util': 4.1.0
-      convict: 6.2.5
-      debug: 4.4.3(supports-color@10.2.2)
-      fast-glob: 3.3.3
-      mime-types: 3.0.2
-      p-retry: 8.0.0
-      sharp: 0.35.3(@types/node@24.13.3)
-      tmp: 0.2.7
     transitivePeerDependencies:
       - '@types/node'
       - supports-color
@@ -6695,12 +6680,12 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/playwright@7.4.1(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/playwright@7.4.3(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
-      '@argos-ci/browser': 6.4.4
-      '@argos-ci/core': 6.7.1(@types/node@24.13.3)(supports-color@10.2.2)
+      '@argos-ci/browser': 6.4.5
+      '@argos-ci/core': 6.7.2(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/util': 4.1.0
-      chalk: 5.6.2
+      chalk: 6.0.0
       debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - '@types/node'
@@ -9923,6 +9908,8 @@ snapshots:
       supports-color: 7.2.0
 
   chalk@5.6.2: {}
+
+  chalk@6.0.0: {}
 
   change-case@5.4.4: {}
 

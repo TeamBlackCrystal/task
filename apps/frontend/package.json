@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@argos-ci/cli": "6.6.1",
-    "@argos-ci/playwright": "7.4.1",
+    "@argos-ci/playwright": "7.4.3",
     "@chromatic-com/storybook": "5.2.1",
     "@koyori-app/oxlint-plugin-api-path-params": "workspace:*",
     "@sentry/vite-plugin": "5.4.0",
