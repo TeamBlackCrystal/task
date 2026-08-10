@@ -13,7 +13,7 @@
 //! ブラウザにブロックされる）ため CSRF の対象外。Bearer ヘッダが付いているリクエストは
 //! Origin 検査そのものをスキップする。この免除が Cookie セッションに波及しないよう、
 //! セッション Cookie 専用の extractor（`CurrentUser` / `AdminUser` / `LoggedInUser` /
-//! `HalfAuthedUser`）は Bearer ヘッダが付いているリクエストを 403 で拒否する。
+//! `HalfAuthedUser`）は Bearer ヘッダが付いているリクエストを拒否する。
 
 use axum::{
     body::Body,
