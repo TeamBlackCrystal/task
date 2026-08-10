@@ -141,6 +141,7 @@ async fn can_access_file_content(
     let Some(auth_user) = &auth.0 else {
         return Err(AppError::Forbidden);
     };
+    auth_user.require_scope(Scope::ReadDrive)?;
 
     // この経路は URL に tenant_id を含まず、ファイル ID だけで引く。テナントレベルファイル
     // （project_id が NULL）を無条件に許可すると、ID を知る第三者に内容が渡るため、

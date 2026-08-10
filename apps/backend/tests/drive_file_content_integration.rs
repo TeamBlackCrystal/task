@@ -3,7 +3,11 @@ mod common;
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use common::TestApp;
-use entity::{drive_folders, project_members, projects, tenants};
+use entity::{
+    drive_folder_shares, drive_folders, personal_tokens, project_members, projects,
+    scopes::{Scope, ScopeList},
+    tenants,
+};
 use reqwest::multipart::{Form, Part};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use uuid::Uuid;
@@ -49,6 +53,68 @@ async fn insert_project_folder(
     .await
     .expect("insert project folder");
     folder_id
+}
+
+async fn insert_tenant_folder(app: &TestApp, tenant_id: Uuid, created_by: Uuid) -> Uuid {
+    let folder_id = Uuid::new_v4();
+    drive_folders::ActiveModel {
+        id: Set(folder_id),
+        name: Set("tenant-folder".into()),
+        parent_id: Set(None),
+        tenant_id: Set(tenant_id),
+        project_id: Set(None),
+        created_by: Set(created_by),
+        created_at: Set(Utc::now().into()),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert tenant folder");
+    folder_id
+}
+
+async fn insert_pat(app: &TestApp, user_id: Uuid, tenant_id: Uuid, scopes: Vec<Scope>) -> String {
+    let (token, token_hash) =
+        backend::utils::auth::generate_personal_token(&app.state.settings.personal_token_secret)
+            .expect("generate pat");
+    personal_tokens::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        name: Set("drive-content-test".into()),
+        token_last_four: Set(token[token.len().saturating_sub(4)..].to_string()),
+        token_hash: Set(token_hash),
+        expires_at: Set(None),
+        last_used_at: Set(None),
+        revoked: Set(false),
+        user_id: Set(user_id),
+        scopes: Set(ScopeList(scopes)),
+        tenant_id: Set(tenant_id),
+        allowed_project_ids: Set(None),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert pat");
+    token
+}
+
+async fn insert_token_share(
+    app: &TestApp,
+    folder_id: Uuid,
+    created_by: Uuid,
+    token: &str,
+    expires_at: Option<DateTime<Utc>>,
+) {
+    drive_folder_shares::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        folder_id: Set(folder_id),
+        shared_with_user_id: Set(None),
+        share_token: Set(Some(token.into())),
+        permission: Set(drive_folder_shares::SharePermission::Viewer),
+        created_by: Set(created_by),
+        expires_at: Set(expires_at.map(Into::into)),
+        created_at: Set(Utc::now().into()),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert token share");
 }
 
 async fn add_member(app: &TestApp, project_id: Uuid, user_id: Uuid) {
@@ -627,5 +693,121 @@ async fn tenant_level_file_content_requires_tenant_access() {
     );
 
     app.cleanup_user(outsider.id).await;
+    app.cleanup_user(owner.id).await;
+}
+
+/// PAT で配信エンドポイントを読む場合も read:drive が必要。
+/// 共有トークン経路は PAT スコープと独立しており、未認証のまま利用できる。
+#[tokio::test]
+async fn tenant_level_file_content_enforces_pat_scope_but_allows_share_token() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let folder_id = insert_tenant_folder(&app, tp.tenant_id, owner.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    let uploaded = upload_file(
+        &app,
+        tp.tenant_id,
+        Some(folder_id),
+        "shared-secret.txt",
+        "text/plain",
+        b"shared tenant secret",
+    )
+    .await;
+    let file_id = file_id_of(&uploaded);
+    let path = format!("/v1/drive/files/{file_id}/content");
+
+    let pat_without_drive =
+        insert_pat(&app, owner.id, tp.tenant_id, vec![Scope::ReadProject]).await;
+    let forbidden = app.get_with_bearer(&path, &pat_without_drive).await;
+    assert_eq!(
+        forbidden.status(),
+        StatusCode::FORBIDDEN,
+        "read:drive を持たない PAT は読めない"
+    );
+
+    let pat_with_drive = insert_pat(&app, owner.id, tp.tenant_id, vec![Scope::ReadDrive]).await;
+    let allowed = app.get_with_bearer(&path, &pat_with_drive).await;
+    assert_eq!(
+        allowed.status(),
+        StatusCode::OK,
+        "read:drive を持つ PAT は読める"
+    );
+
+    let valid_token = "valid-tenant-folder-share";
+    insert_token_share(&app, folder_id, owner.id, valid_token, None).await;
+    app.reset_session_client();
+    let shared = app.get(&format!("{path}?token={valid_token}")).await;
+    assert_eq!(
+        shared.status(),
+        StatusCode::OK,
+        "有効な共有トークンは認証や PAT スコープなしで読める"
+    );
+    assert_eq!(
+        shared.text().await.expect("shared content body"),
+        "shared tenant secret"
+    );
+
+    app.cleanup_user(owner.id).await;
+}
+
+/// テナントレベルフォルダの共有トークンは、有効なものだけを受け入れる。
+#[tokio::test]
+async fn tenant_level_folder_share_token_rejects_invalid_and_expired_tokens() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let folder_id = insert_tenant_folder(&app, tp.tenant_id, owner.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    let uploaded = upload_file(
+        &app,
+        tp.tenant_id,
+        Some(folder_id),
+        "token-guarded.txt",
+        "text/plain",
+        b"token guarded",
+    )
+    .await;
+    let file_id = file_id_of(&uploaded);
+    let path = format!("/v1/drive/files/{file_id}/content");
+
+    let valid_token = "valid-folder-token";
+    let expired_token = "expired-folder-token";
+    insert_token_share(&app, folder_id, owner.id, valid_token, None).await;
+    insert_token_share(
+        &app,
+        folder_id,
+        owner.id,
+        expired_token,
+        Some(Utc::now() - chrono::Duration::minutes(1)),
+    )
+    .await;
+
+    app.reset_session_client();
+    let valid = app.get(&format!("{path}?token={valid_token}")).await;
+    assert_eq!(valid.status(), StatusCode::OK, "有効なトークンは読める");
+
+    let invalid = app.get(&format!("{path}?token=not-a-share-token")).await;
+    assert_eq!(
+        invalid.status(),
+        StatusCode::FORBIDDEN,
+        "無効なトークンは読めない"
+    );
+
+    let expired = app.get(&format!("{path}?token={expired_token}")).await;
+    assert_eq!(
+        expired.status(),
+        StatusCode::FORBIDDEN,
+        "期限切れトークンは読めない"
+    );
+
     app.cleanup_user(owner.id).await;
 }
