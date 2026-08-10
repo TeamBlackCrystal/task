@@ -106,4 +106,4 @@ jobs:
           wait: true
           # 既定値 latest だと将来の CLI Release 公開で挙動が変わりうるため、
           # 動作確認済みのバージョンに固定する。更新は Action SHA と同様に明示的な PR で行う。
-          cli-version: cli-v0.1.0
+          cli-version: cli-v0.1.1
