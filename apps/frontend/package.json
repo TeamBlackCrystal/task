@@ -69,7 +69,7 @@
     "@tanstack/vue-devtools": "0.2.23",
     "@tanstack/vue-query-devtools": "6.1.38",
     "@types/node": "24.13.3",
-    "@vitejs/devtools": "0.4.10",
+    "@vitejs/devtools": "0.4.12",
     "@vitejs/plugin-vue": "6.0.8",
     "@vitest/browser-playwright": "4.1.10",
     "@vitest/coverage-v8": "4.1.10",
