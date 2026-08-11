@@ -2,6 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
+use uuid::Uuid;
 
 /// セッション専用エンドポイントは `Authorization: Bearer` 付きのリクエストを拒否する。
 ///
@@ -37,6 +38,41 @@ async fn current_user_endpoint_rejects_bearer_header() {
         rejected.status(),
         StatusCode::UNAUTHORIZED,
         "Bearer 付きのセッションリクエストは拒否される"
+    );
+
+    app.cleanup_user(user.id).await;
+}
+
+/// Bearer による CSRF Origin 検査の免除を、Cookie セッション認証へ流用できない。
+#[tokio::test]
+async fn current_user_state_change_rejects_cross_origin_bearer_with_session_cookie() {
+    let mut app = TestApp::new().await;
+
+    let user = app.insert_user(false, false).await;
+    app.reset_session_client();
+    app.login_session_no_content(&user.email, &user.password)
+        .await;
+
+    // Bearer があるため CSRF ミドルウェアは許可外 Origin を検査せず通す。
+    // その後 CurrentUser が Cookie セッションへのフォールバックを拒否しなければ、
+    // 状態変更ハンドラまで到達してしまう。
+    let rejected = app
+        .client()
+        .patch(format!(
+            "{}/v1/auth/passkeys/{}",
+            app.base_url(),
+            Uuid::new_v4()
+        ))
+        .header(reqwest::header::ORIGIN, "https://attacker.example")
+        .header(reqwest::header::AUTHORIZATION, "Bearer not-a-real-token")
+        .json(&serde_json::json!({ "name": "hijacked" }))
+        .send()
+        .await
+        .expect("cross-origin passkey rename with bearer and session cookie");
+    assert_eq!(
+        rejected.status(),
+        StatusCode::UNAUTHORIZED,
+        "CSRF 免除された Bearer 付き状態変更でもセッション認証へフォールバックしない"
     );
 
     app.cleanup_user(user.id).await;
