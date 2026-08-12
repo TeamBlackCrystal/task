@@ -11,9 +11,9 @@
 //! クロスサイトの攻撃者ページから偽装できない（`Authorization` ヘッダ付きのクロスオリジン
 //! リクエストは常に CORS プリフライトの対象になり、許可外オリジンなら実リクエスト自体が
 //! ブラウザにブロックされる）ため CSRF の対象外。Bearer ヘッダが付いているリクエストは
-//! Origin 検査そのものをスキップする。セッション Cookie 専用の extractor（`CurrentUser` 等）
-//! を使うエンドポイントに誤って Bearer ヘッダが付いていても、そちらは Bearer を無視して
-//! Cookie セッションを要求するため安全性は変わらない。
+//! Origin 検査そのものをスキップする。この免除が Cookie セッションに波及しないよう、
+//! セッション Cookie 専用の extractor（`CurrentUser` / `AdminUser` / `LoggedInUser` /
+//! `HalfAuthedUser`）は Bearer ヘッダが付いているリクエストを拒否する。
 
 use axum::{
     body::Body,

@@ -430,7 +430,8 @@ GET /v1/drive/files/{id}/content?token={share_token}
   - 有効な `share_token`（`?token=` クエリパラメータ）
   - いずれも満たさない場合 → `403 Forbidden`
 - `Content-Type` を `mime_type` から設定
-- `Content-Disposition: inline`（画像はブラウザで表示）
+- `Content-Disposition: attachment` を常に設定し、ブラウザ上で同一オリジンのコンテンツとして実行させない
+- API 共通ミドルウェアが `X-Content-Type-Options: nosniff` を全レスポンスに設定し、宣言した `Content-Type` 以外への MIME sniffing を禁止する
 - ストレージバックエンドの `get_stream()` でストリーミング配信（メモリに全展開しない）
 
 ---

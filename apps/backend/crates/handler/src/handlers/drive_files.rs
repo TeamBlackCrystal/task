@@ -754,7 +754,9 @@ pub async fn get_file_content(
         .map_err(storage_to_app_error)?;
 
     let body = Body::from_stream(stream);
-    let disposition = format!("inline; filename=\"{}\"", sanitize_filename(&file.name));
+    // mime_type はアップロード時のクライアント申告に由来しうる（text/html も保存できる）。
+    // inline で返すとブラウザが API と同一オリジンで内容を実行してしまうため、常に attachment で配信する。
+    let disposition = format!("attachment; filename=\"{}\"", sanitize_filename(&file.name));
 
     Response::builder()
         .status(StatusCode::OK)
