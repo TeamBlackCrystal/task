@@ -384,6 +384,11 @@ impl FromRequestParts<AppState> for AdminUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // PAT ではこのエンドポイント群を認証できない。従来もセッション不在で 401 を返して
+        // いたため、拒否のステータスは変えない。
+        if bearer_token_from_parts(parts).is_some() {
+            return Err(AuthError::Unauthorized);
+        }
         let session = session_from_parts(parts, state).await?;
         if session_is_half_authed(&session) {
             return Err(AuthError::Forbidden);
@@ -417,6 +422,11 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // PAT ではこのエンドポイント群を認証できない。従来もセッション不在で 401 を返して
+        // いたため、拒否のステータスは変えない。
+        if bearer_token_from_parts(parts).is_some() {
+            return Err(AuthError::Unauthorized);
+        }
         let session = session_from_parts(parts, state).await?;
         if session_is_half_authed(&session) {
             return Err(AuthError::Forbidden);
