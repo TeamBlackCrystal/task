@@ -52,7 +52,10 @@ const form = useForm({
       await queryClient.invalidateQueries({ queryKey: meQueryOptions().queryKey });
       window.location.assign('/');
     } catch (e) {
-      if ((e as { response?: { status?: number } }).response?.status === 403) {
+      // 403 はメール未認証以外（CSRF 拒否・凍結など）でも返るため、
+      // ステータスだけでなくエラーボディの message で判定する
+      const err = e as { response?: { status?: number }; error?: { message?: string } };
+      if (err.response?.status === 403 && err.error?.message === 'email-not-verified') {
         unverifiedEmail.value = value.email;
       } else {
         submitError.value = 'メールアドレスまたはパスワードが正しくありません。';
