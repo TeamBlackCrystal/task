@@ -128,12 +128,7 @@ async fn can_access_file_content(
     auth: &OptionalAuthUser,
     share_token: Option<&str>,
 ) -> Result<(), AppError> {
-    if file.project_id.is_none() {
-        return Ok(());
-    }
-
-    let project_id = file.project_id.expect("checked is_none above");
-
+    // 共有トークンはフォルダ単位で判定する。テナントレベルファイルも同じ経路に載せる。
     if let Some(token) = share_token.filter(|t| !t.is_empty()) {
         if let Some(folder_id) = file.folder_id
             && folder_has_token_share(state, folder_id, token).await?
@@ -145,6 +140,16 @@ async fn can_access_file_content(
 
     let Some(auth_user) = &auth.0 else {
         return Err(AppError::Forbidden);
+    };
+    auth_user.require_scope(Scope::ReadDrive)?;
+
+    // この経路は URL に tenant_id を含まず、ファイル ID だけで引く。テナントレベルファイル
+    // （project_id が NULL）を無条件に許可すると、ID を知る第三者に内容が渡るため、
+    // ファイル自身の tenant_id に対してテナント境界を確認する。
+    let Some(project_id) = file.project_id else {
+        return auth_user
+            .ensure_tenant_access(state, file.tenant_id, None)
+            .await;
     };
 
     if is_tenant_owner(&state.db, file.tenant_id, auth_user.user_id).await? {
