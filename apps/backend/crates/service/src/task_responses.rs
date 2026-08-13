@@ -8,6 +8,10 @@ use payload::labels::LabelResponse;
 use payload::tasks::{TaskAssigneeSummary, TaskResponse};
 use payload::users::UserSummary;
 
+fn sort_task_labels(task_labels: &mut [LabelResponse]) {
+    task_labels.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+}
+
 /// tasks::Model の集合からユーザー情報（作成者・担当者）とラベルを埋め込んだ
 /// TaskResponse を組み立てる。関連はバッチ取得（追加クエリ4本）。
 pub async fn build_task_responses<C: ConnectionTrait>(
@@ -43,6 +47,10 @@ pub async fn build_task_responses<C: ConnectionTrait>(
                 .or_default()
                 .push(label.clone());
         }
+    }
+    // task_labels の行順は不定なので、名前順（同名時は ID 順）で決定的にする。
+    for task_labels in labels_by_task.values_mut() {
+        sort_task_labels(task_labels);
     }
 
     let mut user_ids: HashSet<Uuid> = task_models.iter().map(|t| t.created_by).collect();
@@ -90,4 +98,39 @@ pub async fn build_task_response<C: ConnectionTrait>(
     responses
         .pop()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("empty task response batch")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn label(id: u128, name: &str) -> LabelResponse {
+        LabelResponse {
+            id: Uuid::from_u128(id),
+            name: name.into(),
+            description: String::new(),
+            color: "#000000".into(),
+            icon_url: None,
+            project_id: None,
+        }
+    }
+
+    #[test]
+    fn task_labels_are_sorted_by_name_then_id() {
+        let mut labels = vec![label(3, "beta"), label(2, "alpha"), label(1, "alpha")];
+
+        sort_task_labels(&mut labels);
+
+        assert_eq!(
+            labels
+                .iter()
+                .map(|label| (label.name.as_str(), label.id))
+                .collect::<Vec<_>>(),
+            vec![
+                ("alpha", Uuid::from_u128(1)),
+                ("alpha", Uuid::from_u128(2)),
+                ("beta", Uuid::from_u128(3)),
+            ]
+        );
+    }
 }

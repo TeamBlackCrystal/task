@@ -18,6 +18,12 @@ type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
 type MutatingField = EditableField | 'status_id' | 'labels';
 
+function compareStrings(left: string, right: string) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export interface UseTaskDetailParams {
   /** ルートの tenant セグメント（表示ID）。テナント UUID 解決に使う */
   tenantDisplayId: MaybeRefOrGetter<string>;
@@ -355,13 +361,17 @@ export function useTaskDetail(params: UseTaskDetailParams) {
   function onSaveLabels(labelIds: string[]) {
     const current = taskQuery.data.value;
     if (!current) return;
-    const currentIds = [...current.labels.map((l) => l.id)].sort();
+    const currentIds = current.labels.map((label) => label.id).sort();
     const nextIds = [...labelIds].sort();
     if (currentIds.length === nextIds.length && currentIds.every((id, i) => id === nextIds[i])) {
       return;
     }
-    // 楽観表示用にプロジェクトラベル一覧から選択分を解決する（並びも一覧に合わせる）
-    const chosen = (labelsQuery.data.value ?? []).filter((label) => labelIds.includes(label.id));
+    // 楽観値をサーバレスポンスと同じ名前順（同名時は ID 順）に揃える
+    const chosen = (labelsQuery.data.value ?? [])
+      .filter((label) => labelIds.includes(label.id))
+      .sort(
+        (left, right) => compareStrings(left.name, right.name) || compareStrings(left.id, right.id),
+      );
     mutateTask({ label_ids: labelIds }, { labels: chosen }, 'labels');
   }
 

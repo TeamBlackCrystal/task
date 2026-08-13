@@ -25,6 +25,7 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       progress_pct: 0,
       soft_deadline: null,
       hard_deadline: null,
+      labels: [],
     };
 
     function jsonResponse(body: unknown, status = 200) {
@@ -38,7 +39,10 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
     const putControl: { resolve?: (task: Record<string, unknown>) => void } = {};
 
     // ラベル一覧 GET の応答をテストごとに切り替える
-    const labelsControl: { mode: 'success' | 'error' | 'pending' } = { mode: 'success' };
+    const labelsControl: { mode: 'success' | 'error' | 'pending'; data: unknown[] } = {
+      mode: 'success',
+      data: [],
+    };
 
     const fetchMock = async (input: Request) => {
       const url = input.url;
@@ -53,7 +57,7 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       if (method === 'GET' && url.endsWith('/labels')) {
         if (labelsControl.mode === 'pending') return new Promise<Response>(() => {});
         if (labelsControl.mode === 'error') return jsonResponse({ message: 'boom' }, 500);
-        return jsonResponse([]);
+        return jsonResponse(labelsControl.data);
       }
       if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
         return new Promise<Response>((resolve) => {
@@ -157,6 +161,7 @@ describe('useTaskDetail のキャッシュ同期', () => {
     onAfterDelete = vi.fn<(listHref: string) => void>();
     putControl.resolve = undefined;
     labelsControl.mode = 'success';
+    labelsControl.data = [];
   });
 
   it('ラベル一覧の取得失敗は projectLabelsError として公開し、詳細全体の isError にはしない', async () => {
@@ -215,6 +220,36 @@ describe('useTaskDetail のキャッシュ同期', () => {
 
     expect(queryClient.getQueryState(searchQueryKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(listQueryKey)?.isInvalidated).toBe(true);
+  });
+
+  it('ラベル更新の楽観値を名前順、同名時は ID 順に並べる', async () => {
+    const alpha1 = {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'alpha',
+      description: '',
+      color: '#111111',
+      icon_url: null,
+      project_id: PROJECT_ID,
+    };
+    const alpha2 = { ...alpha1, id: '00000000-0000-0000-0000-000000000002' };
+    const beta = {
+      ...alpha1,
+      id: '00000000-0000-0000-0000-000000000003',
+      name: 'beta',
+    };
+    labelsControl.data = [beta, alpha2, alpha1];
+    mountHost();
+    await vi.waitFor(() => {
+      expect(detail.projectLabels.value).toEqual([beta, alpha2, alpha1]);
+    });
+
+    detail.onSaveLabels([beta.id, alpha2.id, alpha1.id]);
+    await vi.waitFor(() => {
+      expect(detail.displayTask.value?.labels).toEqual([alpha1, alpha2, beta]);
+    });
+
+    putControl.resolve!({ ...baseTask, labels: [alpha1, alpha2, beta] });
+    await flushPromises();
   });
 
   it('削除成功時に検索キャッシュが invalidate され、詳細キャッシュは除去される', async () => {
