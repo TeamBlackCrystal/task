@@ -718,6 +718,34 @@ pub async fn update_task(
     }
     active.updated_at = Set(chrono::Utc::now().into());
 
+    if let Some(ref label_ids) = payload.label_ids {
+        let mut unique = label_ids.clone();
+        unique.sort();
+        unique.dedup();
+        if !unique.is_empty() {
+            let in_project = labels::Entity::find()
+                .filter(labels::Column::Id.is_in(unique.clone()))
+                .filter(labels::Column::ProjectId.eq(project_id))
+                .all(&txn)
+                .await?;
+            if in_project.len() != unique.len() {
+                return Err(AppError::BadRequest);
+            }
+        }
+        task_labels::Entity::delete_many()
+            .filter(task_labels::Column::TaskId.eq(task_id))
+            .exec(&txn)
+            .await?;
+        for lid in unique {
+            task_labels::ActiveModel {
+                task_id: Set(task_id),
+                label_id: Set(lid),
+            }
+            .insert(&txn)
+            .await?;
+        }
+    }
+
     if parent_changes {
         let fresh = tasks::Entity::find_by_id(task_id)
             .filter(tasks::Column::ProjectId.eq(project_id))

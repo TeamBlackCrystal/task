@@ -2803,6 +2803,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             is_archived: boolean;
+            labels: components["schemas"]["LabelResponse"][];
             /** Format: uuid */
             milestone_id?: string | null;
             /** Format: uuid */
@@ -2990,6 +2991,8 @@ export interface components {
             /** Format: date-time */
             hard_deadline?: string | null;
             is_archived?: boolean | null;
+            /** @description タスクのラベルをこの ID 集合で置き換える（`Some(vec![])` で全解除）。None は変更なし */
+            label_ids?: string[] | null;
             /** Format: uuid */
             milestone_id?: string | null;
             /** Format: uuid */

@@ -20088,6 +20088,7 @@
           "progress_pct",
           "is_archived",
           "assignees",
+          "labels",
           "created_at",
           "updated_at"
         ],
@@ -20138,6 +20139,12 @@
           },
           "is_archived": {
             "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LabelResponse"
+            }
           },
           "milestone_id": {
             "type": ["string", "null"],
@@ -20603,6 +20610,14 @@
           },
           "is_archived": {
             "type": ["boolean", "null"]
+          },
+          "label_ids": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "タスクのラベルをこの ID 集合で置き換える（`Some(vec![])` で全解除）。None は変更なし"
           },
           "milestone_id": {
             "type": ["string", "null"],
