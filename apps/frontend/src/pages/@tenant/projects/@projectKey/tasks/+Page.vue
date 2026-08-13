@@ -65,7 +65,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 type TasksListQueryKeyParams = {
   params?: {
     path?: { tenant_id?: string; project_id?: string | null };
-    query?: { limit?: number; offset?: number };
+    query?: { limit?: number; offset?: number; label_id?: string };
   };
 };
 
@@ -267,7 +267,14 @@ const tasksQuery = useQuery({
   placeholderData: (previousData, previousQuery) => {
     const prevParams = previousQuery?.queryKey[2] as TasksListQueryKeyParams | undefined;
     const prevProjectId = prevParams?.params?.path?.project_id;
-    if (prevProjectId && projectId.value && prevProjectId === projectId.value) {
+    // ラベルフィルタが変わったときは旧条件のデータを見せない（ページング時のみ維持）
+    const prevLabelId = prevParams?.params?.query?.label_id ?? null;
+    if (
+      prevProjectId &&
+      projectId.value &&
+      prevProjectId === projectId.value &&
+      prevLabelId === selectedLabelId.value
+    ) {
       return keepPreviousData(previousData);
     }
     return undefined;
@@ -670,6 +677,21 @@ const table = useVueTable({
             <Button size="sm" class="ml-auto h-8 text-xs" @click="isCreateDialogOpen = true">
               新規タスク
             </Button>
+            <!-- ラベル取得失敗はタスク一覧をブロックせず、ツールバー内で再試行を出す -->
+            <div
+              v-if="!isSearchActive && labelsQuery.isError.value && !projectLabels.length"
+              class="flex items-center gap-1.5 text-xs text-destructive"
+            >
+              <span>ラベルの取得に失敗しました</span>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs"
+                @click="labelsQuery.refetch()"
+              >
+                再試行
+              </Button>
+            </div>
             <DropdownMenu v-if="!isSearchActive && projectLabels.length">
               <DropdownMenuTrigger as-child>
                 <Button

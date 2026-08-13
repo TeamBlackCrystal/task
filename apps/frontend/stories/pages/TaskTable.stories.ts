@@ -294,6 +294,7 @@ function createMockFetch(
     rejectSearch?: boolean;
     rejectAll?: boolean;
     rejectTenantsList?: boolean;
+    rejectLabels?: boolean;
     hang?: boolean;
   } = {},
 ) {
@@ -316,6 +317,9 @@ function createMockFetch(
       return jsonResponse(overrides.statuses ?? sampleStatuses);
     }
     if (url.includes('/labels')) {
+      if (overrides.rejectLabels) {
+        return jsonResponse({ message: 'server error' }, 500);
+      }
       return jsonResponse(sampleLabels);
     }
     if (url.includes('/tasks/search')) {
@@ -388,6 +392,17 @@ const mktSampleTasks = {
   total: 1,
 };
 
+const mktLabels = [
+  {
+    id: 'label-campaign',
+    name: 'campaign',
+    description: '',
+    color: '#f59e0b',
+    icon_url: null,
+    project_id: 'proj-mkt',
+  },
+];
+
 type ProjectSwitchMock = {
   restore: () => void;
   releaseMktTasks: () => void;
@@ -409,9 +424,16 @@ function createProjectSwitchMockFetch(): ProjectSwitchMock {
       url.includes('/v1/tenants/') &&
       url.includes('/projects') &&
       !url.includes('/tasks') &&
-      !url.includes('/statuses')
+      !url.includes('/statuses') &&
+      !url.includes('/labels')
     ) {
       return jsonResponse(sampleProjects);
+    }
+    if (url.includes('/labels') && url.includes('proj-mkt')) {
+      return jsonResponse(mktLabels);
+    }
+    if (url.includes('/labels')) {
+      return jsonResponse(sampleLabels);
     }
     if (url.includes('/statuses') && url.includes('proj-mkt')) {
       return jsonResponse(mktStatuses);
@@ -437,8 +459,66 @@ function createProjectSwitchMockFetch(): ProjectSwitchMock {
   };
 }
 
+/** ラベルフィルタ適用時（label_id=label-bug）のみ返す絞り込み結果 */
+const bugFilteredTasks = {
+  tasks: [sampleTasks.tasks[0]],
+  total: 1,
+};
+
+type LabelFilterMock = {
+  restore: () => void;
+  releaseFilteredTasks: () => void;
+};
+
+/** ラベル絞り込みリクエストだけを保留し、旧条件データの残留を検証できるモック */
+function createLabelFilterMockFetch(): LabelFilterMock {
+  const original = globalThis.fetch;
+  let releaseFilteredTasks: (() => void) | null = null;
+  const filteredTasksGate = new Promise<void>((resolve) => {
+    releaseFilteredTasks = resolve;
+  });
+
+  globalThis.fetch = fn().mockImplementation(async (req: Request) => {
+    const url = typeof req === 'string' ? req : req.url;
+    if (isListTenantsUrl(url)) {
+      return jsonResponse(sampleTenants(mockContext.routeParams.tenant));
+    }
+    if (
+      url.includes('/v1/tenants/') &&
+      url.includes('/projects') &&
+      !url.includes('/tasks') &&
+      !url.includes('/statuses') &&
+      !url.includes('/labels')
+    ) {
+      return jsonResponse(sampleProjects);
+    }
+    if (url.includes('/statuses')) {
+      return jsonResponse(sampleStatuses);
+    }
+    if (url.includes('/labels')) {
+      return jsonResponse(sampleLabels);
+    }
+    if (url.includes('/tasks') && url.includes('label_id=label-bug')) {
+      await filteredTasksGate;
+      return jsonResponse(bugFilteredTasks);
+    }
+    if (url.includes('/tasks')) {
+      return jsonResponse(sampleTasks);
+    }
+    return jsonResponse({});
+  });
+
+  return {
+    restore: () => {
+      globalThis.fetch = original;
+    },
+    releaseFilteredTasks: () => releaseFilteredTasks?.(),
+  };
+}
+
 let reactivePageContext: ReturnType<typeof reactive<typeof mockContext>> | null = null;
 let projectSwitchMock: ProjectSwitchMock | null = null;
+let labelFilterMock: LabelFilterMock | null = null;
 
 function storyDecoratorReactive() {
   return () => ({
@@ -673,6 +753,68 @@ export const ProjectSwitch: Story = {
     projectSwitchMock.releaseMktTasks();
     await expect(canvas.findByText('SNSキャンペーン企画')).resolves.toBeInTheDocument();
     await expect(canvas.queryByText(engTitle)).not.toBeInTheDocument();
+
+    // ラベルドロップダウンには切替先プロジェクトのラベルだけが並ぶ
+    // （プロジェクト一覧やENGのラベルが混入しない）
+    await userEvent.click(await canvas.findByRole('button', { name: 'ラベル' }));
+    const labelMenu = within(document.body);
+    await expect(
+      labelMenu.findByRole('menuitemradio', { name: /campaign/ }),
+    ).resolves.toBeInTheDocument();
+    await expect(labelMenu.queryByRole('menuitemradio', { name: /bug/ })).not.toBeInTheDocument();
+    await expect(
+      labelMenu.queryByRole('menuitemradio', { name: /エンジニアリング/ }),
+    ).not.toBeInTheDocument();
+  },
+};
+
+export const LabelFilter: Story = {
+  name: 'ラベルフィルタで旧条件タスク非表示',
+  beforeEach() {
+    labelFilterMock = createLabelFilterMockFetch();
+    return () => {
+      labelFilterMock?.restore();
+      labelFilterMock = null;
+    };
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    if (!labelFilterMock) {
+      throw new Error('label filter mock is not initialized');
+    }
+    const user = userEvent.setup();
+
+    const staleTitle = 'ログイン画面の UI 実装';
+    await expect(canvas.findByText(staleTitle)).resolves.toBeInTheDocument();
+
+    await user.click(await canvas.findByRole('button', { name: 'ラベル' }));
+    const menu = within(document.body);
+    await user.click(await menu.findByRole('menuitemradio', { name: /bug/ }));
+
+    // フィルタ済みレスポンスが返るまで、旧条件（未絞り込み）のタスクを表示しない
+    const pollUntil = performance.now() + 1000;
+    while (performance.now() < pollUntil) {
+      await expect(canvas.queryByText(staleTitle)).not.toBeInTheDocument();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    labelFilterMock.releaseFilteredTasks();
+    await expect(canvas.findByText('OAuth 対応を実装する')).resolves.toBeInTheDocument();
+    await expect(canvas.queryByText(staleTitle)).not.toBeInTheDocument();
+  },
+};
+
+export const LabelsApiError: Story = {
+  name: 'ラベル取得エラー',
+  beforeEach: () => createMockFetch({ rejectLabels: true }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // タスク一覧自体はブロックされない
+    await expect(canvas.findByText('OAuth 対応を実装する')).resolves.toBeInTheDocument();
+    // ラベル取得失敗はツールバー内でエラー表示＋再試行を出す
+    await expect(canvas.findByText('ラベルの取得に失敗しました')).resolves.toBeInTheDocument();
+    await expect(canvas.findByRole('button', { name: '再試行' })).resolves.toBeInTheDocument();
+    await expect(canvas.queryByRole('button', { name: 'ラベル' })).not.toBeInTheDocument();
   },
 };
 
