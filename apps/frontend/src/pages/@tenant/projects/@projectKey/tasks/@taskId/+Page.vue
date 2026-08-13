@@ -28,6 +28,8 @@ const {
   displayTask,
   statuses,
   projectLabels,
+  projectLabelsLoading,
+  projectLabelsError,
   selectedStatusId,
   statusUpdating,
   statusError,
@@ -77,6 +79,8 @@ function onDeleteDialogCancel(event: Event) {
     :project-key="projectKey"
     :statuses="statuses"
     :project-labels="projectLabels"
+    :project-labels-loading="projectLabelsLoading"
+    :project-labels-error="projectLabelsError"
     :status-id="selectedStatusId"
     :status-updating="statusUpdating"
     :status-error="statusError"

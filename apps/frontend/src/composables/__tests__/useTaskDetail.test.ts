@@ -10,55 +10,64 @@ const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as
 const TASK_SEARCH_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/search' as const;
 
 // vi.mock の factory から参照するため hoisted に置く
-const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, fetchMock } = vi.hoisted(() => {
-  const TENANT_ID = 'tenant-1';
-  const PROJECT_ID = 'project-1';
-  const TASK_SEQ_KEY = 'ENG-1';
+const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl, fetchMock } =
+  vi.hoisted(() => {
+    const TENANT_ID = 'tenant-1';
+    const PROJECT_ID = 'project-1';
+    const TASK_SEQ_KEY = 'ENG-1';
 
-  const baseTask = {
-    id: '00000000-0000-0000-0000-000000000010',
-    seq_key: TASK_SEQ_KEY,
-    title: '元のタイトル',
-    description: null,
-    status_id: 'status-1',
-    progress_pct: 0,
-    soft_deadline: null,
-    hard_deadline: null,
-  };
+    const baseTask = {
+      id: '00000000-0000-0000-0000-000000000010',
+      seq_key: TASK_SEQ_KEY,
+      title: '元のタイトル',
+      description: null,
+      status_id: 'status-1',
+      progress_pct: 0,
+      soft_deadline: null,
+      hard_deadline: null,
+    };
 
-  function jsonResponse(body: unknown, status = 200) {
-    return new Response(JSON.stringify(body), {
-      status,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  // PUT を保留して任意のタイミングで完了させるための deferred
-  const putControl: { resolve?: (task: Record<string, unknown>) => void } = {};
-
-  const fetchMock = async (input: Request) => {
-    const url = input.url;
-    const method = input.method.toUpperCase();
-
-    if (method === 'GET' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-      return jsonResponse(baseTask);
-    }
-    if (method === 'GET' && url.endsWith('/statuses')) {
-      return jsonResponse([]);
-    }
-    if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-      return new Promise<Response>((resolve) => {
-        putControl.resolve = (task) => resolve(jsonResponse(task));
+    function jsonResponse(body: unknown, status = 200) {
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
       });
     }
-    if (method === 'DELETE' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-      return new Response(null, { status: 204 });
-    }
-    return jsonResponse({ message: 'not found' }, 404);
-  };
 
-  return { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, fetchMock };
-});
+    // PUT を保留して任意のタイミングで完了させるための deferred
+    const putControl: { resolve?: (task: Record<string, unknown>) => void } = {};
+
+    // ラベル一覧 GET の応答をテストごとに切り替える
+    const labelsControl: { mode: 'success' | 'error' | 'pending' } = { mode: 'success' };
+
+    const fetchMock = async (input: Request) => {
+      const url = input.url;
+      const method = input.method.toUpperCase();
+
+      if (method === 'GET' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+        return jsonResponse(baseTask);
+      }
+      if (method === 'GET' && url.endsWith('/statuses')) {
+        return jsonResponse([]);
+      }
+      if (method === 'GET' && url.endsWith('/labels')) {
+        if (labelsControl.mode === 'pending') return new Promise<Response>(() => {});
+        if (labelsControl.mode === 'error') return jsonResponse({ message: 'boom' }, 500);
+        return jsonResponse([]);
+      }
+      if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+        return new Promise<Response>((resolve) => {
+          putControl.resolve = (task) => resolve(jsonResponse(task));
+        });
+      }
+      if (method === 'DELETE' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ message: 'not found' }, 404);
+    };
+
+    return { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl, fetchMock };
+  });
 
 vi.mock('@/lib/api-vue-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api-vue-query')>();
@@ -147,6 +156,29 @@ describe('useTaskDetail のキャッシュ同期', () => {
     });
     onAfterDelete = vi.fn<(listHref: string) => void>();
     putControl.resolve = undefined;
+    labelsControl.mode = 'success';
+  });
+
+  it('ラベル一覧の取得失敗は projectLabelsError として公開し、詳細全体の isError にはしない', async () => {
+    labelsControl.mode = 'error';
+    mountHost();
+    await flushPromises();
+
+    expect(detail.projectLabelsError.value).toBe(true);
+    expect(detail.projectLabelsLoading.value).toBe(false);
+    expect(detail.projectLabels.value).toEqual([]);
+    expect(detail.isError.value).toBe(false);
+    expect(detail.isLoading.value).toBe(false);
+  });
+
+  it('ラベル一覧の取得中は projectLabelsLoading が true になる', async () => {
+    labelsControl.mode = 'pending';
+    mountHost();
+    await flushPromises();
+
+    expect(detail.projectLabelsLoading.value).toBe(true);
+    expect(detail.projectLabelsError.value).toBe(false);
+    expect(detail.isLoading.value).toBe(false);
   });
 
   it('ペイン切替（unmount）後に完了した更新でも、詳細キャッシュ更新と一覧・検索の invalidate が走る', async () => {

@@ -291,12 +291,16 @@ function createMockFetch(
       url.includes('/v1/tenants/') &&
       url.includes('/projects') &&
       !url.includes('/tasks') &&
-      !url.includes('/statuses')
+      !url.includes('/statuses') &&
+      !url.includes('/labels')
     ) {
       return jsonResponse(overrides.projects ?? sampleProjects);
     }
     if (url.includes('/statuses')) {
       return jsonResponse(overrides.statuses ?? sampleStatuses);
+    }
+    if (url.includes('/labels')) {
+      return jsonResponse([]);
     }
     if (url.includes('/tasks/search')) {
       if (overrides.rejectSearch) {
@@ -311,7 +315,8 @@ function createMockFetch(
       const found = list.find(
         (t) => `${mockContext.routeParams.projectKey}-${t.seq_id}` === detailMatch[1],
       );
-      return jsonResponse(found ?? list[0]);
+      // 詳細レスポンスは labels を含む（一覧用フィクスチャには無いのでここで補う）
+      return jsonResponse({ ...(found ?? list[0]), labels: [] });
     }
     if (url.includes('/tasks')) {
       return jsonResponse(overrides.tasks ?? sampleTasks);

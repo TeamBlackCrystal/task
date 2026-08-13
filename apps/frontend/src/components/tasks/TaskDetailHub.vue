@@ -37,6 +37,8 @@ const props = defineProps<{
   statusUpdating?: boolean;
   statusError?: string | null;
   projectLabels?: LabelOption[];
+  projectLabelsLoading?: boolean;
+  projectLabelsError?: boolean;
   labelsUpdating?: boolean;
   labelsError?: string | null;
   fieldUpdating?: Partial<Record<EditableField, boolean>>;
@@ -403,14 +405,17 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
                     size="icon"
                     class="size-7"
                     aria-label="ラベルを編集"
-                    :disabled="labelsUpdating"
+                    :disabled="labelsUpdating || projectLabelsLoading"
                   >
                     <Pencil class="size-4" aria-hidden="true" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <p v-if="projectLabelsError" class="px-2 py-1.5 text-sm text-destructive">
+                    ラベルを読み込めませんでした
+                  </p>
                   <p
-                    v-if="!projectLabels?.length"
+                    v-else-if="!projectLabels?.length"
                     class="px-2 py-1.5 text-sm text-muted-foreground"
                   >
                     ラベルがありません

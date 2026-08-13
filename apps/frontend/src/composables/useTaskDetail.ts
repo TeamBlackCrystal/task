@@ -410,6 +410,8 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     displayTask,
     statuses: computed(() => statusesQuery.data.value ?? []),
     projectLabels: computed(() => labelsQuery.data.value ?? []),
+    projectLabelsLoading: computed(() => labelsQuery.isLoading.value),
+    projectLabelsError: computed(() => labelsQuery.isError.value),
     selectedStatusId,
     statusUpdating,
     statusError,

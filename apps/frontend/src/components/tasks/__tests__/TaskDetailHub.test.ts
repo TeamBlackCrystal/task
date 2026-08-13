@@ -139,6 +139,38 @@ describe('TaskDetailHub', () => {
     wrapper.unmount();
   });
 
+  it('ラベル一覧の取得失敗時は「ラベルがありません」ではなくエラーを表示する', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabelsError: true,
+      },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('button[aria-label="ラベルを編集"]').trigger('click');
+    expect(document.body.textContent).toContain('ラベルを読み込めませんでした');
+    expect(document.body.textContent).not.toContain('ラベルがありません');
+    wrapper.unmount();
+  });
+
+  it('ラベル一覧の取得中は編集ボタンを無効化する', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabelsLoading: true,
+      },
+    });
+
+    expect(wrapper.get('button[aria-label="ラベルを編集"]').attributes('disabled')).toBeDefined();
+  });
+
   it('付与済みラベルのチェック解除で除外した save:label_ids を emit する', async () => {
     const wrapper = mount(TaskDetailHub, {
       props: {
