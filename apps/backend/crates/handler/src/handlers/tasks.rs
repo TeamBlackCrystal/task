@@ -719,6 +719,17 @@ pub async fn update_task(
     active.updated_at = Set(chrono::Utc::now().into());
 
     if let Some(ref label_ids) = payload.label_ids {
+        // task_labels が空でも同じタスクへのラベル置換を直列化するため、
+        // 関連行ではなく必ず存在する親タスク行を共通のロック対象にする。
+        // 一括更新もラベル操作前の tasks UPDATE で同じ行ロックを取る。
+        tasks::Entity::find_by_id(task_id)
+            .filter(tasks::Column::ProjectId.eq(project_id))
+            .filter(tasks::Column::DeletedAt.is_null())
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .ok_or(AppError::NotFound)?;
+
         let mut unique = label_ids.clone();
         unique.sort();
         unique.dedup();
