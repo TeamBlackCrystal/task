@@ -53,6 +53,12 @@ import { useResolvedTenantId } from '@/composables/useResolvedTenantId';
 import { fetchClient, taskSearchQueryOptions } from '@/lib/api-vue-query';
 import { formatDeadline, taskDetailHref, taskSeqKey } from '@/lib/task-display';
 import type { components } from '@/generated/api';
+import {
+  buildTasksListQueryParams,
+  taskListPlaceholderData,
+  useTaskLabelFilter,
+  watchAvailableTaskLabels,
+} from './task-list-label-filter';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -61,13 +67,6 @@ const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' 
 const TASKS_PAGE_SIZE = 20;
 const SEARCH_PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
-
-type TasksListQueryKeyParams = {
-  params?: {
-    path?: { tenant_id?: string; project_id?: string | null };
-    query?: { limit?: number; offset?: number; label_id?: string };
-  };
-};
 
 type TaskSearchQueryKeyParams = {
   params?: {
@@ -223,41 +222,29 @@ watch(projectKey, () => {
 
 // ---- ラベルフィルタ ----
 // null は「すべて」。切り替え時は先頭ページへ戻す
-const selectedLabelId = ref<string | null>(null);
-watch(selectedLabelId, () => {
-  pagination.value = { ...pagination.value, pageIndex: 0 };
-});
-watch(projectKey, () => {
-  selectedLabelId.value = null;
-});
+const { selectedLabelId } = useTaskLabelFilter(pagination, projectKey);
 
 // ---- クエリ②: タスク一覧 ----
 const tasksQuery = useQuery({
   queryKey: computed(() => [
     'get',
     LIST_TASKS_PATH,
-    {
-      params: {
-        path: { tenant_id: tenantId.value!, project_id: projectId.value! },
-        query: {
-          limit: pagination.value.pageSize,
-          offset: pagination.value.pageIndex * pagination.value.pageSize,
-          label_id: selectedLabelId.value ?? undefined,
-        },
-      },
-    },
+    buildTasksListQueryParams(
+      tenantId.value!,
+      projectId.value!,
+      pagination.value,
+      selectedLabelId.value,
+    ),
   ]),
   queryFn: async ({ signal }) => {
     const { data, error } = await fetchClient.GET(LIST_TASKS_PATH, {
       // query パラメータは openapi-typescript 7.13.0 が正しく operation レベルに生成する
-      params: {
-        path: { tenant_id: tenantId.value!, project_id: projectId.value! },
-        query: {
-          limit: pagination.value.pageSize,
-          offset: pagination.value.pageIndex * pagination.value.pageSize,
-          label_id: selectedLabelId.value ?? undefined,
-        },
-      },
+      ...buildTasksListQueryParams(
+        tenantId.value!,
+        projectId.value!,
+        pagination.value,
+        selectedLabelId.value,
+      ),
       signal,
     });
     if (error) throw error;
@@ -265,19 +252,13 @@ const tasksQuery = useQuery({
   },
   enabled: computed(() => !!tenantId.value && !!projectId.value),
   placeholderData: (previousData, previousQuery) => {
-    const prevParams = previousQuery?.queryKey[2] as TasksListQueryKeyParams | undefined;
-    const prevProjectId = prevParams?.params?.path?.project_id;
     // ラベルフィルタが変わったときは旧条件のデータを見せない（ページング時のみ維持）
-    const prevLabelId = prevParams?.params?.query?.label_id ?? null;
-    if (
-      prevProjectId &&
-      projectId.value &&
-      prevProjectId === projectId.value &&
-      prevLabelId === selectedLabelId.value
-    ) {
-      return keepPreviousData(previousData);
-    }
-    return undefined;
+    return taskListPlaceholderData(
+      previousData,
+      previousQuery,
+      projectId.value,
+      selectedLabelId.value,
+    );
   },
 });
 
@@ -321,6 +302,7 @@ const labelsQuery = useQuery({
 });
 
 const projectLabels = computed(() => labelsQuery.data.value ?? []);
+watchAvailableTaskLabels(selectedLabelId, projectLabels);
 const selectedLabelName = computed(
   () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
 );
