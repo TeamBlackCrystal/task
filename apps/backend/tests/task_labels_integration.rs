@@ -417,6 +417,59 @@ async fn task_labels_suite() {
         .count();
     // no-op なので直前から増えない（label_added 4 件 + label_removed 3 件）
     assert_eq!(final_count, 7);
+
+    // 互いに異なる ID なら add と remove を 1 リクエストで同時適用できる
+    // （未付与の docs を add、付与済みの bug を remove → [docs, feature]）
+    let bulk_both = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": {
+                    "add_label_ids": [label_ids[2]],
+                    "remove_label_ids": [label_ids[0]]
+                }
+            }),
+        )
+        .await;
+    assert_eq!(bulk_both.status(), StatusCode::OK);
+    let after_both = app.get_with_session(&task_path).await;
+    let after_both_body: Value = after_both.json().await.expect("after both json");
+    let both_names: Vec<&str> = after_both_body["labels"]
+        .as_array()
+        .expect("labels")
+        .iter()
+        .map(|l| l["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(both_names, ["docs", "feature"]);
+    let both_activities = app.get_with_session(&activities_path).await;
+    let both_body: Value = both_activities.json().await.expect("both acts json");
+    let both_added: Vec<&Value> = both_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added")
+        .collect();
+    let both_removed: Vec<&Value> = both_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_removed")
+        .collect();
+    // 同時適用は add 側と remove 側を両方記録する（docs の追加 / bug の削除が 1 件ずつ増える）
+    assert_eq!(both_added.len(), 5);
+    assert_eq!(both_removed.len(), 4);
+    let docs_added = both_added
+        .iter()
+        .filter(|a| a["payload"]["name"] == "docs")
+        .count();
+    let bug_removed = both_removed
+        .iter()
+        .filter(|a| a["payload"]["name"] == "bug")
+        .count();
+    // docs は bulk 追加と今回の同時適用で 2 件、bug は最初の置き換えと今回で 2 件
+    assert_eq!(docs_added, 2);
+    assert_eq!(bug_removed, 2);
 }
 
 /// 同じタスクのラベル集合を並行して置換しても、二つの集合が合流しない。
