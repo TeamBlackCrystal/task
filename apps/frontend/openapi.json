@@ -12556,6 +12556,15 @@
             }
           },
           {
+            "name": "label_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "milestone_id",
             "in": "query",
             "required": false,

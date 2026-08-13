@@ -363,6 +363,12 @@ pub async fn list_tasks(
             vec![sea_orm::Value::from(uid)],
         ));
     }
+    if let Some(lid) = q.label_id {
+        query = query.filter(Expr::cust_with_values(
+            "EXISTS (SELECT 1 FROM task_labels WHERE task_labels.task_id = tasks.id AND task_labels.label_id = $1)",
+            vec![sea_orm::Value::from(lid)],
+        ));
+    }
 
     query = match q.sort.as_deref().unwrap_or("created_at_desc") {
         "priority_asc" => query.order_by_asc(tasks::Column::Priority),

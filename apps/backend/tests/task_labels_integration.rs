@@ -149,6 +149,44 @@ async fn task_labels_suite() {
         .expect("task in list");
     assert_eq!(listed_task["labels"][0]["name"], "feature");
 
+    // label_id フィルタ: 指定ラベルが付いたタスクだけが返る
+    let feature_task = app
+        .post_json_with_session(
+            &tasks_path,
+            serde_json::json!({
+                "title": "feature ラベルのタスク",
+                "status_id": status_id,
+                "label_ids": [label_ids[1]]
+            }),
+        )
+        .await;
+    assert_eq!(feature_task.status(), StatusCode::CREATED);
+    let feature_task_body: Value = feature_task.json().await.expect("feature task json");
+    let feature_task_id = feature_task_body["id"].as_str().expect("task id");
+
+    let filtered = app
+        .get_with_session(&format!("{tasks_path}?label_id={}", label_ids[1]))
+        .await;
+    assert_eq!(filtered.status(), StatusCode::OK);
+    let filtered_body: Value = filtered.json().await.expect("filtered json");
+    let filtered_tasks = filtered_body["tasks"].as_array().expect("tasks array");
+    assert_eq!(filtered_tasks.len(), 2);
+    assert!(
+        filtered_tasks
+            .iter()
+            .all(|t| t["id"] == task_id.as_str() || t["id"] == feature_task_id)
+    );
+
+    let filtered_bug = app
+        .get_with_session(&format!("{tasks_path}?label_id={}", label_ids[0]))
+        .await;
+    assert_eq!(filtered_bug.status(), StatusCode::OK);
+    let filtered_bug_body: Value = filtered_bug.json().await.expect("filtered bug json");
+    assert_eq!(
+        filtered_bug_body["tasks"].as_array().expect("tasks").len(),
+        0
+    );
+
     // 別プロジェクトのラベル ID は 400（付け替えも起きない）
     let other = app.insert_tenant_project(user.id).await;
     let other_labels_path = format!(

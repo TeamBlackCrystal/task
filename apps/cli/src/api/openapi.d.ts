@@ -11475,6 +11475,7 @@ export interface operations {
                 status_id?: string;
                 priority?: string;
                 assignee_id?: string;
+                label_id?: string;
                 milestone_id?: string;
                 sprint_id?: string;
                 parent_task_id?: string;

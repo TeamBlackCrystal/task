@@ -175,6 +175,7 @@ pub struct ListTasksQuery {
     pub status_id: Option<Uuid>,
     pub priority: Option<String>,
     pub assignee_id: Option<Uuid>,
+    pub label_id: Option<Uuid>,
     pub milestone_id: Option<Uuid>,
     pub sprint_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,

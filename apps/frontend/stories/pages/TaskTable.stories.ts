@@ -148,6 +148,7 @@ const sampleTasks = {
       soft_deadline: '2026-07-02T00:00:00Z',
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -164,6 +165,7 @@ const sampleTasks = {
       soft_deadline: '2026-06-29T00:00:00Z',
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -180,6 +182,7 @@ const sampleTasks = {
       soft_deadline: null,
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 100,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -196,6 +199,7 @@ const sampleTasks = {
       soft_deadline: '2026-07-14T00:00:00Z',
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -212,6 +216,7 @@ const sampleTasks = {
       soft_deadline: null,
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -228,6 +233,7 @@ const sampleTasks = {
       soft_deadline: null,
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -243,6 +249,25 @@ const sampleTasks = {
   ],
   total: 6,
 };
+
+const sampleLabels = [
+  {
+    id: 'label-bug',
+    name: 'bug',
+    description: '',
+    color: '#e11d48',
+    icon_url: null,
+    project_id: 'proj-eng',
+  },
+  {
+    id: 'label-feature',
+    name: 'feature',
+    description: '',
+    color: '#3b82f6',
+    icon_url: null,
+    project_id: 'proj-eng',
+  },
+];
 
 const sampleSearchTasks = {
   tasks: [
@@ -291,7 +316,7 @@ function createMockFetch(
       return jsonResponse(overrides.statuses ?? sampleStatuses);
     }
     if (url.includes('/labels')) {
-      return jsonResponse([]);
+      return jsonResponse(sampleLabels);
     }
     if (url.includes('/tasks/search')) {
       if (overrides.rejectSearch) {
@@ -352,6 +377,7 @@ const mktSampleTasks = {
       soft_deadline: null,
       hard_deadline: null,
       is_archived: false,
+      labels: [],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
