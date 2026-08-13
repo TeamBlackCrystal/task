@@ -8,6 +8,7 @@ import type { EditableField } from '@/components/tasks/editable-field';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
@@ -26,6 +27,7 @@ import {
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type StatusOption = components['schemas']['ProjectStatusResponse'];
+type LabelOption = components['schemas']['LabelResponse'];
 
 const props = defineProps<{
   task: TaskDetail | null;
@@ -34,6 +36,9 @@ const props = defineProps<{
   statusId: string;
   statusUpdating?: boolean;
   statusError?: string | null;
+  projectLabels?: LabelOption[];
+  labelsUpdating?: boolean;
+  labelsError?: string | null;
   fieldUpdating?: Partial<Record<EditableField, boolean>>;
   fieldErrors?: Partial<Record<EditableField, string>>;
   loading?: boolean;
@@ -54,6 +59,7 @@ const emit = defineEmits<{
   'save:progress_pct': [value: number];
   'save:soft_deadline': [value: string | null];
   'save:hard_deadline': [value: string | null];
+  'save:label_ids': [value: string[]];
   'delete-request': [];
 }>();
 
@@ -160,6 +166,13 @@ function onEditKeydown(event: KeyboardEvent, field: EditableField) {
     event.preventDefault();
     commitEditing(field);
   }
+}
+
+function toggleLabel(labelId: string, checked: boolean) {
+  if (!props.task || props.labelsUpdating) return;
+  const current = props.task.labels.map((label) => label.id);
+  const next = checked ? [...current, labelId] : current.filter((id) => id !== labelId);
+  emit('save:label_ids', next);
 }
 
 function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
@@ -377,6 +390,64 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               <component :is="PRIORITY_CONFIG[task.priority].icon" class="size-4" />
               {{ PRIORITY_CONFIG[task.priority].label }}
             </div>
+          </section>
+
+          <section class="rounded-lg border p-4" data-task-labels>
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="text-sm font-medium text-muted-foreground">ラベル</h2>
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    class="size-7"
+                    aria-label="ラベルを編集"
+                    :disabled="labelsUpdating"
+                  >
+                    <Pencil class="size-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <p
+                    v-if="!projectLabels?.length"
+                    class="px-2 py-1.5 text-sm text-muted-foreground"
+                  >
+                    ラベルがありません
+                  </p>
+                  <DropdownMenuCheckboxItem
+                    v-for="label in projectLabels"
+                    :key="label.id"
+                    :model-value="task.labels.some((l) => l.id === label.id)"
+                    :disabled="labelsUpdating"
+                    @update:model-value="(v) => toggleLabel(label.id, !!v)"
+                  >
+                    <span
+                      class="inline-block size-2.5 shrink-0 rounded-full"
+                      :style="{ backgroundColor: label.color }"
+                      aria-hidden="true"
+                    />
+                    {{ label.name }}
+                  </DropdownMenuCheckboxItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <div v-if="task.labels.length" class="flex flex-wrap gap-1.5">
+              <span
+                v-for="label in task.labels"
+                :key="label.id"
+                class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium"
+                :style="{
+                  backgroundColor: label.color + '1a',
+                  borderColor: label.color + '66',
+                  color: label.color,
+                }"
+              >
+                {{ label.name }}
+              </span>
+            </div>
+            <p v-else class="text-sm text-muted-foreground">ラベルなし</p>
+            <p v-if="labelsError" class="mt-2 text-xs text-destructive">{{ labelsError }}</p>
           </section>
 
           <section class="rounded-lg border p-4">

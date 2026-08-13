@@ -12,10 +12,11 @@ import type { components } from '@/generated/api';
 const GET_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
+const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
-type MutatingField = EditableField | 'status_id';
+type MutatingField = EditableField | 'status_id' | 'labels';
 
 export interface UseTaskDetailParams {
   /** ルートの tenant セグメント（表示ID）。テナント UUID 解決に使う */
@@ -58,6 +59,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
   } = useResolvedProjectId(tenantId, projectKey);
 
   const statusError = ref<string | null>(null);
+  const labelsError = ref<string | null>(null);
   const deleteError = ref<string | null>(null);
   const fieldErrors = ref<Partial<Record<EditableField, string>>>({});
   const selectedStatusId = ref('');
@@ -120,6 +122,23 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     enabled: computed(() => !!tenantId.value && !!projectId.value),
   });
 
+  const labelsQuery = useQuery({
+    queryKey: computed(() => [
+      'get',
+      LIST_LABELS_PATH,
+      { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
+    ]),
+    queryFn: async ({ signal }) => {
+      const { data, error } = await fetchClient.GET(LIST_LABELS_PATH, {
+        params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    enabled: computed(() => !!tenantId.value && !!projectId.value),
+  });
+
   watch(
     () => taskQuery.data.value?.status_id,
     (statusId) => {
@@ -146,6 +165,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
   });
 
   const statusUpdating = computed(() => pendingFieldRevisions.value.status_id !== undefined);
+  const labelsUpdating = computed(() => pendingFieldRevisions.value.labels !== undefined);
 
   const updateTaskMutation = apiClient.useMutation('put', GET_TASK_PATH);
 
@@ -187,6 +207,10 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       if (currentStatusId) selectedStatusId.value = currentStatusId;
       return;
     }
+    if (field === 'labels') {
+      labelsError.value = 'ラベルの更新に失敗しました';
+      return;
+    }
     fieldErrors.value = {
       ...fieldErrors.value,
       [field]: '更新に失敗しました',
@@ -220,6 +244,8 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     if (field === 'status_id') {
       statusError.value = null;
       if (data.status_id) selectedStatusId.value = data.status_id;
+    } else if (field === 'labels') {
+      labelsError.value = null;
     } else {
       fieldErrors.value = { ...fieldErrors.value, [field]: undefined };
     }
@@ -236,6 +262,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     optimisticTask.value = { ...optimisticTask.value, ...optimistic };
     pendingFieldRevisions.value = { ...pendingFieldRevisions.value, [field]: revision };
     if (field === 'status_id') statusError.value = null;
+    else if (field === 'labels') labelsError.value = null;
     else fieldErrors.value = { ...fieldErrors.value, [field]: undefined };
 
     // mutate() のコールバックは observer の unmount（分割ビューのペイン切替）で
@@ -325,6 +352,19 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     mutateTask({ hard_deadline: iso }, { hard_deadline: iso }, 'hard_deadline');
   }
 
+  function onSaveLabels(labelIds: string[]) {
+    const current = taskQuery.data.value;
+    if (!current) return;
+    const currentIds = [...current.labels.map((l) => l.id)].sort();
+    const nextIds = [...labelIds].sort();
+    if (currentIds.length === nextIds.length && currentIds.every((id, i) => id === nextIds[i])) {
+      return;
+    }
+    // 楽観表示用にプロジェクトラベル一覧から選択分を解決する（並びも一覧に合わせる）
+    const chosen = (labelsQuery.data.value ?? []).filter((label) => labelIds.includes(label.id));
+    mutateTask({ label_ids: labelIds }, { labels: chosen }, 'labels');
+  }
+
   function confirmDelete() {
     if (!tenantId.value || !projectId.value || !taskId.value) return;
     deleteError.value = null;
@@ -369,9 +409,12 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     // Hub バインド用
     displayTask,
     statuses: computed(() => statusesQuery.data.value ?? []),
+    projectLabels: computed(() => labelsQuery.data.value ?? []),
     selectedStatusId,
     statusUpdating,
     statusError,
+    labelsUpdating,
+    labelsError,
     fieldUpdating,
     fieldErrors,
     isLoading,
@@ -384,6 +427,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     onSaveProgressPct,
     onSaveSoftDeadline,
     onSaveHardDeadline,
+    onSaveLabels,
     // 削除
     deleteError,
     deletePending: computed(() => deleteTaskMutation.isPending.value),

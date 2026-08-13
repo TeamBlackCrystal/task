@@ -28,9 +28,12 @@ function closeDeleteDialog() {
 const {
   displayTask,
   statuses,
+  projectLabels,
   selectedStatusId,
   statusUpdating,
   statusError,
+  labelsUpdating,
+  labelsError,
   fieldUpdating,
   fieldErrors,
   isLoading,
@@ -42,6 +45,7 @@ const {
   onSaveProgressPct,
   onSaveSoftDeadline,
   onSaveHardDeadline,
+  onSaveLabels,
   deleteError,
   deletePending,
   confirmDelete,
@@ -76,9 +80,12 @@ function onDeleteDialogCancel(event: Event) {
         :task="displayTask"
         :project-key="projectKey"
         :statuses="statuses"
+        :project-labels="projectLabels"
         :status-id="selectedStatusId"
         :status-updating="statusUpdating"
         :status-error="statusError"
+        :labels-updating="labelsUpdating"
+        :labels-error="labelsError"
         :field-updating="fieldUpdating"
         :field-errors="fieldErrors"
         :loading="isLoading"
@@ -90,6 +97,7 @@ function onDeleteDialogCancel(event: Event) {
         @save:progress_pct="onSaveProgressPct"
         @save:soft_deadline="onSaveSoftDeadline"
         @save:hard_deadline="onSaveHardDeadline"
+        @save:label_ids="onSaveLabels"
         :delete-disabled="deletePending"
         @delete-request="openDeleteDialog"
       >

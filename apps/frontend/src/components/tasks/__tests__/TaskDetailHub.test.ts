@@ -13,6 +13,7 @@ const task: TaskDetail = {
   custom_field_values: [],
   id: 'task-id',
   is_archived: false,
+  labels: [],
   priority: 'Medium',
   progress_pct: 30,
   project_id: 'project-id',
@@ -20,6 +21,24 @@ const task: TaskDetail = {
   status_id: 'status-id',
   title: 'Test task',
   updated_at: '2026-07-16T00:00:00Z',
+};
+
+const bugLabel: components['schemas']['LabelResponse'] = {
+  id: 'label-bug',
+  name: 'bug',
+  description: '',
+  color: '#e11d48',
+  icon_url: null,
+  project_id: 'project-id',
+};
+
+const featureLabel: components['schemas']['LabelResponse'] = {
+  id: 'label-feature',
+  name: 'feature',
+  description: '',
+  color: '#3b82f6',
+  icon_url: null,
+  project_id: 'project-id',
 };
 
 describe('TaskDetailHub', () => {
@@ -80,6 +99,65 @@ describe('TaskDetailHub', () => {
     deleteItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     expect(wrapper.emitted('delete-request')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it('タスクのラベルをチップ表示する', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, labels: [bugLabel] },
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    const section = wrapper.get('[data-task-labels]');
+    expect(section.text()).toContain('bug');
+    expect(section.text()).not.toContain('ラベルなし');
+  });
+
+  it('未付与ラベルのチェックで既存 ID に追加した save:label_ids を emit する', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, labels: [bugLabel] },
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabels: [bugLabel, featureLabel],
+      },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('button[aria-label="ラベルを編集"]').trigger('click');
+    const items = document.body.querySelectorAll('[data-slot="dropdown-menu-checkbox-item"]');
+    const featureItem = Array.from(items).find((el) => el.textContent?.includes('feature'));
+    expect(featureItem).toBeDefined();
+    featureItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(wrapper.emitted('save:label_ids')).toEqual([[['label-bug', 'label-feature']]]);
+    wrapper.unmount();
+  });
+
+  it('付与済みラベルのチェック解除で除外した save:label_ids を emit する', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, labels: [bugLabel] },
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabels: [bugLabel, featureLabel],
+      },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('button[aria-label="ラベルを編集"]').trigger('click');
+    const items = document.body.querySelectorAll('[data-slot="dropdown-menu-checkbox-item"]');
+    const bugItem = Array.from(items).find((el) => el.textContent?.includes('bug'));
+    expect(bugItem).toBeDefined();
+    bugItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(wrapper.emitted('save:label_ids')).toEqual([[[]]]);
     wrapper.unmount();
   });
 });

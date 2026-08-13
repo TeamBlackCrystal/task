@@ -116,8 +116,30 @@ const sampleTaskDetail = {
     { role: 'assignee', user: mockUsers.alpha },
     { role: 'assignee', user: mockUsers.beta },
   ],
+  labels: [
+    {
+      id: 'label-bug',
+      name: 'bug',
+      description: '',
+      color: '#e11d48',
+      icon_url: null,
+      project_id: 'proj-eng',
+    },
+  ],
   custom_field_values: [],
 };
+
+const sampleLabels = [
+  ...sampleTaskDetail.labels,
+  {
+    id: 'label-feature',
+    name: 'feature',
+    description: '',
+    color: '#3b82f6',
+    icon_url: null,
+    project_id: 'proj-eng',
+  },
+];
 
 type MockOptions = {
   task?: typeof sampleTaskDetail | null;
@@ -150,6 +172,10 @@ function applyPutBody(
   if (typeof body.title === 'string') next.title = body.title;
   if (typeof body.status_id === 'string') next.status_id = body.status_id;
 
+  if (Array.isArray(body.label_ids)) {
+    next.labels = sampleLabels.filter((label) => (body.label_ids as string[]).includes(label.id));
+  }
+
   return next;
 }
 
@@ -174,12 +200,16 @@ function createMockFetch(overrides: MockOptions = {}) {
       url.includes('/v1/tenants/') &&
       url.includes('/projects') &&
       !url.includes('/tasks') &&
-      !url.includes('/statuses')
+      !url.includes('/statuses') &&
+      !url.includes('/labels')
     ) {
       return jsonResponse(sampleProjects);
     }
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
+    }
+    if (url.includes('/labels')) {
+      return jsonResponse(sampleLabels);
     }
     if (method === 'PUT' && url.includes('/tasks/')) {
       if (overrides.rejectPut) {
