@@ -339,6 +339,84 @@ async fn task_labels_suite() {
         .count();
     // 内訳: label_added 4 件（feature / bug / feature / docs）+ label_removed 2 件（bug / feature）
     assert_eq!(bulk_noop_count, 6);
+
+    // 一括更新の remove_label_ids でラベルを外せる（label_removed として記録される）
+    let bulk_remove = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": { "remove_label_ids": [label_ids[2]] }
+            }),
+        )
+        .await;
+    assert_eq!(bulk_remove.status(), StatusCode::OK);
+    let after_remove = app.get_with_session(&task_path).await;
+    let after_remove_body: Value = after_remove.json().await.expect("after remove json");
+    let names: Vec<&str> = after_remove_body["labels"]
+        .as_array()
+        .expect("labels")
+        .iter()
+        .map(|l| l["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(names, ["bug", "feature"]);
+    let remove_activities = app.get_with_session(&activities_path).await;
+    let remove_body: Value = remove_activities.json().await.expect("remove json");
+    let removed_events: Vec<&Value> = remove_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_removed")
+        .collect();
+    // 内訳: 置き換えで bug と feature + 今回の bulk remove で docs
+    assert_eq!(removed_events.len(), 3);
+    let docs_removed = removed_events
+        .iter()
+        .find(|a| a["payload"]["name"] == "docs")
+        .expect("bulk label_removed event");
+    assert_eq!(docs_removed["payload"]["label_id"], label_ids[2]);
+
+    // add と remove に同じ ID を含む一括更新は 400
+    let conflicting = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": {
+                    "add_label_ids": [label_ids[0]],
+                    "remove_label_ids": [label_ids[0]]
+                }
+            }),
+        )
+        .await;
+    assert_eq!(conflicting.status(), StatusCode::BAD_REQUEST);
+
+    // 未付与・他プロジェクトのラベル ID の remove は 200 の no-op（記録もされない）
+    let harmless = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": { "remove_label_ids": [foreign_id] }
+            }),
+        )
+        .await;
+    assert_eq!(harmless.status(), StatusCode::OK);
+    let harmless_body: Value = harmless.json().await.expect("harmless json");
+    assert_eq!(harmless_body["updated"], 1);
+    let final_task = app.get_with_session(&task_path).await;
+    let final_body: Value = final_task.json().await.expect("final json");
+    assert_eq!(final_body["labels"].as_array().expect("labels").len(), 2);
+    let final_activities = app.get_with_session(&activities_path).await;
+    let final_activities_body: Value = final_activities.json().await.expect("final acts json");
+    let final_count = final_activities_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added" || a["event_type"] == "label_removed")
+        .count();
+    // no-op なので直前から増えない（label_added 4 件 + label_removed 3 件）
+    assert_eq!(final_count, 7);
 }
 
 /// 同じタスクのラベル集合を並行して置換しても、二つの集合が合流しない。

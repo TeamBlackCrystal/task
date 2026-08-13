@@ -81,6 +81,9 @@ pub struct BulkUpdateFields {
     pub assignee_id: Option<Uuid>,
     /// 既存ラベルに追加する ID 一覧（上書きではない）。
     pub add_label_ids: Option<Vec<Uuid>>,
+    /// 既存ラベルから外す ID 一覧。未付与・プロジェクト外の ID は単に無視される。
+    /// add_label_ids と同じ ID を含む場合は 400
+    pub remove_label_ids: Option<Vec<Uuid>>,
     #[schema(value_type = Option<String>, format = "uuid")]
     pub sprint_id: Option<Uuid>,
     #[serde(default)]

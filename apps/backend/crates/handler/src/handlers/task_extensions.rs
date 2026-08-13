@@ -295,6 +295,13 @@ pub async fn bulk_update_tasks(
     if payload.task_ids.len() > BULK_MAX_TASKS {
         return Err(AppError::BadRequest);
     }
+    if let (Some(add), Some(remove)) = (
+        &payload.update.add_label_ids,
+        &payload.update.remove_label_ids,
+    ) && add.iter().any(|id| remove.contains(id))
+    {
+        return Err(AppError::BadRequest);
+    }
 
     let mut unique_ids = payload.task_ids.clone();
     unique_ids.sort();
@@ -431,9 +438,9 @@ async fn apply_bulk_update(
     }
 
     // ラベル変更の前後スナップショット。実際に集合が変わったときだけ記録する。
-    // remove_label_ids などラベルを変える入力が増えたら、この判定式に足すこと。
+    // ラベルを変える入力が増えたら、この判定式に足すこと。
     // ここを忘れると記録だけが静かに欠ける
-    let labels_will_change = update.add_label_ids.is_some();
+    let labels_will_change = update.add_label_ids.is_some() || update.remove_label_ids.is_some();
     let before_labels = if labels_will_change {
         Some(task_label_entries(&txn, task_id).await?)
     } else {
@@ -469,6 +476,19 @@ async fn apply_bulk_update(
                     .await?;
                 }
             }
+        }
+    }
+
+    if let Some(ref label_ids) = update.remove_label_ids {
+        let mut unique = label_ids.clone();
+        unique.sort();
+        unique.dedup();
+        if !unique.is_empty() {
+            task_labels::Entity::delete_many()
+                .filter(task_labels::Column::TaskId.eq(task_id))
+                .filter(task_labels::Column::LabelId.is_in(unique))
+                .exec(&txn)
+                .await?;
         }
     }
 
