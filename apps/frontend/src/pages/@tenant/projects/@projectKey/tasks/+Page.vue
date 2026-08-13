@@ -768,8 +768,11 @@ const table = useVueTable({
             :project-id="projectId"
             :project-key="projectKey"
             :statuses="statusesQuery.data.value ?? []"
-            :labels="projectLabels"
+            :labels="labelsQuery.data.value"
+            :labels-loading="labelsQuery.isLoading.value"
+            :labels-error="labelsQuery.isError.value"
             @created="onTaskCreated"
+            @retry-labels="labelsQuery.refetch()"
           />
 
           <!-- スクロールするテーブル領域（ツールバーとページネーションは固定） -->

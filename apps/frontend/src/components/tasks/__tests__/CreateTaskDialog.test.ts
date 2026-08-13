@@ -82,6 +82,8 @@ const labels = [
 type MountOptions = {
   open?: boolean;
   labels?: typeof labels;
+  labelsLoading?: boolean;
+  labelsError?: boolean;
 };
 
 function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
@@ -93,6 +95,8 @@ function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
       projectKey: 'PROJ',
       statuses,
       labels: options.labels,
+      labelsLoading: options.labelsLoading,
+      labelsError: options.labelsError,
     },
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
@@ -372,6 +376,145 @@ describe('CreateTaskDialog label selection', () => {
     await flushPromises();
 
     expect(mutateAsync.mock.calls[0][0].body.label_ids).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('projectId が変わったら旧プロジェクトのラベル選択を持ち越さない', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    labelButton('bug').click();
+    await nextTick();
+
+    const otherLabels = [
+      {
+        id: 'label-campaign',
+        name: 'campaign',
+        description: '',
+        color: '#8b5cf6',
+        icon_url: null,
+        project_id: 'other-project-uuid',
+      },
+    ];
+    await wrapper.setProps({ projectId: 'other-project-uuid', labels: otherLabels });
+    await nextTick();
+
+    expect(labelButton('campaign').getAttribute('aria-pressed')).toBe('false');
+    await new DOMWrapper(getTitleInput()).setValue('切替後の作成');
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mutateAsync.mock.calls[0][0].params.path.project_id).toBe('other-project-uuid');
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('ラベル一覧の再取得で消えた ID は選択から外れて送信されない', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('削除済みラベル');
+    labelButton('bug').click();
+    labelButton('feature').click();
+    await nextTick();
+
+    await wrapper.setProps({ labels: labels.filter((label) => label.id !== 'label-bug') });
+    await nextTick();
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toEqual(['label-feature']);
+    wrapper.unmount();
+  });
+
+  it('labels が undefined（ロード中・エラー）になっても選択は保持される', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('取得中の選択保持');
+    labelButton('feature').click();
+    await nextTick();
+
+    await wrapper.setProps({ labels: undefined, labelsLoading: true });
+    await nextTick();
+    await wrapper.setProps({ labels, labelsLoading: false });
+    await nextTick();
+
+    expect(labelButton('feature').getAttribute('aria-pressed')).toBe('true');
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toEqual(['label-feature']);
+    wrapper.unmount();
+  });
+});
+
+describe('CreateTaskDialog labels query states', () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    isHydrated.value = true;
+    isPending.value = false;
+    mutateAsync.mockReset();
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function labelsGroup() {
+    return document.body.querySelector('[role="group"][aria-labelledby="task-labels-label"]');
+  }
+
+  it('ロード中はラベル欄にロード中表示を出す', async () => {
+    const wrapper = mountDialog(queryClient, { labelsLoading: true });
+    await nextTick();
+
+    const group = labelsGroup();
+    expect(group).not.toBeNull();
+    expect(group?.textContent).toContain('ラベルを読み込み中');
+    expect(group?.querySelector('button[aria-pressed]')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('取得エラーはエラー表示と再試行を出し、正常な空一覧と区別する', async () => {
+    const wrapper = mountDialog(queryClient, { labelsError: true });
+    await nextTick();
+
+    const group = labelsGroup();
+    expect(group?.textContent).toContain('ラベルの取得に失敗しました');
+    const retry = Array.from(group?.querySelectorAll('button') ?? []).find(
+      (el) => el.textContent?.trim() === '再試行',
+    );
+    if (!retry) throw new Error('retry button not found');
+    retry.click();
+    await nextTick();
+    expect(wrapper.emitted('retryLabels')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it('正常な 0 件ではラベル欄を表示しない', async () => {
+    const wrapper = mountDialog(queryClient, { labels: [] });
+    await nextTick();
+
+    expect(labelsGroup()).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('ラベル欄は role=group で「ラベル」見出しに関連付く', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+
+    const group = labelsGroup();
+    expect(group).not.toBeNull();
+    const heading = document.getElementById('task-labels-label');
+    expect(heading?.textContent).toContain('ラベル');
+    expect(group?.contains(heading)).toBe(true);
     wrapper.unmount();
   });
 });

@@ -47,12 +47,16 @@ const props = defineProps<{
   projectId: string;
   projectKey: string;
   statuses: Status[];
+  /** undefined は未取得（ロード中・エラー）。正常な 0 件は空配列で渡すこと */
   labels?: LabelOption[];
+  labelsLoading?: boolean;
+  labelsError?: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
   created: [task: CreatedTask];
+  retryLabels: [];
 }>();
 
 const queryClient = useQueryClient();
@@ -81,6 +85,23 @@ watch(
     }
   },
   { immediate: true },
+);
+
+// プロジェクトが切り替わったら旧プロジェクトの入力（特にラベル ID）を持ち越さない
+watch(
+  () => props.projectId,
+  () => resetForm(),
+);
+
+// ラベル一覧の正常取得後、削除済み ID を選択から落とす。
+// undefined はロード中・エラー（一覧が不明）なので選択を保持する
+watch(
+  () => props.labels,
+  (labels) => {
+    if (!labels) return;
+    const ids = new Set(labels.map((label) => label.id));
+    selectedLabelIds.value = selectedLabelIds.value.filter((id) => ids.has(id));
+  },
 );
 
 function onOpenChange(value: boolean) {
@@ -237,9 +258,21 @@ async function submit() {
           <input type="hidden" name="priority" :value="priority" />
         </div>
 
-        <div v-if="labels?.length" class="space-y-1.5">
-          <Label>ラベル</Label>
-          <div class="flex flex-wrap gap-1.5">
+        <div
+          v-if="labelsLoading || labelsError || labels?.length"
+          class="space-y-1.5"
+          role="group"
+          aria-labelledby="task-labels-label"
+        >
+          <Label id="task-labels-label">ラベル</Label>
+          <p v-if="labelsLoading" class="text-xs text-muted-foreground">ラベルを読み込み中...</p>
+          <div v-else-if="labelsError" class="flex items-center gap-2">
+            <p role="alert" class="text-xs text-destructive">ラベルの取得に失敗しました</p>
+            <Button type="button" variant="outline" size="sm" @click="emit('retryLabels')">
+              再試行
+            </Button>
+          </div>
+          <div v-else class="flex flex-wrap gap-1.5">
             <button
               v-for="label in labels"
               :key="label.id"
