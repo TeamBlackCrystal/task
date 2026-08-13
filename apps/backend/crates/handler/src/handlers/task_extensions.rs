@@ -29,6 +29,7 @@ use service::db::is_postgres_unique_violation;
 use service::task_activities::{
     record_activity, record_label_diff, status_name, task_label_entries,
 };
+use std::collections::HashSet;
 
 const BULK_MAX_TASKS: usize = 100;
 
@@ -298,9 +299,11 @@ pub async fn bulk_update_tasks(
     if let (Some(add), Some(remove)) = (
         &payload.update.add_label_ids,
         &payload.update.remove_label_ids,
-    ) && add.iter().any(|id| remove.contains(id))
-    {
-        return Err(AppError::BadRequest);
+    ) {
+        let remove: HashSet<&Uuid> = remove.iter().collect();
+        if add.iter().any(|id| remove.contains(id)) {
+            return Err(AppError::BadRequest);
+        }
     }
 
     let mut unique_ids = payload.task_ids.clone();
