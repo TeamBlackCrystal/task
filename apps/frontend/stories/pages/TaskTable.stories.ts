@@ -148,7 +148,16 @@ const sampleTasks = {
       soft_deadline: '2026-07-02T00:00:00Z',
       hard_deadline: null,
       is_archived: false,
-      labels: [],
+      labels: [
+        {
+          id: 'label-bug',
+          name: 'bug',
+          description: '',
+          color: '#e11d48',
+          icon_url: null,
+          project_id: 'proj-eng',
+        },
+      ],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',

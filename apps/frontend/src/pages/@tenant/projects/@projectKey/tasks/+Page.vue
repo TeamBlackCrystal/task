@@ -77,6 +77,7 @@ type TaskSearchQueryKeyParams = {
 // ---- 型定義 ----
 type ApiPriority = components['schemas']['TaskPriority'];
 type UserSummary = components['schemas']['UserSummary'];
+type TaskLabel = components['schemas']['LabelResponse'];
 
 interface TaskRow {
   id: string;
@@ -86,6 +87,7 @@ interface TaskRow {
   status: { id: string; name: string; color: string };
   priority: ApiPriority;
   assignees: UserSummary[];
+  labels: TaskLabel[];
   due_date?: string;
 }
 
@@ -329,6 +331,7 @@ const taskRows = computed<TaskRow[]>(() => {
       status: { id: t.status_id, ...status },
       priority: t.priority,
       assignees: t.assignees.map((a) => a.user),
+      labels: t.labels,
       due_date: t.soft_deadline ?? undefined,
     };
   });
@@ -496,6 +499,37 @@ const columns: ColumnDef<TaskRow>[] = [
           style: { color: pc.color },
         },
         [h(pc.icon, { class: 'size-4' }), pc.label],
+      );
+    },
+  },
+  {
+    id: 'labels',
+    enableSorting: false,
+    header: () => 'ラベル',
+    cell: ({ row }) => {
+      const labels = row.original.labels;
+      if (labels.length === 0) {
+        return h('span', { class: 'text-muted-foreground text-xs' }, '−');
+      }
+      return h(
+        'div',
+        { class: 'flex flex-wrap gap-1' },
+        labels.map((label) =>
+          h(
+            'span',
+            {
+              key: label.id,
+              class:
+                'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+              style: {
+                backgroundColor: label.color + '1a',
+                borderColor: label.color + '66',
+                color: label.color,
+              },
+            },
+            label.name,
+          ),
+        ),
       );
     },
   },
@@ -734,6 +768,7 @@ const table = useVueTable({
             :project-id="projectId"
             :project-key="projectKey"
             :statuses="statusesQuery.data.value ?? []"
+            :labels="projectLabels"
             @created="onTaskCreated"
           />
 

@@ -60,8 +60,28 @@ const createdTask = {
   priority: 'Medium',
 };
 
+const labels = [
+  {
+    id: 'label-bug',
+    name: 'bug',
+    description: '',
+    color: '#e11d48',
+    icon_url: null,
+    project_id: 'project-uuid',
+  },
+  {
+    id: 'label-feature',
+    name: 'feature',
+    description: '',
+    color: '#3b82f6',
+    icon_url: null,
+    project_id: 'project-uuid',
+  },
+];
+
 type MountOptions = {
   open?: boolean;
+  labels?: typeof labels;
 };
 
 function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
@@ -72,6 +92,7 @@ function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
       projectId: 'project-uuid',
       projectKey: 'PROJ',
       statuses,
+      labels: options.labels,
     },
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
@@ -274,5 +295,83 @@ describe('CreateTaskDialog pre-hydration form values', () => {
 
     wrapper.unmount();
     isHydrated.value = true;
+  });
+});
+
+describe('CreateTaskDialog label selection', () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    isHydrated.value = true;
+    isPending.value = false;
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(createdTask);
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function labelButton(name: string) {
+    const button = Array.from(document.body.querySelectorAll('button[aria-pressed]')).find(
+      (el) => el.textContent?.trim() === name,
+    );
+    if (!button) throw new Error(`label button ${name} not found`);
+    return button as HTMLButtonElement;
+  }
+
+  it('選択したラベルの label_ids を作成リクエストに含める', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('ラベル付きで作成');
+
+    labelButton('feature').click();
+    await nextTick();
+    expect(labelButton('feature').getAttribute('aria-pressed')).toBe('true');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toEqual(['label-feature']);
+    wrapper.unmount();
+  });
+
+  it('未選択なら label_ids をリクエストに含めない', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('ラベルなしで作成');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('トグル解除でラベルの選択が外れる', async () => {
+    const wrapper = mountDialog(queryClient, { labels });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('トグル確認');
+
+    labelButton('bug').click();
+    await nextTick();
+    labelButton('bug').click();
+    await nextTick();
+    expect(labelButton('bug').getAttribute('aria-pressed')).toBe('false');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.label_ids).toBeUndefined();
+    wrapper.unmount();
   });
 });

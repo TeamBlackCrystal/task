@@ -33,6 +33,7 @@ const CREATE_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' a
 
 type Priority = components['schemas']['TaskPriority'];
 type Status = components['schemas']['ProjectStatusResponse'];
+type LabelOption = components['schemas']['LabelResponse'];
 type CreatedTask = components['schemas']['TaskDetailResponse'];
 
 const priorityOptions = Object.entries(PRIORITY_CONFIG) as [
@@ -46,6 +47,7 @@ const props = defineProps<{
   projectId: string;
   projectKey: string;
   statuses: Status[];
+  labels?: LabelOption[];
 }>();
 
 const emit = defineEmits<{
@@ -60,6 +62,7 @@ const description = ref('');
 const softDeadline = ref('');
 const hardDeadline = ref('');
 const priority = ref<Priority>('Medium');
+const selectedLabelIds = ref<string[]>([]);
 const validationMessage = ref<string | null>(null);
 const requestError = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
@@ -86,6 +89,12 @@ function onOpenChange(value: boolean) {
   emit('update:open', value);
 }
 
+function toggleLabel(labelId: string) {
+  selectedLabelIds.value = selectedLabelIds.value.includes(labelId)
+    ? selectedLabelIds.value.filter((id) => id !== labelId)
+    : [...selectedLabelIds.value, labelId];
+}
+
 function resetForm() {
   title.value = '';
   statusId.value = defaultStatusId.value;
@@ -93,6 +102,7 @@ function resetForm() {
   softDeadline.value = '';
   hardDeadline.value = '';
   priority.value = 'Medium';
+  selectedLabelIds.value = [];
   validationMessage.value = null;
   requestError.value = null;
   successMessage.value = null;
@@ -124,6 +134,7 @@ async function submit() {
   if (normalizedDescription) body.description = normalizedDescription;
   if (softDeadline.value) body.soft_deadline = toIsoDate(softDeadline.value);
   if (hardDeadline.value) body.hard_deadline = toIsoDate(hardDeadline.value);
+  if (selectedLabelIds.value.length) body.label_ids = selectedLabelIds.value;
 
   try {
     const created = await createMutation.mutateAsync({
@@ -224,6 +235,39 @@ async function submit() {
             </SelectContent>
           </Select>
           <input type="hidden" name="priority" :value="priority" />
+        </div>
+
+        <div v-if="labels?.length" class="space-y-1.5">
+          <Label>ラベル</Label>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="label in labels"
+              :key="label.id"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors"
+              :aria-pressed="selectedLabelIds.includes(label.id)"
+              :style="
+                selectedLabelIds.includes(label.id)
+                  ? {
+                      backgroundColor: label.color + '1a',
+                      borderColor: label.color,
+                      color: label.color,
+                    }
+                  : {}
+              "
+              :class="
+                selectedLabelIds.includes(label.id) ? '' : 'text-muted-foreground hover:bg-muted/40'
+              "
+              @click="toggleLabel(label.id)"
+            >
+              <span
+                class="inline-block size-2 shrink-0 rounded-full"
+                :style="{ backgroundColor: label.color }"
+                aria-hidden="true"
+              />
+              {{ label.name }}
+            </button>
+          </div>
         </div>
 
         <p v-if="validationMessage" role="alert" class="text-sm text-destructive">
