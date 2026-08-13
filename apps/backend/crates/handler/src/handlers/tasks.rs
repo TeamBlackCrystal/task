@@ -28,7 +28,9 @@ use service::custom_fields::{
 };
 use service::db::is_postgres_unique_violation;
 use service::notifications::{notify_assigned, notify_status_changed};
-use service::task_activities::{priority_label, record_activity, status_name};
+use service::task_activities::{
+    priority_label, record_activity, record_label_diff, status_name, task_label_entries,
+};
 use service::task_responses::{build_task_response, build_task_responses};
 
 // ─── Task lookup (UUID or KEY-N) ─────────────────────────────────────────
@@ -719,6 +721,7 @@ pub async fn update_task(
                 return Err(AppError::BadRequest);
             }
         }
+        let before_labels = task_label_entries(&txn, task_id).await?;
         task_labels::Entity::delete_many()
             .filter(task_labels::Column::TaskId.eq(task_id))
             .exec(&txn)
@@ -731,6 +734,15 @@ pub async fn update_task(
             .insert(&txn)
             .await?;
         }
+        let after_labels = task_label_entries(&txn, task_id).await?;
+        record_label_diff(
+            &txn,
+            task_id,
+            Some(auth.user_id),
+            &before_labels,
+            &after_labels,
+        )
+        .await?;
     }
 
     if parent_changes {

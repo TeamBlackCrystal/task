@@ -83,7 +83,11 @@ async fn task_labels_suite() {
         tp.tenant_id, tp.project_id
     );
     let mut label_ids = Vec::new();
-    for (name, color) in [("bug", "#e11d48"), ("feature", "#3b82f6")] {
+    for (name, color) in [
+        ("bug", "#e11d48"),
+        ("feature", "#3b82f6"),
+        ("docs", "#10b981"),
+    ] {
         let resp = app
             .post_json_with_session(
                 &labels_path,
@@ -130,6 +134,48 @@ async fn task_labels_suite() {
     let replaced_labels = replaced_body["labels"].as_array().expect("labels array");
     assert_eq!(replaced_labels.len(), 1);
     assert_eq!(replaced_labels[0]["name"], "feature");
+
+    // 置き換えは label_added / label_removed アクティビティとして 1 ラベル 1 件で記録される
+    let activities_path = format!("{task_path}/activities");
+    let activities = app.get_with_session(&activities_path).await;
+    assert_eq!(activities.status(), StatusCode::OK);
+    let activities_body: Value = activities.json().await.expect("activities json");
+    let added_events: Vec<&Value> = activities_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added")
+        .collect();
+    let removed_events: Vec<&Value> = activities_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_removed")
+        .collect();
+    assert_eq!(added_events.len(), 1);
+    assert_eq!(added_events[0]["payload"]["label_id"], label_ids[1]);
+    assert_eq!(added_events[0]["payload"]["name"], "feature");
+    assert_eq!(removed_events.len(), 1);
+    assert_eq!(removed_events[0]["payload"]["label_id"], label_ids[0]);
+    assert_eq!(removed_events[0]["payload"]["name"], "bug");
+
+    // 同じ集合への置き換えは記録されない
+    let noop = app
+        .put_json_with_session(
+            &task_path,
+            serde_json::json!({ "label_ids": [label_ids[1]] }),
+        )
+        .await;
+    assert_eq!(noop.status(), StatusCode::OK);
+    let activities_after_noop = app.get_with_session(&activities_path).await;
+    let noop_body: Value = activities_after_noop.json().await.expect("noop json");
+    let noop_events = noop_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added" || a["event_type"] == "label_removed")
+        .count();
+    assert_eq!(noop_events, 2);
 
     // GET 詳細にも labels が載る
     let detail = app.get_with_session(&task_path).await;
@@ -236,6 +282,63 @@ async fn task_labels_suite() {
         untouched_body["labels"].as_array().expect("labels").len(),
         2
     );
+
+    // 一括更新の add_label_ids も label_added として記録される
+    let task_uuid = uuid::Uuid::parse_str(&task_id).expect("task uuid");
+    let bulk_path = format!(
+        "/v1/tenants/{}/projects/{}/tasks/bulk",
+        tp.tenant_id, tp.project_id
+    );
+    let bulk_add = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": { "add_label_ids": [label_ids[2]] }
+            }),
+        )
+        .await;
+    assert_eq!(bulk_add.status(), StatusCode::OK);
+    let bulk_activities = app.get_with_session(&activities_path).await;
+    let bulk_body: Value = bulk_activities.json().await.expect("bulk activities json");
+    let bulk_added: Vec<&Value> = bulk_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added")
+        .collect();
+    // 内訳: 置き換えで feature / 再付与で bug と feature / bulk 追加で docs
+    assert_eq!(bulk_added.len(), 4);
+    let docs_event = bulk_added
+        .iter()
+        .find(|a| a["payload"]["name"] == "docs")
+        .expect("bulk label_added event");
+    assert_eq!(docs_event["payload"]["label_id"], label_ids[2]);
+
+    // 既に付与済みのラベルを一括追加しても記録されない（変化なし）
+    let bulk_noop = app
+        .post_json_with_session(
+            &bulk_path,
+            serde_json::json!({
+                "task_ids": [task_uuid],
+                "update": { "add_label_ids": [label_ids[0]] }
+            }),
+        )
+        .await;
+    assert_eq!(bulk_noop.status(), StatusCode::OK);
+    let bulk_noop_activities = app.get_with_session(&activities_path).await;
+    let bulk_noop_body: Value = bulk_noop_activities
+        .json()
+        .await
+        .expect("bulk noop activities json");
+    let bulk_noop_count = bulk_noop_body["activities"]
+        .as_array()
+        .expect("activities array")
+        .iter()
+        .filter(|a| a["event_type"] == "label_added" || a["event_type"] == "label_removed")
+        .count();
+    // 内訳: label_added 4 件（feature / bug / feature / docs）+ label_removed 2 件（bug / feature）
+    assert_eq!(bulk_noop_count, 6);
 }
 
 /// 同じタスクのラベル集合を並行して置換しても、二つの集合が合流しない。

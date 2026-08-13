@@ -26,7 +26,9 @@ use sea_orm::{
     prelude::Uuid,
 };
 use service::db::is_postgres_unique_violation;
-use service::task_activities::{record_activity, status_name};
+use service::task_activities::{
+    record_activity, record_label_diff, status_name, task_label_entries,
+};
 
 const BULK_MAX_TASKS: usize = 100;
 
@@ -428,6 +430,16 @@ async fn apply_bulk_update(
         }
     }
 
+    // ラベル変更の前後スナップショット。実際に集合が変わったときだけ記録する。
+    // remove_label_ids などラベルを変える入力が増えたら、この判定式に足すこと。
+    // ここを忘れると記録だけが静かに欠ける
+    let labels_will_change = update.add_label_ids.is_some();
+    let before_labels = if labels_will_change {
+        Some(task_label_entries(&txn, task_id).await?)
+    } else {
+        None
+    };
+
     if let Some(ref label_ids) = update.add_label_ids {
         let mut unique = label_ids.clone();
         unique.sort();
@@ -458,6 +470,11 @@ async fn apply_bulk_update(
                 }
             }
         }
+    }
+
+    if let Some(before_labels) = before_labels {
+        let after_labels = task_label_entries(&txn, task_id).await?;
+        record_label_diff(&txn, task_id, Some(user_id), &before_labels, &after_labels).await?;
     }
 
     let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
