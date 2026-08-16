@@ -18,10 +18,22 @@ type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
 type MutatingField = EditableField | 'status_id' | 'labels';
 
+/**
+ * コードポイント順の文字列比較。
+ * JS の `<` / `>` は UTF-16 コードユニット順で、サーバ（Rust の `String::cmp` =
+ * コードポイント順）と非 BMP 文字（絵文字など）の並びがずれるため、
+ * サロゲートペアを 1 文字として比較して両者を一致させる。
+ */
 function compareStrings(left: string, right: string) {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
+  const l = Array.from(left);
+  const r = Array.from(right);
+  const len = Math.min(l.length, r.length);
+  for (let i = 0; i < len; i++) {
+    const a = l[i].codePointAt(0)!;
+    const b = r[i].codePointAt(0)!;
+    if (a !== b) return a < b ? -1 : 1;
+  }
+  return l.length - r.length;
 }
 
 export interface UseTaskDetailParams {

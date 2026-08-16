@@ -252,6 +252,32 @@ describe('useTaskDetail のキャッシュ同期', () => {
     await flushPromises();
   });
 
+  it('ラベル名の並びはコードポイント順（サーバの Rust 側と一致し、UTF-16 順にしない）', async () => {
+    const base = {
+      description: '',
+      color: '#111111',
+      icon_url: null,
+      project_id: PROJECT_ID,
+    };
+    // U+1F41B（補助面、UTF-16 ではサロゲートペア 0xD83D…）と U+FF8A（BMP 後方）。
+    // UTF-16 コードユニット順だと 🐛bug が先、コードポイント順だと ﾊﾞｸﾞ が先になる
+    const emoji = { ...base, id: '00000000-0000-0000-0000-000000000001', name: '🐛bug' };
+    const halfKana = { ...base, id: '00000000-0000-0000-0000-000000000002', name: 'ﾊﾞｸﾞ' };
+    labelsControl.data = [emoji, halfKana];
+    mountHost();
+    await vi.waitFor(() => {
+      expect(detail.projectLabels.value).toEqual([emoji, halfKana]);
+    });
+
+    detail.onSaveLabels([emoji.id, halfKana.id]);
+    await vi.waitFor(() => {
+      expect(detail.displayTask.value?.labels).toEqual([halfKana, emoji]);
+    });
+
+    putControl.resolve!({ ...baseTask, labels: [halfKana, emoji] });
+    await flushPromises();
+  });
+
   it('削除成功時に検索キャッシュが invalidate され、詳細キャッシュは除去される', async () => {
     mountHost();
     await flushPromises();
