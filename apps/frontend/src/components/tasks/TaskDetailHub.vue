@@ -171,8 +171,12 @@ function onEditKeydown(event: KeyboardEvent, field: EditableField) {
 }
 
 function toggleLabel(labelId: string, checked: boolean) {
-  if (!props.task || props.labelsUpdating) return;
-  const current = props.task.labels.map((label) => label.id);
+  // projectLabelsError 時は available が空になり全解除を送ってしまうため操作しない
+  if (!props.task || props.labelsUpdating || props.projectLabelsError) return;
+  // タスクキャッシュに残っているがプロジェクトから削除済みのラベルを送ると
+  // バックエンドのプロジェクト境界検証で 400 になるため、送信集合から落とす
+  const available = new Set((props.projectLabels ?? []).map((label) => label.id));
+  const current = props.task.labels.map((label) => label.id).filter((id) => available.has(id));
   const next = checked ? [...current, labelId] : current.filter((id) => id !== labelId);
   emit('save:label_ids', next);
 }

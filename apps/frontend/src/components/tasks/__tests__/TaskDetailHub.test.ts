@@ -192,4 +192,32 @@ describe('TaskDetailHub', () => {
     expect(wrapper.emitted('save:label_ids')).toEqual([[[]]]);
     wrapper.unmount();
   });
+
+  it('プロジェクト一覧から消えたラベルは送信集合から落とす', async () => {
+    const staleLabel: components['schemas']['LabelResponse'] = {
+      ...bugLabel,
+      id: 'label-stale',
+      name: 'stale',
+    };
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, labels: [bugLabel, staleLabel] },
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabels: [bugLabel, featureLabel],
+      },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('button[aria-label="ラベルを編集"]').trigger('click');
+    const items = document.body.querySelectorAll('[data-slot="dropdown-menu-checkbox-item"]');
+    const featureItem = Array.from(items).find((el) => el.textContent?.includes('feature'));
+    expect(featureItem).toBeDefined();
+    featureItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    // label-stale はプロジェクト一覧に無いので送らない
+    expect(wrapper.emitted('save:label_ids')).toEqual([[['label-bug', 'label-feature']]]);
+    wrapper.unmount();
+  });
 });
