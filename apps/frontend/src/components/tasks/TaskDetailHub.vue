@@ -428,7 +428,7 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
                     v-for="label in projectLabels"
                     :key="label.id"
                     :model-value="task.labels.some((l) => l.id === label.id)"
-                    :disabled="labelsUpdating"
+                    :disabled="labelsUpdating || projectLabelsError"
                     @update:model-value="(v) => toggleLabel(label.id, !!v)"
                   >
                     <span

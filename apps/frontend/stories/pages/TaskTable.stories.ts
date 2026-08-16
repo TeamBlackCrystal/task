@@ -287,15 +287,6 @@ function createMockFetch(
     if (overrides.hang) {
       return new Promise(() => {});
     }
-    if (
-      url.includes('/v1/tenants/') &&
-      url.includes('/projects') &&
-      !url.includes('/tasks') &&
-      !url.includes('/statuses') &&
-      !url.includes('/labels')
-    ) {
-      return jsonResponse(overrides.projects ?? sampleProjects);
-    }
     if (url.includes('/statuses')) {
       return jsonResponse(overrides.statuses ?? sampleStatuses);
     }
@@ -320,6 +311,10 @@ function createMockFetch(
     }
     if (url.includes('/tasks')) {
       return jsonResponse(overrides.tasks ?? sampleTasks);
+    }
+    // 残ったプロジェクト系だけを最後に受ける
+    if (url.includes('/v1/tenants/') && url.includes('/projects')) {
+      return jsonResponse(overrides.projects ?? sampleProjects);
     }
     return jsonResponse({});
   });

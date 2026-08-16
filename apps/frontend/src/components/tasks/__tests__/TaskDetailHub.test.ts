@@ -157,6 +157,26 @@ describe('TaskDetailHub', () => {
     wrapper.unmount();
   });
 
+  it('取得失敗時にキャッシュ済みラベルが残っていてもチェックボックスを無効化する', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        projectLabels: [bugLabel],
+        projectLabelsError: true,
+      },
+      attachTo: document.body,
+    });
+
+    await wrapper.get('button[aria-label="ラベルを編集"]').trigger('click');
+    const items = document.body.querySelectorAll('[data-slot="dropdown-menu-checkbox-item"]');
+    expect(items.length).toBe(1);
+    expect(items[0].getAttribute('data-disabled')).not.toBeNull();
+    wrapper.unmount();
+  });
+
   it('ラベル一覧の取得中は編集ボタンを無効化する', () => {
     const wrapper = mount(TaskDetailHub, {
       props: {

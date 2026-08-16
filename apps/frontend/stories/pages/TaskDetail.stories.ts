@@ -196,15 +196,6 @@ function createMockFetch(overrides: MockOptions = {}) {
     if (overrides.hang) return new Promise(() => {});
 
     const method = typeof req === 'string' ? 'GET' : req.method;
-    if (
-      url.includes('/v1/tenants/') &&
-      url.includes('/projects') &&
-      !url.includes('/tasks') &&
-      !url.includes('/statuses') &&
-      !url.includes('/labels')
-    ) {
-      return jsonResponse(sampleProjects);
-    }
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
     }
@@ -233,6 +224,14 @@ function createMockFetch(overrides: MockOptions = {}) {
         return jsonResponse({ message: 'not-found' }, 404);
       }
       return jsonResponse(overrides.task ?? mutableTaskDetail);
+    }
+    // tasks 一覧はこのストーリーでは未使用。projects の分岐に吸われないようここで受ける
+    if (url.includes('/tasks')) {
+      return jsonResponse({});
+    }
+    // 残ったプロジェクト系だけを最後に受ける
+    if (url.includes('/v1/tenants/') && url.includes('/projects')) {
+      return jsonResponse(sampleProjects);
     }
     return jsonResponse({});
   });
