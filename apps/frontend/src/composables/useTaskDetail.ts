@@ -302,7 +302,15 @@ export function useTaskDetail(params: UseTaskDetailParams) {
         applyMutationSuccess(field, revision, data, queryKey);
         void invalidateTaskListCaches();
       })
-      .catch(() => rollbackOptimistic(field, revision));
+      .catch(() => {
+        rollbackOptimistic(field, revision);
+        // ラベルは task.labels 全量を送るため、削除済みラベルが混ざると 400 になる。
+        // タスクとラベル一覧を再取得して古いキャッシュを解消し、再操作できる状態に戻す
+        if (field === 'labels') {
+          void queryClient.invalidateQueries({ queryKey });
+          void queryClient.invalidateQueries({ queryKey: ['get', LIST_LABELS_PATH] });
+        }
+      });
   }
 
   function onStatusChange(nextStatusId: string) {

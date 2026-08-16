@@ -35,8 +35,11 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       });
     }
 
-    // PUT を保留して任意のタイミングで完了させるための deferred
-    const putControl: { resolve?: (task: Record<string, unknown>) => void } = {};
+    // PUT を保留して任意のタイミングで完了（成功/失敗）させるための deferred
+    const putControl: {
+      resolve?: (task: Record<string, unknown>) => void;
+      fail?: (status?: number) => void;
+    } = {};
 
     // ラベル一覧 GET の応答をテストごとに切り替える
     const labelsControl: { mode: 'success' | 'error' | 'pending'; data: unknown[] } = {
@@ -62,6 +65,7 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
         return new Promise<Response>((resolve) => {
           putControl.resolve = (task) => resolve(jsonResponse(task));
+          putControl.fail = (status = 400) => resolve(jsonResponse({ message: 'invalid' }, status));
         });
       }
       if (method === 'DELETE' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
@@ -276,6 +280,43 @@ describe('useTaskDetail のキャッシュ同期', () => {
 
     putControl.resolve!({ ...baseTask, labels: [halfKana, emoji] });
     await flushPromises();
+  });
+
+  it('ラベル保存が 400 で失敗したら楽観値を巻き戻し、タスクとラベル一覧を再取得する', async () => {
+    const bug = {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'bug',
+      description: '',
+      color: '#111111',
+      icon_url: null,
+      project_id: PROJECT_ID,
+    };
+    labelsControl.data = [bug];
+    mountHost();
+    await flushPromises();
+    const labelsQueryKey = [
+      'get',
+      '/v1/tenants/{tenant_id}/projects/{project_id}/labels',
+      { params: { path: { tenant_id: TENANT_ID, project_id: PROJECT_ID } } },
+    ] as const;
+    expect(queryClient.getQueryState(labelsQueryKey)).toBeDefined();
+
+    detail.onSaveLabels([bug.id]);
+    await flushPromises();
+    expect(detail.displayTask.value?.labels).toEqual([bug]);
+    const taskUpdates = queryClient.getQueryState(taskQueryKey)!.dataUpdateCount;
+    const labelsUpdates = queryClient.getQueryState(labelsQueryKey)!.dataUpdateCount;
+
+    putControl.fail!(400);
+    await flushPromises();
+
+    expect(detail.displayTask.value?.labels).toEqual([]);
+    expect(detail.labelsError.value).toBe('ラベルの更新に失敗しました');
+    // invalidate による再取得が完走していること（observer があるので即 refetch される）
+    expect(queryClient.getQueryState(taskQueryKey)!.dataUpdateCount).toBeGreaterThan(taskUpdates);
+    expect(queryClient.getQueryState(labelsQueryKey)!.dataUpdateCount).toBeGreaterThan(
+      labelsUpdates,
+    );
   });
 
   it('削除成功時に検索キャッシュが invalidate され、詳細キャッシュは除去される', async () => {

@@ -213,7 +213,7 @@ describe('TaskDetailHub', () => {
     wrapper.unmount();
   });
 
-  it('プロジェクト一覧から消えたラベルは送信集合から落とす', async () => {
+  it('プロジェクト一覧に無いラベルも送信集合に保持する（古い一覧キャッシュで暗黙解除しない）', async () => {
     const staleLabel: components['schemas']['LabelResponse'] = {
       ...bugLabel,
       id: 'label-stale',
@@ -236,8 +236,10 @@ describe('TaskDetailHub', () => {
     expect(featureItem).toBeDefined();
     featureItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    // label-stale はプロジェクト一覧に無いので送らない
-    expect(wrapper.emitted('save:label_ids')).toEqual([[['label-bug', 'label-feature']]]);
+    // label-stale が一覧に無いのはキャッシュが古いだけかもしれないので落とさない
+    expect(wrapper.emitted('save:label_ids')).toEqual([
+      [['label-bug', 'label-stale', 'label-feature']],
+    ]);
     wrapper.unmount();
   });
 });

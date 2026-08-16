@@ -171,12 +171,11 @@ function onEditKeydown(event: KeyboardEvent, field: EditableField) {
 }
 
 function toggleLabel(labelId: string, checked: boolean) {
-  // projectLabelsError 時は available が空になり全解除を送ってしまうため操作しない
   if (!props.task || props.labelsUpdating || props.projectLabelsError) return;
-  // タスクキャッシュに残っているがプロジェクトから削除済みのラベルを送ると
-  // バックエンドのプロジェクト境界検証で 400 になるため、送信集合から落とす
-  const available = new Set((props.projectLabels ?? []).map((label) => label.id));
-  const current = props.task.labels.map((label) => label.id).filter((id) => available.has(id));
+  // projectLabels は独立キャッシュで task.labels より古いことがあるため、
+  // 交差を取って「一覧に無い = 削除済み」と推定しない（有効なラベルを暗黙解除してしまう）。
+  // 実際に削除済みのラベルが混ざって 400 になった場合は保存側でロールバックと再取得を行う
+  const current = props.task.labels.map((label) => label.id);
   const next = checked ? [...current, labelId] : current.filter((id) => id !== labelId);
   emit('save:label_ids', next);
 }
