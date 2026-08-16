@@ -90,4 +90,24 @@ describe('タスク一覧のラベルフィルタ', () => {
     expect(pagination.value.pageIndex).toBe(0);
     scope.stop();
   });
+
+  it('プロジェクトを切り替えたらラベル選択を解除して先頭ページへ戻す', async () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    const selectedLabelId = scope.run(
+      () => useTaskLabelFilter(pagination, projectKey).selectedLabelId,
+    )!;
+    selectedLabelId.value = 'label-bug';
+    await nextTick();
+    pagination.value = { ...pagination.value, pageIndex: 4 };
+
+    projectKey.value = 'OPS';
+    await nextTick();
+    await nextTick();
+
+    expect(selectedLabelId.value).toBeNull();
+    expect(pagination.value.pageIndex).toBe(0);
+    scope.stop();
+  });
 });
