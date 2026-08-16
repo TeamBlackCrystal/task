@@ -420,15 +420,6 @@ function createProjectSwitchMockFetch(): ProjectSwitchMock {
     if (isListTenantsUrl(url)) {
       return jsonResponse(sampleTenants(mockContext.routeParams.tenant));
     }
-    if (
-      url.includes('/v1/tenants/') &&
-      url.includes('/projects') &&
-      !url.includes('/tasks') &&
-      !url.includes('/statuses') &&
-      !url.includes('/labels')
-    ) {
-      return jsonResponse(sampleProjects);
-    }
     if (url.includes('/labels') && url.includes('proj-mkt')) {
       return jsonResponse(mktLabels);
     }
@@ -447,6 +438,10 @@ function createProjectSwitchMockFetch(): ProjectSwitchMock {
     }
     if (url.includes('/tasks')) {
       return jsonResponse(sampleTasks);
+    }
+    // 残ったプロジェクト系だけを最後に受ける
+    if (url.includes('/v1/tenants/') && url.includes('/projects')) {
+      return jsonResponse(sampleProjects);
     }
     return jsonResponse({});
   });
@@ -483,15 +478,6 @@ function createLabelFilterMockFetch(): LabelFilterMock {
     if (isListTenantsUrl(url)) {
       return jsonResponse(sampleTenants(mockContext.routeParams.tenant));
     }
-    if (
-      url.includes('/v1/tenants/') &&
-      url.includes('/projects') &&
-      !url.includes('/tasks') &&
-      !url.includes('/statuses') &&
-      !url.includes('/labels')
-    ) {
-      return jsonResponse(sampleProjects);
-    }
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
     }
@@ -504,6 +490,10 @@ function createLabelFilterMockFetch(): LabelFilterMock {
     }
     if (url.includes('/tasks')) {
       return jsonResponse(sampleTasks);
+    }
+    // 残ったプロジェクト系だけを最後に受ける
+    if (url.includes('/v1/tenants/') && url.includes('/projects')) {
+      return jsonResponse(sampleProjects);
     }
     return jsonResponse({});
   });
