@@ -171,6 +171,9 @@ function onEditKeydown(event: KeyboardEvent, field: EditableField) {
 }
 
 function toggleLabel(labelId: string, checked: boolean) {
+  // 一覧の取得に失敗している間は、表示しているラベルが現在の集合か判断できない。
+  // 引き算には使わない（下記）が、操作の受付自体は止める。UI 側もチェックボックスを
+  // disabled にしてあり、押せるのに何も起きない状態にはならない
   if (!props.task || props.labelsUpdating || props.projectLabelsError) return;
   // projectLabels は独立キャッシュで task.labels より古いことがあるため、
   // 交差を取って「一覧に無い = 削除済み」と推定しない（有効なラベルを暗黙解除してしまう）。
