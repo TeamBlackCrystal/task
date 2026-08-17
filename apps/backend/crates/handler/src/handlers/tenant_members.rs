@@ -5,7 +5,10 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
+};
 
 use crate::AppState;
 use crate::auth_helpers::is_tenant_owner;
@@ -13,7 +16,7 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
-use entity::{scopes::Scope, tenant_members, tenants, users};
+use entity::{project_members, projects, scopes::Scope, tenant_members, tenants, users};
 use payload::tenant_members::*;
 
 async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -76,7 +79,8 @@ pub async fn list_members(
     Path(tenant_id): Path<Uuid>,
 ) -> Result<Json<Vec<TenantMemberResponse>>, AppError> {
     auth.require_scope(Scope::AdminTenant)?;
-    // 一覧の閲覧はテナントに入れる人なら誰でも許す（管理操作ではない）
+    // 追加・変更・削除と違い、一覧の閲覧はテナントに入れる人なら誰でも許す
+    // （PAT はテナント系エンドポイント共通で AdminTenant スコープを要求する）
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
     let members = tenant_members::Entity::find()
@@ -194,8 +198,30 @@ pub async fn remove_member(
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
 
     let member = find_member(&state, tenant_id, user_id).await?;
-    tenant_members::Entity::delete_by_id(member.id)
-        .exec(&state.db)
+
+    // テナントから外したら、そのテナント配下の project_members からも外す。
+    // 残すと「プロジェクトには居るがテナントには入れない」不整合ができ、
+    // 残った行のせいでプロジェクトが「メンバー指定あり」のままになって
+    // 他のテナントメンバーから見えなくなる（通知の宛先にも残り続ける）
+    let txn = state.db.begin().await?;
+    let project_ids: Vec<Uuid> = projects::Entity::find()
+        .filter(projects::Column::TenantId.eq(tenant_id))
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple()
+        .all(&txn)
         .await?;
+    if !project_ids.is_empty() {
+        project_members::Entity::delete_many()
+            .filter(project_members::Column::ProjectId.is_in(project_ids))
+            .filter(project_members::Column::UserId.eq(user_id))
+            .exec(&txn)
+            .await?;
+    }
+    tenant_members::Entity::delete_by_id(member.id)
+        .exec(&txn)
+        .await?;
+    txn.commit().await?;
+
     Ok(StatusCode::NO_CONTENT)
 }

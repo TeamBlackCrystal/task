@@ -218,6 +218,163 @@ async fn only_owner_and_tenant_admin_can_manage_members() {
     app.cleanup_user(owner.id).await;
 }
 
+/// 個人プロジェクト（Inbox）が「メンバー未指定＝テナント全体に開放」に
+/// 巻き込まれないことのガード。
+///
+/// 今は `seed_personal_project_defaults` が作成時に本人を project_members へ入れるので
+/// 開放対象にならないが、そこが変わると他人の Inbox が全テナントメンバーに開く。
+#[tokio::test]
+async fn personal_project_is_not_open_to_other_tenant_members() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        let res = app
+            .post_json_with_session(
+                &members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    // bob の個人プロジェクトを作らせる
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    let personal = app
+        .get_with_session(&format!(
+            "/v1/tenants/{}/users/me/personal-project",
+            tp.tenant_id
+        ))
+        .await;
+    assert_eq!(personal.status(), StatusCode::OK);
+    let body: Value = personal.json().await.expect("personal project json");
+    assert_eq!(body["is_personal"], true);
+    let personal_id = body["id"].as_str().expect("personal project id");
+    let personal_tasks_path = format!(
+        "/v1/tenants/{}/projects/{}/tasks",
+        tp.tenant_id, personal_id
+    );
+
+    // 本人は入れる（過剰に拒否していないこと）
+    assert_eq!(
+        app.get_with_session(&personal_tasks_path).await.status(),
+        StatusCode::OK,
+        "個人プロジェクトには本人が入れる"
+    );
+
+    // 同じテナントの別メンバーは入れない
+    app.reset_session_client();
+    app.login_session(&alice.email, &alice.password).await;
+    assert_eq!(
+        app.get_with_session(&personal_tasks_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "他人の個人プロジェクトはテナントメンバーでも入れない"
+    );
+
+    // 個人プロジェクトが作った drive_folders が bob を参照するので、
+    // 先にテナントごと消す（オーナー削除でテナントが CASCADE される）
+    app.cleanup_user(owner.id).await;
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+}
+
+/// テナントから外したら、そのテナント配下の project_members からも外す。
+/// 残すとプロジェクトが「メンバー指定あり」のままになり、他のメンバーから見えなくなる。
+#[tokio::test]
+async fn removing_tenant_member_also_removes_project_membership() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_path = format!("/v1/tenants/{}/projects/{}", tp.tenant_id, tp.project_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        let res = app
+            .post_json_with_session(
+                &members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+    // alice だけをプロジェクトに指定する（= 絞り込み状態にする）
+    let assigned = app
+        .post_json_with_session(
+            &project_members_path,
+            serde_json::json!({ "user_id": alice.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(assigned.status(), StatusCode::CREATED);
+
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "絞り込み状態のプロジェクトには指定された人しか入れない"
+    );
+
+    // alice をテナントから外す
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.delete_with_session(&format!("{members_path}/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let remaining = app.get_with_session(&project_members_path).await;
+    assert_eq!(remaining.status(), StatusCode::OK);
+    let remaining_body: Value = remaining.json().await.expect("project members json");
+    assert!(
+        remaining_body
+            .as_array()
+            .expect("project members must be an array")
+            .is_empty(),
+        "テナントから外した人はプロジェクトメンバーにも残らない"
+    );
+
+    // 指定が 0 人に戻ったので、テナントメンバーに開放される
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::OK,
+        "指定が無くなったプロジェクトはテナントメンバーに開放される"
+    );
+
+    // テナントから外れた alice は入れない
+    app.reset_session_client();
+    app.login_session(&alice.email, &alice.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "テナントから外れた人は入れない"
+    );
+
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+    app.cleanup_user(owner.id).await;
+}
+
 async fn tenant_ids(res: reqwest::Response) -> Vec<Uuid> {
     let body: Value = res.json().await.expect("tenant list json");
     body.as_array()
