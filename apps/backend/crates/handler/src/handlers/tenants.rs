@@ -6,8 +6,8 @@ use axum::{
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, JoinType, QueryFilter,
-    QuerySelect, RelationTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, QueryFilter,
+    QuerySelect,
 };
 
 use crate::AppState;
@@ -15,7 +15,7 @@ use crate::error::AppError;
 use crate::extractors::AuthMethod;
 use crate::extractors::AuthUser;
 use crate::openapi::{CrudErrors, TenantCreateErrors};
-use entity::{project_members, projects, scopes::Scope, tenants};
+use entity::{scopes::Scope, tenant_members, tenants};
 use payload::tenants::*;
 
 #[axum::debug_handler]
@@ -68,7 +68,7 @@ pub async fn list_tenants(
     auth: AuthUser,
 ) -> Result<Json<Vec<TenantResponse>>, AppError> {
     // テナント一覧は ensure_tenant_owner/access 不要。
-    // Session: 自分が所有するテナント + プロジェクトメンバーとして参加しているテナント。
+    // Session: 自分が所有するテナント + テナントメンバーとして参加しているテナント。
     //          session_has_tenant_access が許可する経路と同じ条件で抽出する
     //          （ここが owner だけだと、参加者はアクセスできるのに一覧に出ない）。
     // PAT: バインドされた tenant_id の単一テナントのみ返す。
@@ -76,14 +76,10 @@ pub async fn list_tenants(
     auth.require_scope(Scope::AdminTenant)?;
     let tenants = match &auth.method {
         AuthMethod::Session => {
-            let joined_tenant_ids: Vec<Uuid> = project_members::Entity::find()
-                .join(
-                    JoinType::InnerJoin,
-                    project_members::Relation::Projects.def(),
-                )
-                .filter(project_members::Column::UserId.eq(auth.user_id))
+            let joined_tenant_ids: Vec<Uuid> = tenant_members::Entity::find()
+                .filter(tenant_members::Column::UserId.eq(auth.user_id))
                 .select_only()
-                .column(projects::Column::TenantId)
+                .column(tenant_members::Column::TenantId)
                 .into_tuple()
                 .all(&state.db)
                 .await?;
@@ -126,11 +122,14 @@ pub async fn get_tenant(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<TenantResponse>, AppError> {
-    // テナント情報の取得はオーナー専用操作。
-    // ensure_tenant_access（オーナーとメンバー双方を通過させる）ではなく
-    // ensure_tenant_owner を使い、プロジェクトメンバーを排除する。
+    // テナント情報の取得はメンバーにも許す。ここをオーナー専用にすると
+    // 一覧に出るのに開けないテナントができてしまう（設定変更・削除は別途オーナー専用）。
     auth.require_scope(Scope::AdminTenant)?;
-    let tenant = auth.ensure_tenant_owner(&state, id).await?;
+    auth.ensure_tenant_access(&state, id, None).await?;
+    let tenant = tenants::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(tenant.into()))
 }
 

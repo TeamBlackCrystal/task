@@ -14,7 +14,7 @@ use sea_orm::{
     QuerySelect, RelationTrait, TransactionTrait,
 };
 
-use entity::{project_members, projects, recovery_codes, tenants, totp_credentials, users};
+use entity::{recovery_codes, tenant_members, tenants, totp_credentials, users};
 
 use crate::{
     AppState,
@@ -66,13 +66,10 @@ async fn user_in_require_2fa_tenant(
     if owns_required_tenant {
         return Ok(true);
     }
-    let member_of_required_tenant = project_members::Entity::find()
-        .join(
-            JoinType::InnerJoin,
-            project_members::Relation::Projects.def(),
-        )
-        .join(JoinType::InnerJoin, projects::Relation::Tenants.def())
-        .filter(project_members::Column::UserId.eq(user_id))
+    // 2FA 必須は「そのテナントに所属しているか」で決まるので、テナントメンバーを見る（#568）
+    let member_of_required_tenant = tenant_members::Entity::find()
+        .join(JoinType::InnerJoin, tenant_members::Relation::Tenants.def())
+        .filter(tenant_members::Column::UserId.eq(user_id))
         .filter(tenants::Column::Require2fa.eq(true))
         .one(db)
         .await?

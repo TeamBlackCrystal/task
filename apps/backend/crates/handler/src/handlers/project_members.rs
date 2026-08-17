@@ -10,7 +10,7 @@ use sea_orm::{
 };
 
 use crate::AppState;
-use crate::auth_helpers::is_tenant_owner;
+use crate::auth_helpers::{is_tenant_member, is_tenant_owner};
 use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -136,6 +136,14 @@ pub async fn add_member(
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)?;
+
+    // プロジェクトメンバーはテナントメンバーの絞り込みなので、テナントに居ない人は入れない。
+    // ここを許すと「プロジェクトには居るがテナントには入れない」不整合な状態ができる（#568）
+    if !is_tenant_owner(&state.db, tenant_id, payload.user_id).await?
+        && !is_tenant_member(&state.db, tenant_id, payload.user_id).await?
+    {
+        return Err(AppError::BadRequest);
+    }
 
     let existing = project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))

@@ -1001,6 +1001,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tenants/{tenant_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** テナントメンバー一覧 */
+        get: operations["list_members"];
+        put?: never;
+        /** テナントメンバーを追加 */
+        post: operations["add_member"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** テナントメンバーの権限を変更 */
+        put: operations["update_member"];
+        post?: never;
+        /** テナントメンバーを削除 */
+        delete: operations["remove_member"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant_id}/projects": {
         parameters: {
             query?: never;
@@ -1980,6 +2016,11 @@ export interface components {
             target_task_id: string;
             type: string;
         };
+        AddTenantMemberRequest: {
+            role: components["schemas"]["TenantRole"];
+            /** Format: uuid */
+            user_id: string;
+        };
         AdminCreateUserRequest: {
             email: string;
             email_verified?: boolean;
@@ -2835,6 +2876,15 @@ export interface components {
         TaskViewListResponse: {
             views: components["schemas"]["ProjectTaskViewResponse"][];
         };
+        TenantMemberResponse: {
+            /** Format: uuid */
+            id: string;
+            role: components["schemas"]["TenantRole"];
+            /** Format: uuid */
+            tenant_id: string;
+            /** Format: uuid */
+            user_id: string;
+        };
         TenantResponse: {
             description: string;
             display_id: string;
@@ -2848,6 +2898,8 @@ export interface components {
             owner_id: string;
             require_2fa: boolean;
         };
+        /** @enum {string} */
+        TenantRole: "Admin" | "Member" | "Viewer";
         TimeLogResponse: {
             /** Format: date-time */
             created_at: string;
@@ -3011,6 +3063,9 @@ export interface components {
             name?: string | null;
             sort?: unknown;
             view_type?: string | null;
+        };
+        UpdateTenantMemberRequest: {
+            role: components["schemas"]["TenantRole"];
         };
         UpdateTenantRequest: {
             description?: string | null;
@@ -8080,6 +8135,300 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DriveUsageResponse"];
                 };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    list_members: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description メンバー一覧 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantMemberResponse"][];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    add_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddTenantMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description 追加されたメンバー */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantMemberResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    update_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description ユーザーID */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTenantMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description 変更後のメンバー */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantMemberResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    remove_member: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description ユーザーID */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 削除しました */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description ログインまたはセッションが必要です */
             401: {

@@ -5,12 +5,11 @@ use axum::{
     http::{header::AUTHORIZATION, request::Parts},
 };
 use axum_session_redispool::SessionRedisPool;
-use sea_orm::{
-    ColumnTrait, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait, prelude::Uuid,
-};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::Uuid};
 
-use entity::{project_members, projects, scopes::Scope, tenants, users};
+use entity::{projects, scopes::Scope, tenants, users};
 
+use crate::auth_helpers::{is_tenant_member, project_is_open_or_member};
 use crate::{AppState, error::AppError};
 use service::auth::{AuthError, authenticate_personal_token};
 
@@ -201,35 +200,20 @@ async fn session_has_tenant_access(
         return Ok(());
     }
 
-    if let Some(pid) = project_id {
-        verify_project_in_tenant(state, tenant_id, pid).await?;
-        let is_member = project_members::Entity::find()
-            .filter(project_members::Column::ProjectId.eq(pid))
-            .filter(project_members::Column::UserId.eq(user_id))
-            .one(&state.db)
-            .await?
-            .is_some();
-        if is_member {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+    // テナントに入れるのはメンバーだけ。プロジェクト単位の絞り込みはその内側で行う
+    if !is_tenant_member(&state.db, tenant_id, user_id).await? {
+        return Err(AppError::Forbidden);
+    }
+
+    let Some(pid) = project_id else {
+        return Ok(());
+    };
+    verify_project_in_tenant(state, tenant_id, pid).await?;
+
+    if project_is_open_or_member(&state.db, pid, user_id).await? {
+        Ok(())
     } else {
-        let is_member = project_members::Entity::find()
-            .join(
-                JoinType::InnerJoin,
-                project_members::Relation::Projects.def(),
-            )
-            .filter(project_members::Column::UserId.eq(user_id))
-            .filter(projects::Column::TenantId.eq(tenant_id))
-            .one(&state.db)
-            .await?
-            .is_some();
-        if is_member {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+        Err(AppError::Forbidden)
     }
 }
 

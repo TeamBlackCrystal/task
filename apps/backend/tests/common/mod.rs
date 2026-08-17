@@ -18,7 +18,7 @@ use axum::{
 };
 use axum_session::{SameSite, SessionConfig, SessionLayer, SessionMode, SessionStore};
 use axum_session_redispool::SessionRedisPool;
-use entity::{github_integrations, oauth_connections, projects, tenants, users};
+use entity::{github_integrations, oauth_connections, projects, tenant_members, tenants, users};
 
 use backend::{
     AppState,
@@ -1176,4 +1176,45 @@ pub async fn insert_tenant(db: &DatabaseConnection, owner_id: Uuid) -> Uuid {
     .await
     .expect("insert tenant");
     id
+}
+
+/// #568: プロジェクトメンバーはテナントメンバーの絞り込みなので、
+/// テストが `project_members` へ直接 INSERT する場合もテナントメンバーを先に用意する。
+/// 既に居る場合・テナントオーナーの場合は何もしない。
+pub async fn ensure_tenant_member_for_project(
+    db: &DatabaseConnection,
+    project_id: Uuid,
+    user_id: Uuid,
+) {
+    let project = projects::Entity::find_by_id(project_id)
+        .one(db)
+        .await
+        .expect("find project")
+        .expect("project exists");
+    let tenant = tenants::Entity::find_by_id(project.tenant_id)
+        .one(db)
+        .await
+        .expect("find tenant")
+        .expect("tenant exists");
+    if tenant.owner_id == user_id {
+        return;
+    }
+    let existing = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(project.tenant_id))
+        .filter(tenant_members::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+        .expect("find tenant member");
+    if existing.is_some() {
+        return;
+    }
+    tenant_members::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        tenant_id: Set(project.tenant_id),
+        user_id: Set(user_id),
+        role: Set(entity::tenant_members::TenantRole::Member),
+    }
+    .insert(db)
+    .await
+    .expect("insert tenant member");
 }

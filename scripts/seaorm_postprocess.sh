@@ -29,6 +29,7 @@ replace tasks.rs                "pub priority: String,"            "pub priority
 replace project_custom_fields.rs "pub field_type: String,"         "pub field_type: super::super::project_custom_fields::CustomFieldType,"
 replace sprints.rs              "pub status: String,"              "pub status: super::super::sprints::SprintStatus,"
 replace project_members.rs      "pub role: String,"                "pub role: super::super::project_members::ProjectRole,"
+replace tenant_members.rs       "pub role: String,"                "pub role: super::super::tenant_members::TenantRole,"
 replace drive_files.rs          "pub storage_type: String,"        "pub storage_type: super::super::drive_files::StorageType,"
 replace drive_folder_shares.rs  "pub permission: String,"          "pub permission: super::super::drive_folder_shares::SharePermission,"
 replace personal_tokens.rs      "pub scopes: Json,"                "pub scopes: super::super::scopes::ScopeList,"

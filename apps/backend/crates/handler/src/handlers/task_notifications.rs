@@ -13,13 +13,13 @@ use sea_orm::{
 use std::collections::{HashMap, HashSet};
 
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
+use crate::auth_helpers::{require_member_or_owner, visible_project_ids};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::handlers::tasks::resolve_task;
 use crate::openapi::CrudErrors;
 use entity::{
-    notification_settings, notifications, project_members, projects, task_watchers, tasks, tenants,
+    notification_settings, notifications, projects, task_watchers, tasks, tenant_members, tenants,
     users,
 };
 use payload::task_notifications::*;
@@ -31,13 +31,6 @@ async fn accessible_project_ids(
     db: &sea_orm::DatabaseConnection,
     user_id: Uuid,
 ) -> Result<HashSet<Uuid>, AppError> {
-    let member_project_ids: HashSet<Uuid> = project_members::Entity::find()
-        .filter(project_members::Column::UserId.eq(user_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|m| m.project_id)
-        .collect();
     let owned_tenant_ids: Vec<Uuid> = tenants::Entity::find()
         .filter(tenants::Column::OwnerId.eq(user_id))
         .all(db)
@@ -56,6 +49,28 @@ async fn accessible_project_ids(
             .map(|p| p.id)
             .collect()
     };
+
+    // 所属テナントのプロジェクトのうち、メンバー未指定のものと自分が指定されたもの（#568）
+    let joined_tenant_ids: Vec<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::UserId.eq(user_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|m| m.tenant_id)
+        .collect();
+    let member_project_ids: HashSet<Uuid> = if joined_tenant_ids.is_empty() {
+        HashSet::new()
+    } else {
+        let candidate_ids: Vec<Uuid> = projects::Entity::find()
+            .filter(projects::Column::TenantId.is_in(joined_tenant_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        visible_project_ids(db, candidate_ids, user_id).await?
+    };
+
     Ok(member_project_ids
         .into_iter()
         .chain(owner_project_ids)

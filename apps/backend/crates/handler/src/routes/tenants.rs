@@ -16,6 +16,14 @@ pub fn routes() -> OpenApiRouter<AppState> {
             crate::routes::drive::tenant_folder_routes(),
         )
         .nest(
+            "/{tenant_id}/members",
+            OpenApiRouter::<AppState>::new()
+                .routes(routes!(crate::handlers::tenant_members::list_members))
+                .routes(routes!(crate::handlers::tenant_members::add_member))
+                .routes(routes!(crate::handlers::tenant_members::update_member))
+                .routes(routes!(crate::handlers::tenant_members::remove_member)),
+        )
+        .nest(
             "/{tenant_id}/projects",
             OpenApiRouter::<AppState>::new()
                 .routes(routes!(crate::handlers::projects::list_projects))

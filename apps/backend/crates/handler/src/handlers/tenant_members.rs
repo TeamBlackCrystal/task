@@ -1,0 +1,201 @@
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
+use axum_valid::Valid;
+use sea_orm::prelude::Uuid;
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+
+use crate::AppState;
+use crate::auth_helpers::is_tenant_owner;
+use crate::error::AppError;
+use crate::extractors::AuthUser;
+use crate::openapi::CrudErrors;
+use entity::tenant_members::TenantRole;
+use entity::{scopes::Scope, tenant_members, tenants, users};
+use payload::tenant_members::*;
+
+async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
+    tenants::Entity::find_by_id(tenant_id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(())
+}
+
+/// メンバーの追加・変更・削除はオーナーとテナント Admin だけに許す。
+pub(crate) async fn require_tenant_admin(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    ensure_tenant_exists(state, tenant_id).await?;
+    if is_tenant_owner(&state.db, tenant_id, user_id).await? {
+        return Ok(());
+    }
+    let member = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.eq(user_id))
+        .one(&state.db)
+        .await?;
+    match member {
+        Some(m) if m.role == TenantRole::Admin => Ok(()),
+        _ => Err(AppError::Forbidden),
+    }
+}
+
+async fn find_member(
+    state: &AppState,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<tenant_members::Model, AppError> {
+    tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.eq(user_id))
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/",
+    tag = "Tenant Members",
+    summary = "テナントメンバー一覧",
+    params(("tenant_id" = Uuid, Path, description = "テナントID")),
+    responses(
+        (status = 200, description = "メンバー一覧", body = [TenantMemberResponse]),
+        CrudErrors,
+    )
+)]
+pub async fn list_members(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(tenant_id): Path<Uuid>,
+) -> Result<Json<Vec<TenantMemberResponse>>, AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    // 一覧の閲覧はテナントに入れる人なら誰でも許す（管理操作ではない）
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+
+    let members = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .all(&state.db)
+        .await?;
+    Ok(Json(members.into_iter().map(Into::into).collect()))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/",
+    tag = "Tenant Members",
+    summary = "テナントメンバーを追加",
+    params(("tenant_id" = Uuid, Path, description = "テナントID")),
+    request_body = AddTenantMemberRequest,
+    responses(
+        (status = 201, description = "追加されたメンバー", body = TenantMemberResponse),
+        CrudErrors,
+    )
+)]
+pub async fn add_member(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(tenant_id): Path<Uuid>,
+    Valid(Json(payload)): Valid<Json<AddTenantMemberRequest>>,
+) -> Result<(StatusCode, Json<TenantMemberResponse>), AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    require_tenant_admin(&state, tenant_id, auth.user_id).await?;
+
+    users::Entity::find_by_id(payload.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    if tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.eq(payload.user_id))
+        .one(&state.db)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict);
+    }
+
+    let member = tenant_members::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        tenant_id: Set(tenant_id),
+        user_id: Set(payload.user_id),
+        role: Set(payload.role),
+    }
+    .insert(&state.db)
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(member.into())))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    put,
+    path = "/{user_id}",
+    tag = "Tenant Members",
+    summary = "テナントメンバーの権限を変更",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("user_id" = Uuid, Path, description = "ユーザーID"),
+    ),
+    request_body = UpdateTenantMemberRequest,
+    responses(
+        (status = 200, description = "変更後のメンバー", body = TenantMemberResponse),
+        CrudErrors,
+    )
+)]
+pub async fn update_member(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+    Valid(Json(payload)): Valid<Json<UpdateTenantMemberRequest>>,
+) -> Result<Json<TenantMemberResponse>, AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    require_tenant_admin(&state, tenant_id, auth.user_id).await?;
+
+    let member = find_member(&state, tenant_id, user_id).await?;
+    let mut active: tenant_members::ActiveModel = member.into();
+    active.role = Set(payload.role);
+    let updated = active.update(&state.db).await?;
+    Ok(Json(updated.into()))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    delete,
+    path = "/{user_id}",
+    tag = "Tenant Members",
+    summary = "テナントメンバーを削除",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("user_id" = Uuid, Path, description = "ユーザーID"),
+    ),
+    responses(
+        (status = 204, description = "削除しました"),
+        CrudErrors,
+    )
+)]
+pub async fn remove_member(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    require_tenant_admin(&state, tenant_id, auth.user_id).await?;
+
+    let member = find_member(&state, tenant_id, user_id).await?;
+    tenant_members::Entity::delete_by_id(member.id)
+        .exec(&state.db)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}

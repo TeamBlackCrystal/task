@@ -19,12 +19,11 @@ use sea_orm::{
 };
 
 use crate::AppState;
+use crate::auth_helpers::{is_tenant_member, project_is_open_or_member};
 use crate::error::{AppError, ServerError};
 use crate::extractors::{AuthUser, OptionalAuthUser};
 use crate::openapi::CrudErrors;
-use entity::{
-    drive_files, drive_folder_shares, drive_folders, project_members, scopes::Scope, tenants,
-};
+use entity::{drive_files, drive_folder_shares, drive_folders, scopes::Scope, tenants};
 use payload::drive_files::*;
 use service::drive::{
     current_storage_type, effective_quota, guess_mime, is_editable_mime, is_tenant_owner,
@@ -58,17 +57,24 @@ async fn load_folder_in_tenant(
         .ok_or(AppError::NotFound)
 }
 
-async fn is_project_member(
+/// プロジェクト配下のファイルにアクセスできるか。
+///
+/// この経路はファイル ID だけで引けるものがあるため、プロジェクトの所属だけを見ると
+/// テナント境界を越えられる。テナントに入れることを先に確かめてから、
+/// メンバー未指定のプロジェクトはテナント全体に開放する（#568）。
+async fn can_access_project(
     state: &AppState,
+    tenant_id: Uuid,
     project_id: Uuid,
     user_id: Uuid,
 ) -> Result<bool, AppError> {
-    let member = project_members::Entity::find()
-        .filter(project_members::Column::ProjectId.eq(project_id))
-        .filter(project_members::Column::UserId.eq(user_id))
-        .one(&state.db)
-        .await?;
-    Ok(member.is_some())
+    if is_tenant_owner(&state.db, tenant_id, user_id).await? {
+        return Ok(true);
+    }
+    if !is_tenant_member(&state.db, tenant_id, user_id).await? {
+        return Ok(false);
+    }
+    project_is_open_or_member(&state.db, project_id, user_id).await
 }
 
 async fn folder_has_user_share(
@@ -156,7 +162,7 @@ async fn can_access_file_content(
         return Ok(());
     }
 
-    if is_project_member(state, project_id, auth_user.user_id).await? {
+    if can_access_project(state, file.tenant_id, project_id, auth_user.user_id).await? {
         return Ok(());
     }
 
@@ -183,7 +189,7 @@ async fn authorize_file_access(
     if is_tenant_owner(&state.db, file.tenant_id, user.user_id).await? {
         return Ok(());
     }
-    if is_project_member(state, project_id, user.user_id).await? {
+    if can_access_project(state, file.tenant_id, project_id, user.user_id).await? {
         return Ok(());
     }
     if let Some(folder_id) = file.folder_id
@@ -206,7 +212,7 @@ async fn authorize_file_write(
     if is_tenant_owner(&state.db, file.tenant_id, user.user_id).await? {
         return Ok(());
     }
-    if is_project_member(state, project_id, user.user_id).await? {
+    if can_access_project(state, file.tenant_id, project_id, user.user_id).await? {
         return Ok(());
     }
     Err(AppError::Forbidden)
@@ -247,7 +253,7 @@ pub async fn list_files(
         let folder = load_folder_in_tenant(&state, tenant_id, folder_id).await?;
         if let Some(project_id) = folder.project_id
             && !is_tenant_owner(&state.db, tenant_id, auth.user_id).await?
-            && !is_project_member(&state, project_id, auth.user_id).await?
+            && !can_access_project(&state, tenant_id, project_id, auth.user_id).await?
             && !folder_has_user_share(&state, folder_id, auth.user_id).await?
         {
             return Err(AppError::Forbidden);
@@ -343,7 +349,7 @@ pub async fn upload_file(
                     // （共有受信者は読み取り専用。authorize_file_write と同方針）。
                     if let Some(project_id) = folder.project_id
                         && !is_tenant_owner(&state.db, tenant_id, auth.user_id).await?
-                        && !is_project_member(&state, project_id, auth.user_id).await?
+                        && !can_access_project(&state, tenant_id, project_id, auth.user_id).await?
                     {
                         return Err(AppError::Forbidden);
                     }
