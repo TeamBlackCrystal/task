@@ -104,6 +104,10 @@ export function useLogoutMutation() {
   return apiClient.useMutation('post', '/v1/auth/logout');
 }
 
+export function useVerifyEmailMutation() {
+  return apiClient.useMutation('post', '/v1/auth/verify-email');
+}
+
 export function useResendVerificationEmailMutation() {
   return apiClient.useMutation('post', '/v1/auth/resend-verification-email');
 }
