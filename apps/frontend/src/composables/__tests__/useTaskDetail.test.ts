@@ -25,7 +25,8 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       progress_pct: 0,
       soft_deadline: null,
       hard_deadline: null,
-      labels: [],
+      // テストごとに差し替えるため、空配列（never[]）に推論させない
+      labels: [] as Record<string, unknown>[],
     };
 
     function jsonResponse(body: unknown, status = 200) {
@@ -166,6 +167,7 @@ describe('useTaskDetail のキャッシュ同期', () => {
     putControl.resolve = undefined;
     labelsControl.mode = 'success';
     labelsControl.data = [];
+    baseTask.labels = [];
   });
 
   it('ラベル一覧の取得失敗は projectLabelsError として公開し、詳細全体の isError にはしない', async () => {
@@ -253,6 +255,35 @@ describe('useTaskDetail のキャッシュ同期', () => {
     });
 
     putControl.resolve!({ ...baseTask, labels: [alpha1, alpha2, beta] });
+    await flushPromises();
+  });
+
+  it('ラベル一覧が古くて欠けていても、既にタスクに付いているラベルは楽観値に残す', async () => {
+    const kept = {
+      id: '00000000-0000-0000-0000-000000000001',
+      name: 'kept',
+      description: '',
+      color: '#111111',
+      icon_url: null,
+      project_id: PROJECT_ID,
+    };
+    const added = { ...kept, id: '00000000-0000-0000-0000-000000000002', name: 'added' };
+
+    // タスクには kept が付いているが、独立キャッシュのラベル一覧は古くて kept を含まない。
+    // 楽観値を一覧だけから作ると、kept が無関係に一瞬消えて見える
+    baseTask.labels = [kept];
+    labelsControl.data = [added];
+    mountHost();
+    await vi.waitFor(() => {
+      expect(detail.projectLabels.value).toEqual([added]);
+    });
+
+    detail.onSaveLabels([kept.id, added.id]);
+    await vi.waitFor(() => {
+      expect(detail.displayTask.value?.labels).toEqual([added, kept]);
+    });
+
+    putControl.resolve!({ ...baseTask, labels: [added, kept] });
     await flushPromises();
   });
 

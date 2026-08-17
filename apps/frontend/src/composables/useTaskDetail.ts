@@ -386,9 +386,17 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     if (currentIds.length === nextIds.length && currentIds.every((id, i) => id === nextIds[i])) {
       return;
     }
-    // 楽観値をサーバレスポンスと同じ名前順（同名時は ID 順）に揃える
-    const chosen = (labelsQuery.data.value ?? [])
-      .filter((label) => labelIds.includes(label.id))
+    // 楽観値の出所は送信集合と揃える。projectLabels は task.labels より古いことがあるため、
+    // 一覧だけを見ると既に付いているラベルが楽観描画から落ちて一瞬消えて見える。
+    // 一覧を優先しつつ（名前の変更は一覧側が新しい）、欠けている分は task.labels で補う
+    const known = new Map(current.labels.map((label) => [label.id, label]));
+    for (const label of labelsQuery.data.value ?? []) {
+      known.set(label.id, label);
+    }
+    // サーバレスポンスと同じ名前順（同名時は ID 順）に揃える
+    const chosen = labelIds
+      .map((id) => known.get(id))
+      .filter((label) => label !== undefined)
       .sort(
         (left, right) => compareStrings(left.name, right.name) || compareStrings(left.id, right.id),
       );
