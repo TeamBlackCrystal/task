@@ -101,6 +101,29 @@ describe('SignInForm', () => {
     expect(loginCalls).toHaveLength(0);
   });
 
+  it('パスワードのエラーを出した後に直せば、フォーカスを外さなくても 1 回目の送信が通る', async () => {
+    const fetchMock = stubLogin(200, {});
+    const wrapper = await mountForm();
+
+    const password = wrapper.find('#password');
+    await wrapper.find('#email').setValue('test@example.com');
+    await password.setValue('pass');
+    await password.trigger('blur');
+    await flushPromises();
+    expect(document.body.textContent).toContain('8文字以上で入力してください');
+
+    // blur せずに直してそのまま送信（フィールド内で Enter を押した場合の経路）
+    await password.setValue('devpass123');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    const loginCalls = fetchMock.mock.calls.filter(([req]) =>
+      (typeof req === 'string' ? req : req.url).includes('/v1/auth/login'),
+    );
+    expect(loginCalls).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('8文字以上で入力してください');
+  });
+
   it('email-not-verified の 403 ではメール未認証画面を表示する', async () => {
     stubLogin(403, { message: 'email-not-verified' });
     await mountAndSubmit();

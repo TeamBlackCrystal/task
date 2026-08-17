@@ -29,6 +29,13 @@ const submitAttempted = ref(false);
 const form = useForm({
   defaultValues: { email: '', password: '' },
   validators: { onSubmit: schema },
+  // canSubmit が false だと 1 回目の送信が握り潰される（form-core の _handleSubmit が
+  // submissionAttempts <= 1 のとき早期 return する）。パスワードは onBlur 検証で、
+  // 直した値を change で検証しても onBlur 由来のエラーは残るため、フィールド内から
+  // Enter を押すと無反応になっていた。送信時は全フィールドが submit 起因で再検証され
+  // （onChange / onBlur / onSubmit がまとめて走る）古いエラーも消えるので、
+  // canSubmit で入口を塞ぐ必要はない
+  canSubmitWhenInvalid: true,
   onSubmit: async ({ value }) => {
     submitError.value = null;
     unverifiedEmail.value = null;
@@ -157,7 +164,7 @@ function handleSubmit() {
             </p>
             <!--
               canSubmit で無効化すると、入力途中の不正値でボタンだけが押せなくなり
-              理由が画面に出ない。送信は onSubmit 検証に任せ、押せる状態を保つ
+              理由が画面に出ない。送信は submit 起因の検証に任せ、押せる状態を保つ
             -->
             <form.Subscribe>
               <template #default="{ isSubmitting }">
