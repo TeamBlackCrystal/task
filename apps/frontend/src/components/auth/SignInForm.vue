@@ -87,7 +87,13 @@ const form = useForm({
                 メールアドレスを入力してサインインしてください
               </p>
             </div>
-            <form.Field name="email" :validators="{ onBlur: type('string.email') }">
+            <!--
+              onBlur だと、一度エラーを出した後に入力を直しても次にフォーカスを外すまで
+              エラーが残る（onBlur 由来のエラーが errorMap に残るため）。onChange で
+              毎回検証し、表示は isBlurred で抑えて入力途中のエラー表示は避ける
+              （isTouched は change でも true になるので使えない）
+            -->
+            <form.Field name="email" :validators="{ onChange: type('string.email') }">
               <template #default="{ field }">
                 <Field>
                   <FieldLabel :for="field.name">メールアドレス</FieldLabel>
@@ -103,7 +109,7 @@ const form = useForm({
                   />
                   <FieldError class="min-h-[1.25rem]">
                     {{
-                      field.state.meta.errors.length
+                      field.state.meta.errors.length && field.state.meta.isBlurred
                         ? arkMessage(String(field.state.meta.errors[0]))
                         : ''
                     }}
