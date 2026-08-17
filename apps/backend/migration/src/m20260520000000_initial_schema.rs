@@ -250,20 +250,6 @@ impl MigrationTrait for Migration {
 
         conn.execute_unprepared(
             r#"
-            CREATE TABLE tenant_members (
-                id        UUID PRIMARY KEY,
-                tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                role      VARCHAR NOT NULL,
-                UNIQUE (tenant_id, user_id),
-                CONSTRAINT tenant_members_role_check CHECK (role IN ('Admin', 'Member', 'Viewer'))
-            )
-        "#,
-        )
-        .await?;
-
-        conn.execute_unprepared(
-            r#"
             CREATE TABLE project_members (
                 id         UUID PRIMARY KEY,
                 project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -740,7 +726,6 @@ impl MigrationTrait for Migration {
             "project_task_counters",
             "project_statuses",
             "project_members",
-            "tenant_members",
             "recovery_codes",
             "totp_credentials",
             "passkeys",
