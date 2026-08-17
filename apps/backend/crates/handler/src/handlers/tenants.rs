@@ -5,14 +5,17 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, JoinType, QueryFilter,
+    QuerySelect, RelationTrait,
+};
 
 use crate::AppState;
 use crate::error::AppError;
 use crate::extractors::AuthMethod;
 use crate::extractors::AuthUser;
 use crate::openapi::{CrudErrors, TenantCreateErrors};
-use entity::{scopes::Scope, tenants};
+use entity::{project_members, projects, scopes::Scope, tenants};
 use payload::tenants::*;
 
 #[axum::debug_handler]
@@ -65,14 +68,32 @@ pub async fn list_tenants(
     auth: AuthUser,
 ) -> Result<Json<Vec<TenantResponse>>, AppError> {
     // テナント一覧は ensure_tenant_owner/access 不要。
-    // Session: OwnerId フィルタで自分のテナントのみ取得。
+    // Session: 自分が所有するテナント + プロジェクトメンバーとして参加しているテナント。
+    //          session_has_tenant_access が許可する経路と同じ条件で抽出する
+    //          （ここが owner だけだと、参加者はアクセスできるのに一覧に出ない）。
     // PAT: バインドされた tenant_id の単一テナントのみ返す。
     // フィルタ自体が認可を兼ねているため追加チェックは不要。
     auth.require_scope(Scope::AdminTenant)?;
     let tenants = match &auth.method {
         AuthMethod::Session => {
+            let joined_tenant_ids: Vec<Uuid> = project_members::Entity::find()
+                .join(
+                    JoinType::InnerJoin,
+                    project_members::Relation::Projects.def(),
+                )
+                .filter(project_members::Column::UserId.eq(auth.user_id))
+                .select_only()
+                .column(projects::Column::TenantId)
+                .into_tuple()
+                .all(&state.db)
+                .await?;
+
             tenants::Entity::find()
-                .filter(tenants::Column::OwnerId.eq(auth.user_id))
+                .filter(
+                    Condition::any()
+                        .add(tenants::Column::OwnerId.eq(auth.user_id))
+                        .add(tenants::Column::Id.is_in(joined_tenant_ids)),
+                )
                 .all(&state.db)
                 .await?
         }
