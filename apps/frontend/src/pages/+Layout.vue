@@ -24,8 +24,9 @@ const TanStackDevtools = import.meta.env.DEV
 const isDev = import.meta.env.DEV;
 
 const pageContext = usePageContext();
+// サインイン前に開くページ。認証ガードを外さないと /signin へ飛ばされる
 const isAuthPage = computed(() =>
-  ['/signin', '/signup', '/auth/reset-password'].includes(pageContext.urlPathname),
+  ['/signin', '/signup', '/auth/reset-password', '/verify-email'].includes(pageContext.urlPathname),
 );
 
 const { meQuery, logout } = useAuthSession({
