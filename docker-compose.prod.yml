@@ -1,0 +1,121 @@
+# 本番用（Dokploy の Compose アプリとして使う）。開発用は docker-compose.yml。
+#
+#   - イメージは ghcr.io から pull する（v* タグを push すると publish-images.yml が公開する）
+#   - シークレットは一切ここに書かない。Dokploy のアプリ設定「Environment」に入れる
+#     （.env.prod.example が必要な変数の一覧）
+#   - ${VAR:?...} は未設定なら起動せずエラーになる。ダミー値で本番が立ち上がるのを防ぐため、
+#     デフォルト値は付けない
+#   - ポートは公開しない。frontend だけ dokploy-network 経由で Traefik に出す。
+#     Dokploy の Domains タブで frontend / port 3000 にドメインを割り当てる
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: task
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: task
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U task -d task"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: valkey/valkey:9.1
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # マイグレーション適用（one-shot）。`up` は冪等なのでデプロイのたびに走らせてよい
+  migration:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/task-backend:${IMAGE_TAG:?set IMAGE_TAG}
+    command: ["/app/run-migration.sh"]
+    environment:
+      DATABASE_URL: postgresql://task:${POSTGRES_PASSWORD}@db:5432/task
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER}/task-backend:${IMAGE_TAG}
+    environment:
+      DATABASE_URL: postgresql://task:${POSTGRES_PASSWORD}@db:5432/task
+      REDIS_URL: redis://redis:6379
+      LISTEN_ADDR: 0.0.0.0:3400
+      RUST_LOG: info,sqlx=warn
+      # frontend が SSR サーバ経由でプロキシするので、ブラウザから直接叩く CORS は本来不要。
+      # 将来 backend を直接公開したときのために本番オリジンを入れておく
+      ALLOW_ORIGIN: ${APP_ORIGIN:?set APP_ORIGIN}
+      EMAIL_VERIFICATION_APP_URL: ${APP_ORIGIN}
+      PERSONAL_TOKEN_SECRET: ${PERSONAL_TOKEN_SECRET:?set PERSONAL_TOKEN_SECRET}
+      RECOVERY_CODE_SECRET: ${RECOVERY_CODE_SECRET:?set RECOVERY_CODE_SECRET}
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?set TOTP_ENCRYPTION_KEY}
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:?set SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME:?set SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?set SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM:?set SMTP_FROM}
+      # 管理者ゼロのときだけ、このメールのユーザーを管理者に昇格する（初回セットアップ用）
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL}
+      # Drive のアップロード先。オブジェクトストレージに載せ替えるときは
+      # STORAGE_BACKEND=s3 と S3_* を足す（apps/backend/.env.example 参照）
+      STORAGE_BACKEND: local
+      LOCAL_UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    # ヘルスチェック用エンドポイントは無いので listen の有無だけを見る
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3400"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/task-frontend:${IMAGE_TAG}
+    environment:
+      # SSR サーバから backend へのプロキシ先（api-proxy.ts が参照）
+      API_BASE: http://backend:3400
+      APP_URL: ${APP_ORIGIN}
+      PORT: "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD", "bun", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+
+volumes:
+  pgdata:
+  valkeydata:
+  uploads:
+
+networks:
+  dokploy-network:
+    external: true

@@ -1,4 +1,5 @@
 .env
+.env.prod
 *.rdb
 docs/.retype
 docs/node_modules
