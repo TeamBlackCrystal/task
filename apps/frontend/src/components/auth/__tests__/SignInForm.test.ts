@@ -25,7 +25,7 @@ function stubLogin(status: number, body: unknown) {
   return fetchMock;
 }
 
-async function mountAndSubmit() {
+async function mountForm() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -34,6 +34,11 @@ async function mountAndSubmit() {
     attachTo: document.body,
   });
   await flushPromises();
+  return wrapper;
+}
+
+async function mountAndSubmit() {
+  const wrapper = await mountForm();
   await wrapper.find('#email').setValue('test@example.com');
   await wrapper.find('#password').setValue('devpass123');
   await wrapper.find('form').trigger('submit');
@@ -51,14 +56,7 @@ afterEach(() => {
 describe('SignInForm', () => {
   it('メール形式のエラーは、フォーカスを外さなくても入力を直した時点で消える', async () => {
     stubLogin(200, {});
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const wrapper = mount(SignInForm, {
-      global: { plugins: [[VueQueryPlugin, { queryClient }]] },
-      attachTo: document.body,
-    });
-    await flushPromises();
+    const wrapper = await mountForm();
 
     const email = wrapper.find('#email');
     await email.setValue('not-an-email');
@@ -74,19 +72,33 @@ describe('SignInForm', () => {
 
   it('入力途中（まだフォーカスを外していない）ではメール形式のエラーを出さない', async () => {
     stubLogin(200, {});
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const wrapper = mount(SignInForm, {
-      global: { plugins: [[VueQueryPlugin, { queryClient }]] },
-      attachTo: document.body,
-    });
-    await flushPromises();
+    const wrapper = await mountForm();
 
     await wrapper.find('#email').setValue('tes');
     await flushPromises();
 
     expect(document.body.textContent).not.toContain('メールアドレスの形式が正しくありません');
+  });
+
+  it('一度もフォーカスを外していない不正なメールでも、送信ボタンは押せて理由が表示される', async () => {
+    const fetchMock = stubLogin(200, {});
+    const wrapper = await mountForm();
+
+    await wrapper.find('#password').setValue('devpass123');
+    await wrapper.find('#email').setValue('tes');
+    await flushPromises();
+
+    // 入力途中でボタンを無効化しない（無効なボタンは押しても blur せず、行き止まりになる）
+    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('メールアドレスの形式が正しくありません');
+    const loginCalls = fetchMock.mock.calls.filter(([req]) =>
+      (typeof req === 'string' ? req : req.url).includes('/v1/auth/login'),
+    );
+    expect(loginCalls).toHaveLength(0);
   });
 
   it('email-not-verified の 403 ではメール未認証画面を表示する', async () => {
