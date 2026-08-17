@@ -7,7 +7,7 @@ use sea_orm::{
 use std::sync::LazyLock;
 
 use crate::error::AppError;
-use entity::{project_members, project_statuses, projects, task_activities, tasks, tenants, users};
+use entity::{project_statuses, projects, task_activities, tasks, tenants, users};
 
 static MENTION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([a-zA-Z0-9_-]+)").expect("mention regex"));
@@ -68,14 +68,10 @@ pub async fn extract_mentions<C: ConnectionTrait>(
         return Ok(vec![]);
     }
 
-    // Fetch project members to enforce project boundary
-    let member_ids: std::collections::HashSet<Uuid> = project_members::Entity::find()
-        .filter(project_members::Column::ProjectId.eq(project_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|m| m.user_id)
-        .collect();
+    // プロジェクト境界の外にいる人はメンションしても通知しない。
+    // メンバー未指定のプロジェクトはテナントメンバー全員が対象になる（#568）
+    let member_ids: std::collections::HashSet<Uuid> =
+        crate::access::project_accessible_user_ids(db, project_id).await?;
 
     let tenant_owner_id: Option<Uuid> =
         if let Some(proj) = projects::Entity::find_by_id(project_id).one(db).await? {

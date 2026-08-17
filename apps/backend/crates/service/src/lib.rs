@@ -3,6 +3,7 @@
 // 旧 crate::error / crate::settings パス互換のための再公開。
 pub use common::{error, settings};
 
+pub mod access;
 pub mod already_registered_email_delivery;
 pub mod auth;
 pub mod bootstrap_admin;
