@@ -68,6 +68,29 @@ describe('タスク一覧のラベルフィルタ', () => {
     ).toBeUndefined();
   });
 
+  it('プロジェクトを切り替えた場合は前プロジェクトのデータをplaceholderに使わない', () => {
+    // ラベル条件は同じでプロジェクトだけ違う。ここを固定しないと
+    // previousProjectId === currentProjectId の比較を落としても検知できず、
+    // 切替直後に前プロジェクトのタスクが一瞬見える状態がすり抜ける
+    const previousData = { tasks: [{ id: 'task-1' }], total: 1 };
+    const previousQuery = {
+      queryKey: [
+        'get',
+        '/tasks',
+        buildTasksListQueryParams(
+          'tenant-1',
+          'project-1',
+          { pageIndex: 0, pageSize: 20 },
+          'label-bug',
+        ),
+      ],
+    };
+
+    expect(
+      taskListPlaceholderData(previousData, previousQuery, 'project-2', 'label-bug'),
+    ).toBeUndefined();
+  });
+
   it('選択中のラベルが一覧から消えたら選択を解除して先頭ページへ戻す', async () => {
     const scope = effectScope();
     const pagination = ref({ pageIndex: 0, pageSize: 20 });
