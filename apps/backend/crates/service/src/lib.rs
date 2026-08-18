@@ -13,6 +13,7 @@ pub mod email;
 pub mod email_verification;
 pub mod github;
 pub mod http;
+pub mod login_session;
 pub mod notifications;
 pub mod oauth;
 pub mod passkey_challenges;
