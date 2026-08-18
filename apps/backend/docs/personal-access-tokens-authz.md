@@ -15,8 +15,13 @@ PAT による API 認証と、テナント・プロジェクトを横断しな�
 
 | 認証方式 | 操作スコープ | リソース範囲 |
 |----------|-------------|--------------|
-| セッション | `require_scope` は常に通過 | メンバーシップに基づきアクセス可能なテナントへアクセス可 |
+| セッション | `require_scope` は常に通過 | 所属しているテナント（オーナー or テナントメンバー） |
 | PAT | DB の `scopes` を検証 | 作成時の `tenant_id` のみ。プロジェクトは任意指定 |
+
+**バインドは所属の証明ではない。** PAT の `tenant_id` は「どのテナントを触れるか」の上限であって、
+その利用者がいまテナントに所属していることを意味しない。
+所属判定はセッションと同じ経路（`has_tenant_access`）を通るため、テナントから外した利用者のトークンは
+バインド先のテナントでも 403 になる。詳細は [tenant-project-authz.md](./tenant-project-authz.md) を参照。
 
 ## PAT のリソース束縛
 
@@ -110,7 +115,7 @@ let tenant = auth.ensure_tenant_owner(&state, tenant_id).await?;
 | メソッド | セッション | PAT |
 |----------|-----------|-----|
 | `require_scope` | 常に OK | `scopes` を検証。不足なら 403 |
-| `ensure_tenant_access` | メンバーシップ 1 SELECT | `token.tenant_id == path.tenant_id`（メモリ） |
+| `ensure_tenant_access` | 所属判定（`has_tenant_access`） | `token.tenant_id == path.tenant_id` + `allowed_project_ids` の突き合わせ（メモリ）の**あと**、セッションと同じ所属判定 |
 | `ensure_tenant_owner` | `owner_id` チェック（1 SELECT） | `token.tenant_id` 一致 + プロジェクト制限なし + `owner_id` チェック |
 
 ### HTTP ステータス
@@ -135,8 +140,8 @@ path の ID と PAT の `tenant_id` / `allowed_project_ids` を突き合わせ�
 
 | 認証 | 認可まわりの DB（目安） |
 |------|------------------------|
-| PAT | 認証時 `personal_tokens` **1 SELECT**。`require_scope` / テナント・プロジェクトチェックは **追加クエリなし** |
-| セッション | Redis セッション + テナント所属 **0〜1 SELECT** |
+| PAT | 認証時 `personal_tokens` **1 SELECT**。`require_scope` とバインドの突き合わせは追加クエリなし。所属判定はセッションと同じクエリを流す |
+| セッション | Redis セッション + 所属判定（テナント 1 SELECT + `tenant_members` 1 SELECT。プロジェクト指定時は最大 3 SELECT 追加） |
 
 避けること:
 

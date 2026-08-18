@@ -4,6 +4,7 @@
 
 | ドキュメント | 内容 | ステータス |
 |-------------|------|-----------|
+| [tenant-project-authz.md](./tenant-project-authz.md) | テナント / プロジェクト認可（`tenant_members`、公開規則、不変条件） | 実装済み |
 | [personal-access-tokens-authz.md](./personal-access-tokens-authz.md) | PAT 認証・認可（2 層モデル、テナント/プロジェクト束縛） | 未実装 |
 | [redis-trust-boundary.md](./redis-trust-boundary.md) | Redis 信頼境界（セッション・WebAuthn チャレンジ） | 運用ガイド |
 
