@@ -19,7 +19,7 @@ use job::already_registered_email;
 use job::verification_email;
 use payload::auth::*;
 use payload::auth_2fa::Login2faResponse;
-use payload::users::UserResponse;
+use payload::users::{UpdateProfileRequest, UserResponse};
 use service::auth::{AuthError, create_password_hash, dummy_password_hash, verify_password};
 use service::db::{is_postgres_unique_violation, with_transaction};
 use service::email::normalize_email;
@@ -293,6 +293,53 @@ pub async fn me(
     user: CurrentUser,
 ) -> Result<Json<UserResponse>, AuthError> {
     Ok(Json(user.0.into()))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    patch,
+    path = "/me",
+    tag = "Auth",
+    summary = "自分のプロフィール更新",
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 200, description = "更新後のアカウント情報", body = UserResponse),
+        SessionAuthErrors,
+    )
+)]
+pub async fn update_me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Valid(Json(payload)): Valid<Json<UpdateProfileRequest>>,
+) -> Result<Json<UserResponse>, AuthError> {
+    let UpdateProfileRequest {
+        username,
+        bio,
+        avatar_url,
+        clear_avatar_url,
+    } = payload;
+
+    let current = user.0;
+    let mut active: users::ActiveModel = current.clone().into();
+
+    if let Some(username) = username {
+        active.username = Set(username);
+    }
+    if let Some(bio) = bio {
+        active.bio = Set(Some(bio));
+    }
+    if clear_avatar_url {
+        active.avatar_url = Set(None);
+    } else if let Some(avatar_url) = avatar_url {
+        active.avatar_url = Set(Some(avatar_url));
+    }
+
+    // 変更なしの PATCH で SeaORM に空の UPDATE を投げない。
+    if !active.is_changed() {
+        return Ok(Json(current.into()));
+    }
+
+    Ok(Json(active.update(&state.db).await?.into()))
 }
 
 #[axum::debug_handler]

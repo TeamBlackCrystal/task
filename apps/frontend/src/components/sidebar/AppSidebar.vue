@@ -77,7 +77,7 @@ const data = computed(() => ({
   user: {
     name: authStore.user?.username ?? 'User',
     email: authStore.user?.email ?? '',
-    avatar: '/avatars/shadcn.jpg',
+    avatar: authStore.user?.avatar_url ?? '',
   },
   navMain: [
     {
