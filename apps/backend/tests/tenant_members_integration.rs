@@ -540,3 +540,97 @@ async fn tenant_ids(res: reqwest::Response) -> Vec<Uuid> {
         })
         .collect()
 }
+
+/// テナントから外した人の `project_members` の行は残る。
+/// その行が Admin だと「最後の Admin は消せない」ガードに引っかかり、
+/// もう管理操作を実行できない人がプロジェクトの Admin 枠を占有したまま外せなくなる。
+#[tokio::test]
+async fn removed_tenant_member_does_not_hold_last_project_admin_slot() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_path = format!("/v1/tenants/{}/projects/{}", tp.tenant_id, tp.project_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        assert_eq!(
+            app.post_json_with_session(
+                &members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    // alice をプロジェクト唯一の Admin にする
+    assert_eq!(
+        app.post_json_with_session(
+            &project_members_path,
+            serde_json::json!({ "user_id": alice.id, "role": "Admin" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    // テナントに居るあいだは最後の Admin として守られる（過剰に許可していないこと）
+    assert_eq!(
+        app.delete_with_session(&format!("{project_members_path}/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+        "テナントに居る最後の Admin は消せない"
+    );
+    assert_eq!(
+        app.put_json_with_session(
+            &format!("{project_members_path}/{}", alice.id),
+            serde_json::json!({ "role": "Member" }),
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT,
+        "テナントに居る最後の Admin は降格できない"
+    );
+
+    // alice をテナントから外す。project_members の行は残る
+    assert_eq!(
+        app.delete_with_session(&format!("{members_path}/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // 残った行が Admin 枠を占有し続けないこと
+    assert_eq!(
+        app.delete_with_session(&format!("{project_members_path}/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT,
+        "テナントに居ない Admin は最後の Admin として数えない"
+    );
+
+    // 後始末が済んだので、メンバー未指定に戻ったプロジェクトはテナントメンバーに開放される
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::OK,
+        "指定が無くなったプロジェクトはテナントメンバーに開放される"
+    );
+
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+    app.cleanup_user(owner.id).await;
+}

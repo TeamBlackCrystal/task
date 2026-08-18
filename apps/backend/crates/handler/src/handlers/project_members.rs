@@ -64,13 +64,41 @@ async fn find_member(
         .ok_or(AppError::NotFound)
 }
 
-async fn count_admins(state: &AppState, project_id: Uuid) -> Result<u64, AppError> {
-    use sea_orm::PaginatorTrait;
-    Ok(project_members::Entity::find()
+/// 対象を Admin から外すと、テナントに残っている Admin が居なくなるか。
+///
+/// テナントから外した人の `project_members` の行はあえて残している
+/// （`tenant_members::remove_member`）。単純に Admin の行数を数えると、
+/// もう管理操作を実行できない人が最後の Admin 枠を占有し、その人を消すことも降格することも
+/// 409 で弾かれてプロジェクトを直せなくなる。数えるのはテナントに残っている Admin だけにする。
+async fn would_drop_last_admin(
+    state: &AppState,
+    tenant_id: Uuid,
+    project_id: Uuid,
+    target_user_id: Uuid,
+) -> Result<bool, AppError> {
+    let admin_ids: Vec<Uuid> = project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))
         .filter(project_members::Column::Role.eq(ProjectRole::Admin))
-        .count(&state.db)
-        .await?)
+        .select_only()
+        .column(project_members::Column::UserId)
+        .into_tuple()
+        .all(&state.db)
+        .await?;
+    let mut target_is_active_admin = false;
+    let mut remaining = 0u64;
+    for user_id in admin_ids {
+        if !is_tenant_owner(&state.db, tenant_id, user_id).await?
+            && !is_tenant_member(&state.db, tenant_id, user_id).await?
+        {
+            continue;
+        }
+        if user_id == target_user_id {
+            target_is_active_admin = true;
+        } else {
+            remaining += 1;
+        }
+    }
+    Ok(target_is_active_admin && remaining == 0)
 }
 
 #[axum::debug_handler]
@@ -117,6 +145,7 @@ pub async fn list_members(
     request_body = AddMemberRequest,
     responses(
         (status = 201, description = "追加されたメンバー", body = ProjectMemberResponse),
+        (status = 400, description = "テナントメンバーでない利用者は追加できません", body = ServerError),
         (status = 409, description = "既にメンバーとして登録済み", body = ServerError),
         CrudErrors,
     )
@@ -193,9 +222,8 @@ pub async fn update_member(
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
     let current = find_member(&state, project_id, member_user_id).await?;
-    if current.role == ProjectRole::Admin
-        && payload.role != ProjectRole::Admin
-        && count_admins(&state, project_id).await? <= 1
+    if payload.role != ProjectRole::Admin
+        && would_drop_last_admin(&state, tenant_id, project_id, member_user_id).await?
     {
         return Err(AppError::Conflict);
     }
@@ -232,7 +260,7 @@ pub async fn remove_member(
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
     let member = find_member(&state, project_id, member_user_id).await?;
-    if member.role == ProjectRole::Admin && count_admins(&state, project_id).await? <= 1 {
+    if would_drop_last_admin(&state, tenant_id, project_id, member_user_id).await? {
         return Err(AppError::Conflict);
     }
     // プロジェクト配下タスクの watcher を削除してから member を削除
