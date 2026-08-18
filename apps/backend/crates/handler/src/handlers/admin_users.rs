@@ -13,7 +13,7 @@ use axum::{
 use axum_valid::Valid;
 use chrono::Utc;
 use common::db::{column_exists, execute_bound, table_exists};
-use entity::{personal_tokens, project_members, tasks, users};
+use entity::{personal_tokens, tasks, tenant_members, users};
 use payload::admin_users::*;
 use payload::users::UserResponse;
 use sea_orm::prelude::Uuid;
@@ -137,9 +137,14 @@ async fn delete_user_cascade(db: &DatabaseConnection, user_id: Uuid) -> Result<(
         .await?;
     }
 
-    if table_exists(db, "project_members").await? {
-        project_members::Entity::delete_many()
-            .filter(project_members::Column::UserId.eq(user_id))
+    // テナントから外す（`tenant_members::remove_member`）のと同じ形にする。
+    // `project_members` の行は消さない。消すと、その人しか指定されていなかったプロジェクトが
+    // メンバー 0 件になり、テナント全体に開放されてしまう（#568）。
+    // 行が残ってもアクセスは与えない（`has_tenant_access` がテナント所属を先に見る）。
+    // users の行は墓標として残す方式なので、FK の ON DELETE CASCADE は発火しない
+    if table_exists(db, "tenant_members").await? {
+        tenant_members::Entity::delete_many()
+            .filter(tenant_members::Column::UserId.eq(user_id))
             .exec(db)
             .await?;
     }

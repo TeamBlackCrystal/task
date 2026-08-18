@@ -5,12 +5,11 @@ use axum::{
     http::{header::AUTHORIZATION, request::Parts},
 };
 use axum_session_redispool::SessionRedisPool;
-use sea_orm::{
-    ColumnTrait, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait, prelude::Uuid,
-};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::Uuid};
 
-use entity::{project_members, projects, scopes::Scope, tenants, users};
+use entity::{projects, scopes::Scope, tenants, users};
 
+use crate::auth_helpers::{is_tenant_member, project_is_open_or_member};
 use crate::{AppState, error::AppError};
 use service::auth::{AuthError, authenticate_personal_token};
 
@@ -137,32 +136,33 @@ impl AuthUser {
         tenant_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<(), AppError> {
-        match &self.method {
-            AuthMethod::Session => {
-                session_has_tenant_access(state, self.user_id, tenant_id, project_id).await
+        if let AuthMethod::PersonalToken {
+            tenant_id: pat_tenant,
+            allowed_project_ids,
+            ..
+        } = &self.method
+        {
+            if tenant_id != *pat_tenant {
+                return Err(AppError::Forbidden);
             }
-            AuthMethod::PersonalToken {
-                tenant_id: pat_tenant,
-                allowed_project_ids,
-                ..
-            } => {
-                if tenant_id != *pat_tenant {
-                    return Err(AppError::Forbidden);
-                }
-                if let Some(project_id) = project_id {
+            match project_id {
+                Some(project_id) => {
                     if let Some(allowed) = allowed_project_ids
                         && !allowed.contains(&project_id)
                     {
                         return Err(AppError::Forbidden);
                     }
-                    verify_project_in_tenant(state, tenant_id, project_id).await?;
-                } else if allowed_project_ids.is_some() {
-                    // プロジェクト制限付き PAT はテナント全体操作（project_id=None）を禁止
-                    return Err(AppError::Forbidden);
                 }
-                Ok(())
+                // プロジェクト制限付き PAT はテナント全体操作（project_id=None）を禁止
+                None if allowed_project_ids.is_some() => return Err(AppError::Forbidden),
+                None => {}
             }
         }
+
+        // PAT のバインドは「どのテナントを触れるか」の制限であって、所属の証明ではない。
+        // テナントから外した利用者のトークンが読み取りを保持しないよう、
+        // 所属判定はセッションと同じ経路に通す。
+        has_tenant_access(state, self.user_id, tenant_id, project_id).await
     }
 }
 
@@ -183,7 +183,9 @@ async fn verify_project_in_tenant(
     }
 }
 
-async fn session_has_tenant_access(
+/// テナントに入れるか（＋プロジェクト指定時はその中に入れるか）。
+/// セッションと PAT の双方が通る唯一の所属判定。
+async fn has_tenant_access(
     state: &AppState,
     user_id: Uuid,
     tenant_id: Uuid,
@@ -201,35 +203,20 @@ async fn session_has_tenant_access(
         return Ok(());
     }
 
-    if let Some(pid) = project_id {
-        verify_project_in_tenant(state, tenant_id, pid).await?;
-        let is_member = project_members::Entity::find()
-            .filter(project_members::Column::ProjectId.eq(pid))
-            .filter(project_members::Column::UserId.eq(user_id))
-            .one(&state.db)
-            .await?
-            .is_some();
-        if is_member {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+    // テナントに入れるのはメンバーだけ。プロジェクト単位の絞り込みはその内側で行う
+    if !is_tenant_member(&state.db, tenant_id, user_id).await? {
+        return Err(AppError::Forbidden);
+    }
+
+    let Some(pid) = project_id else {
+        return Ok(());
+    };
+    verify_project_in_tenant(state, tenant_id, pid).await?;
+
+    if project_is_open_or_member(&state.db, pid, user_id).await? {
+        Ok(())
     } else {
-        let is_member = project_members::Entity::find()
-            .join(
-                JoinType::InnerJoin,
-                project_members::Relation::Projects.def(),
-            )
-            .filter(project_members::Column::UserId.eq(user_id))
-            .filter(projects::Column::TenantId.eq(tenant_id))
-            .one(&state.db)
-            .await?
-            .is_some();
-        if is_member {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden)
-        }
+        Err(AppError::Forbidden)
     }
 }
 

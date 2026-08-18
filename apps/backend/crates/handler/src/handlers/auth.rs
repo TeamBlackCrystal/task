@@ -8,7 +8,6 @@ use sea_orm::{ColumnTrait, QueryFilter};
 
 use crate::AppState;
 use crate::extractors::{AuthUser, CurrentUser};
-use crate::handlers::auth_2fa::establish_login_session;
 use crate::openapi::{
     CredentialErrors, RegisterErrors, ResendVerificationErrors, SessionAuthErrors,
     UnauthorizedErrors, VerifyEmailErrors,
@@ -25,6 +24,7 @@ use service::auth::{AuthError, create_password_hash, dummy_password_hash, verify
 use service::db::{is_postgres_unique_violation, with_transaction};
 use service::email::normalize_email;
 use service::email_verification;
+use service::login_session::establish_login_session;
 
 #[axum::debug_handler]
 #[utoipa::path(

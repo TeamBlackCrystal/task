@@ -6,16 +6,17 @@ use axum::{
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, JoinType, QueryFilter,
-    QuerySelect, RelationTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, QueryFilter,
+    QuerySelect,
 };
 
 use crate::AppState;
+use crate::auth_helpers::is_tenant_member;
 use crate::error::AppError;
 use crate::extractors::AuthMethod;
 use crate::extractors::AuthUser;
 use crate::openapi::{CrudErrors, TenantCreateErrors};
-use entity::{project_members, projects, scopes::Scope, tenants};
+use entity::{scopes::Scope, tenant_members, tenants};
 use payload::tenants::*;
 
 #[axum::debug_handler]
@@ -68,22 +69,18 @@ pub async fn list_tenants(
     auth: AuthUser,
 ) -> Result<Json<Vec<TenantResponse>>, AppError> {
     // テナント一覧は ensure_tenant_owner/access 不要。
-    // Session: 自分が所有するテナント + プロジェクトメンバーとして参加しているテナント。
-    //          session_has_tenant_access が許可する経路と同じ条件で抽出する
+    // Session: 自分が所有するテナント + テナントメンバーとして参加しているテナント。
+    //          has_tenant_access が許可する経路と同じ条件で抽出する
     //          （ここが owner だけだと、参加者はアクセスできるのに一覧に出ない）。
-    // PAT: バインドされた tenant_id の単一テナントのみ返す。
+    // PAT: バインドされた tenant_id のうち、所属しているものだけ返す。
     // フィルタ自体が認可を兼ねているため追加チェックは不要。
     auth.require_scope(Scope::AdminTenant)?;
     let tenants = match &auth.method {
         AuthMethod::Session => {
-            let joined_tenant_ids: Vec<Uuid> = project_members::Entity::find()
-                .join(
-                    JoinType::InnerJoin,
-                    project_members::Relation::Projects.def(),
-                )
-                .filter(project_members::Column::UserId.eq(auth.user_id))
+            let joined_tenant_ids: Vec<Uuid> = tenant_members::Entity::find()
+                .filter(tenant_members::Column::UserId.eq(auth.user_id))
                 .select_only()
-                .column(projects::Column::TenantId)
+                .column(tenant_members::Column::TenantId)
                 .into_tuple()
                 .all(&state.db)
                 .await?;
@@ -98,12 +95,19 @@ pub async fn list_tenants(
                 .await?
         }
         AuthMethod::PersonalToken { tenant_id, .. } => {
-            // PAT はバインドされた単一テナントのみ返す
-            tenants::Entity::find_by_id(*tenant_id)
+            // PAT はバインドされた単一テナントのみ返す。
+            // ただしバインドは「どのテナントを触れるか」の制限であって所属の証明ではないので、
+            // テナントから外した利用者のトークンでは一覧にも出さない（`get_tenant` と同じ判定）
+            let mut visible = Vec::new();
+            if let Some(tenant) = tenants::Entity::find_by_id(*tenant_id)
                 .one(&state.db)
                 .await?
-                .into_iter()
-                .collect()
+                && (tenant.owner_id == auth.user_id
+                    || is_tenant_member(&state.db, *tenant_id, auth.user_id).await?)
+            {
+                visible.push(tenant);
+            }
+            visible
         }
     };
     Ok(Json(tenants.into_iter().map(Into::into).collect()))
@@ -126,11 +130,14 @@ pub async fn get_tenant(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<TenantResponse>, AppError> {
-    // テナント情報の取得はオーナー専用操作。
-    // ensure_tenant_access（オーナーとメンバー双方を通過させる）ではなく
-    // ensure_tenant_owner を使い、プロジェクトメンバーを排除する。
+    // テナント情報の取得はメンバーにも許す。ここをオーナー専用にすると
+    // 一覧に出るのに開けないテナントができてしまう（設定変更・削除は別途オーナー専用）。
     auth.require_scope(Scope::AdminTenant)?;
-    let tenant = auth.ensure_tenant_owner(&state, id).await?;
+    auth.ensure_tenant_access(&state, id, None).await?;
+    let tenant = tenants::Entity::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(tenant.into()))
 }
 

@@ -14,7 +14,6 @@ use sea_orm::{
 };
 
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -187,7 +186,6 @@ pub async fn list_sprints(
     auth.require_scope(entity::scopes::Scope::ReadSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let mut query = sprints::Entity::find().filter(sprints::Column::ProjectId.eq(project_id));
     if let Some(ref status) = q.status {
@@ -230,7 +228,6 @@ pub async fn create_sprint(
     auth.require_scope(entity::scopes::Scope::WriteSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     validate_date_range(payload.start_date, payload.end_date)?;
 
     let model = sprints::ActiveModel {
@@ -275,7 +272,6 @@ pub async fn get_sprint(
     auth.require_scope(entity::scopes::Scope::ReadSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let sprint = load_sprint(&state, project_id, id).await?;
     Ok(Json(build_sprint_detail(&state, sprint).await?))
@@ -307,7 +303,6 @@ pub async fn update_sprint(
     auth.require_scope(entity::scopes::Scope::WriteSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
 
@@ -371,7 +366,6 @@ pub async fn delete_sprint(
     auth.require_scope(entity::scopes::Scope::WriteSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
 
@@ -414,7 +408,6 @@ pub async fn start_sprint(
     auth.require_scope(entity::scopes::Scope::WriteSprint)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
 
@@ -476,7 +469,6 @@ pub async fn complete_sprint(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     if payload.move_incomplete_to_backlog && payload.move_incomplete_to_sprint_id.is_some() {
         return Err(AppError::BadRequest);
@@ -579,7 +571,6 @@ pub async fn assign_tasks_to_sprint(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let unique_ids: Vec<Uuid> = {
         let mut ids = payload.task_ids.clone();

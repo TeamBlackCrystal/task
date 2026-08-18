@@ -1,118 +1,97 @@
-//! ログイン成功後のセッション確立（パスワード / OAuth 共通）。
-//! 2FA スキーマ未導入環境では runtime 検査で no-op し、導入後は half_authed を設定する。
+//! 第一認証（パスワード / OAuth コールバック）成功後のセッション確立。
+//!
+//! ログイン経路ごとに実装を持つと、テナントの 2FA 強制がログイン方法によって
+//! 効いたり効かなかったりする（実際に OAuth 経路だけすり抜けていた）。
+//! handler 間で共有するのでここに一本化する。
 
 use axum_session::Session;
 use axum_session_redispool::SessionRedisPool;
 use chrono::Utc;
-use sea_orm::DatabaseConnection;
+use sea_orm::prelude::Uuid;
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait,
+};
 
-use common::db::{column_exists, query_one_bool, table_exists};
-use entity::users;
+use entity::{tenant_members, tenants, totp_credentials, users};
+use payload::auth_2fa::Login2faResponse;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Login2faFlags {
-    pub requires_2fa: bool,
-    pub requires_2fa_setup: bool,
-}
+use crate::auth::AuthError;
 
-impl Login2faFlags {
-    pub fn needs_second_factor(self) -> bool {
-        self.requires_2fa || self.requires_2fa_setup
+async fn user_has_active_2fa(db: &DatabaseConnection, user_id: Uuid) -> Result<bool, AuthError> {
+    let user = users::Entity::find_by_id(user_id)
+        .one(db)
+        .await?
+        .ok_or(AuthError::Unauthorized)?;
+    if !user.totp_enabled {
+        return Ok(false);
     }
+    let cred = totp_credentials::Entity::find_by_id(user_id)
+        .one(db)
+        .await?;
+    Ok(cred.map(|c| c.is_verified).unwrap_or(false))
 }
 
-async fn user_has_active_2fa(
+/// ユーザーが所属する（テナントオーナー or テナントメンバー）テナントのいずれかで
+/// `require_2fa=true` が設定されているかを判定する。
+/// 2FA セットアップ強制（`user_must_setup_2fa`）と 2FA 無効化禁止（`delete_totp`）の
+/// 双方で参照する共通ポリシー判定。
+pub async fn user_in_require_2fa_tenant(
     db: &DatabaseConnection,
-    user_id: uuid::Uuid,
-) -> Result<bool, sea_orm::DbErr> {
-    if !column_exists(db, "users", "totp_enabled").await? {
-        return Ok(false);
-    }
-    if !table_exists(db, "totp_credentials").await? {
-        return Ok(false);
-    }
-
-    let totp_enabled = query_one_bool(
-        db,
-        "SELECT totp_enabled FROM users WHERE id = ?",
-        vec![user_id.into()],
-    )
-    .await?;
-    if !totp_enabled {
-        return Ok(false);
-    }
-
-    query_one_bool(
-        db,
-        "SELECT is_verified FROM totp_credentials WHERE user_id = ?",
-        vec![user_id.into()],
-    )
-    .await
-}
-
-async fn user_in_require_2fa_tenant(
-    db: &DatabaseConnection,
-    user_id: uuid::Uuid,
-) -> Result<bool, sea_orm::DbErr> {
-    if !column_exists(db, "tenants", "require_2fa").await? {
-        return Ok(false);
-    }
-
-    if query_one_bool(
-        db,
-        "SELECT COALESCE(BOOL_OR(require_2fa), false) FROM tenants WHERE owner_id = ?",
-        vec![user_id.into()],
-    )
-    .await?
-    {
+    user_id: Uuid,
+) -> Result<bool, AuthError> {
+    let owns_required_tenant = tenants::Entity::find()
+        .filter(tenants::Column::OwnerId.eq(user_id))
+        .filter(tenants::Column::Require2fa.eq(true))
+        .one(db)
+        .await?
+        .is_some();
+    if owns_required_tenant {
         return Ok(true);
     }
+    // 2FA 必須は「そのテナントに所属しているか」で決まるので、テナントメンバーを見る（#568）
+    let member_of_required_tenant = tenant_members::Entity::find()
+        .join(JoinType::InnerJoin, tenant_members::Relation::Tenants.def())
+        .filter(tenant_members::Column::UserId.eq(user_id))
+        .filter(tenants::Column::Require2fa.eq(true))
+        .one(db)
+        .await?
+        .is_some();
+    Ok(member_of_required_tenant)
+}
 
-    if !table_exists(db, "project_members").await? {
+async fn user_must_setup_2fa(db: &DatabaseConnection, user_id: Uuid) -> Result<bool, AuthError> {
+    if user_has_active_2fa(db, user_id).await? {
         return Ok(false);
     }
-
-    query_one_bool(
-        db,
-        "SELECT COALESCE(BOOL_OR(t.require_2fa), false)
-         FROM project_members pm
-         INNER JOIN projects p ON p.id = pm.project_id
-         INNER JOIN tenants t ON t.id = p.tenant_id
-         WHERE pm.user_id = ?",
-        vec![user_id.into()],
-    )
-    .await
+    user_in_require_2fa_tenant(db, user_id).await
 }
 
-pub async fn login_2fa_flags(
+async fn login_2fa_flags(
     db: &DatabaseConnection,
-    user_id: uuid::Uuid,
-) -> Result<Login2faFlags, sea_orm::DbErr> {
-    let requires_2fa = user_has_active_2fa(db, user_id).await?;
-    let requires_2fa_setup = if requires_2fa {
-        false
-    } else {
-        user_in_require_2fa_tenant(db, user_id).await?
-    };
-    Ok(Login2faFlags {
-        requires_2fa,
-        requires_2fa_setup,
-    })
+    user: &users::Model,
+) -> Result<(bool, bool), AuthError> {
+    let requires_2fa = user_has_active_2fa(db, user.id).await?;
+    let requires_2fa_setup = user_must_setup_2fa(db, user.id).await?;
+    Ok((requires_2fa, requires_2fa_setup))
 }
 
-/// 第一認証成功後のセッション確立。2FA 必須時は `Some(Login2faFlags)` を返す。
+/// 第一認証（パスワード / OAuth コールバック）成功後のセッション確立。
+/// 2FA 必須時は `half_authed` セッションを返す（OAuth 経路からも呼ぶ）。
 pub async fn establish_login_session(
     session: &Session<SessionRedisPool>,
     db: &DatabaseConnection,
     user: &users::Model,
-) -> Result<Option<Login2faFlags>, sea_orm::DbErr> {
-    let flags = login_2fa_flags(db, user.id).await?;
+) -> Result<Option<Login2faResponse>, AuthError> {
+    let (requires_2fa, requires_2fa_setup) = login_2fa_flags(db, user).await?;
     session.renew();
     session.set("issued_at_ms", Utc::now().timestamp_millis());
     session.set("user_id", user.id);
-    if flags.needs_second_factor() {
+    if requires_2fa || requires_2fa_setup {
         session.set("half_authed", true);
-        return Ok(Some(flags));
+        return Ok(Some(Login2faResponse {
+            requires_2fa,
+            requires_2fa_setup,
+        }));
     }
     session.set("half_authed", false);
     Ok(None)

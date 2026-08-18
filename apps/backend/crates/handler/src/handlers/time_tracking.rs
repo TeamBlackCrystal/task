@@ -1,5 +1,5 @@
 use crate::AppState;
-use crate::auth_helpers::{is_tenant_owner, require_member_or_owner};
+use crate::auth_helpers::is_tenant_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::handlers::tasks::resolve_task;
@@ -69,7 +69,6 @@ pub async fn list_time_logs(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let logs = time_logs::Entity::find()
         .filter(time_logs::Column::TaskId.eq(task.id))
@@ -106,7 +105,6 @@ pub async fn create_time_log(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let log = time_logs::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -149,7 +147,6 @@ pub async fn update_time_log(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let log = time_logs::Entity::find_by_id(log_id)
         .filter(time_logs::Column::TaskId.eq(task.id))
@@ -197,7 +194,6 @@ pub async fn delete_time_log(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let log = time_logs::Entity::find_by_id(log_id)
         .filter(time_logs::Column::TaskId.eq(task.id))
@@ -235,7 +231,6 @@ pub async fn get_time_summary(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let logs = time_logs::Entity::find()
         .filter(time_logs::Column::TaskId.eq(task.id))
@@ -310,7 +305,6 @@ pub async fn start_timer(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let existing = task_timers::Entity::find()
         .filter(task_timers::Column::TaskId.eq(task.id))
@@ -360,7 +354,6 @@ pub async fn stop_timer(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let task_id = task.id;
     let user_id = auth.user_id;
@@ -426,7 +419,6 @@ pub async fn get_timer_status(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let timer = task_timers::Entity::find()
         .filter(task_timers::Column::TaskId.eq(task.id))

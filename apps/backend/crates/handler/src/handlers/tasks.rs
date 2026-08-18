@@ -14,7 +14,7 @@ use sea_orm::{
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::AppState;
-use crate::auth_helpers::{is_tenant_owner, require_member_or_owner};
+use crate::auth_helpers::{is_tenant_owner, require_project_access};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -334,7 +334,6 @@ pub async fn list_tasks(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let mut query = tasks::Entity::find()
         .filter(tasks::Column::ProjectId.eq(project_id))
@@ -404,7 +403,6 @@ pub async fn create_task(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     if let (Some(s), Some(h)) = (payload.soft_deadline, payload.hard_deadline)
         && s >= h
@@ -475,7 +473,7 @@ pub async fn create_task(
     .await?;
 
     for a in &payload.assignees {
-        require_member_or_owner(&state, tenant_id, project_id, a.user_id).await?;
+        require_project_access(&state, tenant_id, project_id, a.user_id).await?;
         task_assignees::ActiveModel {
             id: Set(Uuid::new_v4()),
             task_id: Set(model.id),
@@ -563,7 +561,6 @@ pub async fn get_task(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     Ok(Json(
         build_task_detail_response(&state, project_id, task).await?,
@@ -596,7 +593,6 @@ pub async fn update_task(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let task_snapshot = task.clone();
     let task_id = task.id;
@@ -806,7 +802,6 @@ pub async fn delete_task(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     if task.created_by != auth.user_id
         && !is_tenant_owner(&state.db, tenant_id, auth.user_id).await?
@@ -843,7 +838,6 @@ pub async fn archive_task(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let task_id = task.id;
     let txn = state.db.begin().await?;
@@ -887,7 +881,6 @@ pub async fn unarchive_task(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let task_id = task.id;
     let txn = state.db.begin().await?;
@@ -933,7 +926,6 @@ pub async fn list_assignees(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let assignees = task_assignees::Entity::find()
         .filter(task_assignees::Column::TaskId.eq(task.id))
@@ -968,9 +960,8 @@ pub async fn add_assignee(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
-    require_member_or_owner(&state, tenant_id, project_id, payload.user_id).await?;
+    require_project_access(&state, tenant_id, project_id, payload.user_id).await?;
     let duplicate = task_assignees::Entity::find()
         .filter(task_assignees::Column::TaskId.eq(task.id))
         .filter(task_assignees::Column::UserId.eq(payload.user_id))
@@ -1041,7 +1032,6 @@ pub async fn update_assignee(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let assignee = task_assignees::Entity::find()
         .filter(task_assignees::Column::TaskId.eq(task.id))
@@ -1079,7 +1069,6 @@ pub async fn remove_assignee(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let assignee = task_assignees::Entity::find()
         .filter(task_assignees::Column::TaskId.eq(task.id))
@@ -1129,7 +1118,6 @@ pub async fn list_relations(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let subtasks = tasks::Entity::find()
@@ -1237,7 +1225,6 @@ pub async fn add_relation(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     resolve_task(
         &state,
@@ -1327,7 +1314,6 @@ pub async fn remove_relation(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let rel = task_relations::Entity::find_by_id(relation_id)
         .one(&state.db)

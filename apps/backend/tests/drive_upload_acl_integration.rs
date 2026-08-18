@@ -51,6 +51,7 @@ async fn insert_project_folder(
 }
 
 async fn add_member(app: &TestApp, project_id: Uuid, user_id: Uuid) {
+    common::ensure_tenant_member_for_project(&app.state.db, project_id, user_id).await;
     project_members::ActiveModel {
         id: Set(Uuid::new_v4()),
         project_id: Set(project_id),
@@ -97,6 +98,12 @@ async fn upload_into_project_folder_enforces_membership() {
     let project_b = insert_extra_project(&app, tp.tenant_id).await;
     let folder_b = insert_project_folder(&app, tp.tenant_id, project_b, owner.id).await;
 
+    // プロジェクト B にメンバーを 1 人指定して「絞り込み状態」にする。
+    // #568 でメンバー未指定のプロジェクトはテナント全体に開放されるため、
+    // プロジェクト単位の隔離を試すには先に指定が要る。
+    let member = app.insert_user(false, false).await;
+    add_member(&app, project_b, member.id).await;
+
     // 攻撃者: プロジェクト A のメンバー（テナントアクセスは通る）だが B の非メンバー。
     let attacker = app.insert_user(false, false).await;
     add_member(&app, tp.project_id, attacker.id).await;
@@ -112,8 +119,6 @@ async fn upload_into_project_folder_enforces_membership() {
     );
 
     // 対照: プロジェクト B のメンバーは同じフォルダへアップロードできる（過剰拒否でない）。
-    let member = app.insert_user(false, false).await;
-    add_member(&app, project_b, member.id).await;
     app.reset_session_client();
     app.login_session_no_content(&member.email, &member.password)
         .await;

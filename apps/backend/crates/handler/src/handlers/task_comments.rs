@@ -12,7 +12,7 @@ use sea_orm::{
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::auth_helpers::{is_tenant_owner, require_member_or_owner};
+use crate::auth_helpers::is_tenant_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::handlers::tasks::resolve_task;
@@ -54,7 +54,6 @@ pub async fn list_comments(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let all = task_comments::Entity::find()
@@ -166,7 +165,6 @@ pub async fn create_comment(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     if let Some(parent_id) = payload.parent_comment_id {
@@ -257,7 +255,6 @@ pub async fn update_comment(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let comment = task_comments::Entity::find_by_id(cid)
         .filter(task_comments::Column::TaskId.eq(task.id))
@@ -336,7 +333,6 @@ pub async fn delete_comment(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
     let comment = task_comments::Entity::find_by_id(cid)
         .filter(task_comments::Column::TaskId.eq(task.id))
@@ -393,7 +389,6 @@ pub async fn list_activities(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let rows = task_activities::Entity::find()

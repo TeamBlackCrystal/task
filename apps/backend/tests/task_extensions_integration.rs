@@ -289,6 +289,7 @@ async fn task_extensions_negative_cases() {
 }
 
 async fn add_project_member(app: &TestApp, project_id: Uuid, user_id: Uuid) {
+    common::ensure_tenant_member_for_project(&app.state.db, project_id, user_id).await;
     project_members::ActiveModel {
         id: Set(Uuid::new_v4()),
         project_id: Set(project_id),

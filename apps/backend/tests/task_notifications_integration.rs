@@ -47,6 +47,7 @@ async fn task_notifications_integration_suite() {
     let assignee = app.insert_user(false, false).await;
     let assignee_username = format!("test_{}", &assignee.id.to_string()[..8]);
 
+    common::ensure_tenant_member_for_project(&app.state.db, tp.project_id, assignee.id).await;
     let member_resp = app
         .post_json_with_session(
             &format!(
@@ -162,6 +163,7 @@ async fn watcher_manual_watch_and_unwatch() {
     );
 
     let watcher = app.insert_user(false, false).await;
+    common::ensure_tenant_member_for_project(&app.state.db, tp.project_id, watcher.id).await;
     app.post_json_with_session(
         &format!(
             "/v1/tenants/{}/projects/{}/members",
@@ -239,6 +241,7 @@ async fn mark_notification_read_and_read_all() {
         .to_string();
 
     let assignee = app.insert_user(false, false).await;
+    common::ensure_tenant_member_for_project(&app.state.db, tp.project_id, assignee.id).await;
     app.post_json_with_session(
         &format!(
             "/v1/tenants/{}/projects/{}/members",
@@ -361,6 +364,7 @@ async fn status_changed_notification_to_watcher() {
         .to_string();
 
     let watcher = app.insert_user(false, false).await;
+    common::ensure_tenant_member_for_project(&app.state.db, tp.project_id, watcher.id).await;
     app.post_json_with_session(
         &format!(
             "/v1/tenants/{}/projects/{}/members",
@@ -504,6 +508,7 @@ async fn mention_notifies_tenant_owner_non_member() {
     // owner でログインして member を project に追加
     app.login_session_no_content(&owner.email, &owner.password)
         .await;
+    common::ensure_tenant_member_for_project(&app.state.db, tp.project_id, member.id).await;
     let member_resp = app
         .post_json_with_session(
             &format!(

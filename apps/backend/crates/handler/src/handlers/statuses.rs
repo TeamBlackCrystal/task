@@ -12,7 +12,6 @@ use sea_orm::{
 use std::collections::HashSet;
 
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -41,7 +40,6 @@ pub async fn list_statuses(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let statuses = project_statuses::Entity::find()
         .filter(project_statuses::Column::ProjectId.eq(project_id))
         .order_by_asc(project_statuses::Column::Position)
@@ -75,7 +73,6 @@ pub async fn create_status(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let txn = state.db.begin().await?;
     // A status row cannot be the mutex here: concurrent creates can insert rows
     // outside the other transaction's locked snapshot. Lock the stable project
@@ -164,7 +161,6 @@ pub async fn update_status(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let txn = state.db.begin().await?;
     // Serialize status flag changes for the project. In particular, two concurrent requests
     // must not both observe themselves as the next Done state.
@@ -283,7 +279,6 @@ pub async fn reorder_statuses(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
     // Same lock order as create_status / update_status: take the stable project
@@ -368,7 +363,6 @@ pub async fn delete_status(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
     let statuses = project_statuses::Entity::find()

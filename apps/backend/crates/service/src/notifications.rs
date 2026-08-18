@@ -7,9 +7,7 @@ use sea_orm::{
 use std::collections::HashSet;
 
 use crate::error::AppError;
-use entity::{
-    notification_settings, notifications, project_members, projects, task_watchers, tenants, users,
-};
+use entity::{notification_settings, notifications, projects, task_watchers, tenants, users};
 
 // 定数本体は common へ移動（DTO からも参照するため）。既存の参照パス互換用に再公開。
 pub use common::notifications::{
@@ -132,14 +130,10 @@ pub async fn notify_watchers<C: ConnectionTrait>(
 ) -> Result<(), AppError> {
     let exclude_set: HashSet<Uuid> = exclude.iter().copied().collect();
 
-    // プロジェクトから外れたユーザーには通知しない（テナントオーナーは除外しない）
-    let member_ids: HashSet<Uuid> = project_members::Entity::find()
-        .filter(project_members::Column::ProjectId.eq(project_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|m| m.user_id)
-        .collect();
+    // プロジェクトに入れないユーザーには通知しない（テナントオーナーは除外しない）。
+    // メンバー未指定のプロジェクトはテナントメンバー全員が宛先になる（#568）
+    let member_ids: HashSet<Uuid> =
+        crate::access::project_accessible_user_ids(db, project_id).await?;
 
     // テナントオーナーは project_members に入っていなくてもウォッチャー通知を受け取る
     let tenant_id = projects::Entity::find_by_id(project_id)

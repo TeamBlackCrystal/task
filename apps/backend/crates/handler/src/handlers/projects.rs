@@ -10,11 +10,11 @@ use sea_orm::{
 };
 
 use crate::AppState;
-use crate::auth_helpers::is_tenant_owner;
+use crate::auth_helpers::{is_tenant_owner, visible_project_ids};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
-use entity::{drive_folders, project_members, project_statuses, projects, scopes::Scope};
+use entity::{drive_folders, project_statuses, projects, scopes::Scope};
 use payload::projects::*;
 use service::db::is_postgres_unique_violation;
 
@@ -49,28 +49,6 @@ async fn require_tenant_owner(
     user_id: Uuid,
 ) -> Result<(), AppError> {
     if is_tenant_owner(&state.db, tenant_id, user_id).await? {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
-}
-
-async fn require_project_readable(
-    state: &AppState,
-    tenant_id: Uuid,
-    project_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), AppError> {
-    if is_tenant_owner(&state.db, tenant_id, user_id).await? {
-        return Ok(());
-    }
-    let is_member = project_members::Entity::find()
-        .filter(project_members::Column::ProjectId.eq(project_id))
-        .filter(project_members::Column::UserId.eq(user_id))
-        .one(&state.db)
-        .await?
-        .is_some();
-    if is_member {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -218,25 +196,25 @@ pub async fn list_projects(
         return Ok(Json(list.into_iter().map(Into::into).collect()));
     }
 
-    let member_project_ids: Vec<Uuid> = project_members::Entity::find()
-        .filter(project_members::Column::UserId.eq(auth.user_id))
-        .all(&state.db)
-        .await?
-        .into_iter()
-        .map(|m| m.project_id)
-        .collect();
-
-    if member_project_ids.is_empty() {
-        return Err(AppError::Forbidden);
-    }
-
-    let list = projects::Entity::find()
+    // テナントメンバーには、メンバーを 1 人も指定していないプロジェクトと
+    // 自分が指定されたプロジェクトを返す（#568）
+    let candidates = projects::Entity::find()
         .filter(projects::Column::TenantId.eq(tenant_id))
         .filter(projects::Column::IsPersonal.eq(false))
-        .filter(projects::Column::Id.is_in(member_project_ids))
         .all(&state.db)
         .await?;
-    Ok(Json(list.into_iter().map(Into::into).collect()))
+
+    let visible_ids = visible_project_ids(
+        &state.db,
+        candidates.iter().map(|p| p.id).collect(),
+        auth.user_id,
+    )
+    .await?;
+    let visible: Vec<_> = candidates
+        .into_iter()
+        .filter(|p| visible_ids.contains(&p.id))
+        .collect();
+    Ok(Json(visible.into_iter().map(Into::into).collect()))
 }
 
 #[axum::debug_handler]
@@ -262,7 +240,6 @@ pub async fn get_project(
     auth.require_scope(Scope::ReadProject)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(id))
         .await?;
-    require_project_readable(&state, tenant_id, id, auth.user_id).await?;
     let project = projects::Entity::find_by_id(id)
         .filter(projects::Column::TenantId.eq(tenant_id))
         .one(&state.db)

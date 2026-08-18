@@ -31,13 +31,13 @@ use entity::{oauth_connections, users};
 use service::auth::{AuthError, create_password_hash};
 use service::db::{is_postgres_unique_violation, with_transaction};
 use service::email::normalize_email;
+use service::login_session::establish_login_session;
 use service::oauth::{
     OAuthStatePayload, consume_state, get_credentials, resolve_provider, store_state,
 };
 use service::passkeys::count_user_passkeys;
 
 use payload::oauth::*;
-use service::login_session::establish_login_session;
 
 use crate::AppState;
 
