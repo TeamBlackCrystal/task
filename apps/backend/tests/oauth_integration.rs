@@ -3,7 +3,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{MockGitLabUser, TestApp, is_redirect};
 use entity::{oauth_connections, users};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use url::Url;
 
 #[tokio::test]
@@ -307,4 +307,73 @@ async fn oauth_provider_error_uses_error_redirect_after() {
             .any(|(k, v)| k == "oauth_error" && v == "authorization_failed"),
         "missing oauth_error marker: {location}"
     );
+}
+
+/// テナントの 2FA 強制は、パスワードログインと OAuth ログインで同じ結果にならないといけない。
+/// 判定の実装が 2 つあったころは OAuth 側だけ `project_members` を見ていたため、
+/// プロジェクトに指定されていないテナントメンバーが 2FA を設定せずに本認証を通せた。
+#[tokio::test]
+async fn oauth_callback_requires_2fa_setup_for_tenant_member() {
+    let app = TestApp::new().await;
+    let unique = uuid::Uuid::new_v4();
+    app.set_mock_user(MockGitLabUser {
+        id: 100_007,
+        username: format!("oauth_2fa_{unique}"),
+        email: Some(format!("oauth-2fa-{unique}@example.com")),
+    });
+
+    // 1 回目のコールバックで利用者を作る。まだどのテナントにも属していない
+    let callback = app.follow_oauth_start(app.oauth_start(false).await).await;
+    assert!(is_redirect(callback.status()), "oauth callback redirect");
+    let me: serde_json::Value = app.get_me().await.json().await.expect("me json");
+    let user_id: uuid::Uuid = me["id"].as_str().expect("user id").parse().expect("uuid");
+
+    // require_2fa のテナントにテナントメンバーとして入れる。
+    // プロジェクトには一切指定しない（新しい参加フローで入るとこの状態になる）
+    let owner = app.insert_user_default().await;
+    let tenant_id = uuid::Uuid::new_v4();
+    entity::tenants::ActiveModel {
+        id: Set(tenant_id),
+        display_id: Set(format!("t2fa-{}", &tenant_id.to_string()[..8])),
+        name: Set("Require 2FA Tenant".into()),
+        description: Set(String::new()),
+        icon_url: Set(String::new()),
+        owner_id: Set(owner.id),
+        drive_quota_bytes: Set(None),
+        require_2fa: Set(true),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert tenant");
+    entity::tenant_members::ActiveModel {
+        id: Set(uuid::Uuid::new_v4()),
+        tenant_id: Set(tenant_id),
+        user_id: Set(user_id),
+        role: Set(entity::tenant_members::TenantRole::Member),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert tenant member");
+
+    // 2 回目のコールバックは 2FA 設定へ飛ばされ、本認証セッションにならない
+    let callback = app.follow_oauth_start(app.oauth_start(false).await).await;
+    assert!(is_redirect(callback.status()), "oauth callback redirect");
+    let location = callback
+        .headers()
+        .get("location")
+        .expect("redirect location")
+        .to_str()
+        .expect("location str");
+    assert!(
+        location.contains("/auth/2fa"),
+        "テナントの 2FA 強制が OAuth 経路でも効くこと: {location}"
+    );
+    assert_eq!(
+        app.get_me().await.status(),
+        StatusCode::FORBIDDEN,
+        "2FA 未設定のあいだは半認証セッションのままであること"
+    );
+
+    app.cleanup_user(user_id).await;
+    app.cleanup_user(owner.id).await;
 }

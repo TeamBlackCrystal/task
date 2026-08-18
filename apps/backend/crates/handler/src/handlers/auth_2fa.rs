@@ -49,7 +49,7 @@ pub async fn user_has_active_2fa(
     Ok(cred.map(|c| c.is_verified).unwrap_or(false))
 }
 
-/// ユーザーが所属する（テナントオーナー or プロジェクトメンバー）テナントのいずれかで
+/// ユーザーが所属する（テナントオーナー or テナントメンバー）テナントのいずれかで
 /// `require_2fa=true` が設定されているかを判定する。
 /// 2FA セットアップ強制（`user_must_setup_2fa`）と 2FA 無効化禁止（`delete_totp`）の
 /// 双方で参照する共通ポリシー判定。

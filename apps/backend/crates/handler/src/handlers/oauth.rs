@@ -36,8 +36,8 @@ use service::oauth::{
 };
 use service::passkeys::count_user_passkeys;
 
+use crate::handlers::auth_2fa::establish_login_session;
 use payload::oauth::*;
-use service::login_session::establish_login_session;
 
 use crate::AppState;
 
