@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::TestApp;
+use common::{TestApp, insert_personal_token_for_test};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -372,6 +372,92 @@ async fn removing_tenant_member_also_removes_project_membership() {
 
     app.cleanup_user(alice.id).await;
     app.cleanup_user(bob.id).await;
+    app.cleanup_user(owner.id).await;
+}
+
+/// PAT のテナントバインドは「どのテナントを触れるか」の制限であって所属の証明ではない。
+/// テナントから外した利用者のトークンで、テナント情報とメンバー一覧が読めてはいけない。
+#[tokio::test]
+async fn removed_member_pat_loses_tenant_read_access() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let tenant_path = format!("/v1/tenants/{}", tp.tenant_id);
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    let added = app
+        .post_json_with_session(
+            &members_path,
+            serde_json::json!({ "user_id": alice.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+
+    // alice のトークンはテナント T にバインドされ、プロジェクト制限は無い
+    let alice_pat = insert_personal_token_for_test(
+        &app.state.db,
+        alice.id,
+        tp.tenant_id,
+        &app.state.settings.personal_token_secret,
+    )
+    .await;
+    let owner_pat = insert_personal_token_for_test(
+        &app.state.db,
+        owner.id,
+        tp.tenant_id,
+        &app.state.settings.personal_token_secret,
+    )
+    .await;
+
+    // メンバーで居るあいだは読める（過剰に拒否していないこと）
+    assert_eq!(
+        app.get_with_bearer(&tenant_path, &alice_pat).await.status(),
+        StatusCode::OK,
+        "テナントメンバーの PAT はテナントを取得できる"
+    );
+    assert_eq!(
+        app.get_with_bearer(&members_path, &alice_pat)
+            .await
+            .status(),
+        StatusCode::OK,
+        "テナントメンバーの PAT はメンバー一覧を取得できる"
+    );
+
+    // alice をテナントから外す
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.delete_with_session(&format!("{members_path}/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(
+        app.get_with_bearer(&tenant_path, &alice_pat).await.status(),
+        StatusCode::FORBIDDEN,
+        "テナントから外した利用者の PAT でテナントを取得できてはいけない"
+    );
+    assert_eq!(
+        app.get_with_bearer(&members_path, &alice_pat)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN,
+        "テナントから外した利用者の PAT でメンバー一覧を取得できてはいけない"
+    );
+
+    // オーナーの PAT は影響を受けない
+    assert_eq!(
+        app.get_with_bearer(&tenant_path, &owner_pat).await.status(),
+        StatusCode::OK,
+        "オーナーの PAT は従来どおり通る"
+    );
+
+    app.cleanup_user(alice.id).await;
     app.cleanup_user(owner.id).await;
 }
 

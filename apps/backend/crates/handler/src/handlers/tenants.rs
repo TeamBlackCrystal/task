@@ -69,7 +69,7 @@ pub async fn list_tenants(
 ) -> Result<Json<Vec<TenantResponse>>, AppError> {
     // テナント一覧は ensure_tenant_owner/access 不要。
     // Session: 自分が所有するテナント + テナントメンバーとして参加しているテナント。
-    //          session_has_tenant_access が許可する経路と同じ条件で抽出する
+    //          has_tenant_access が許可する経路と同じ条件で抽出する
     //          （ここが owner だけだと、参加者はアクセスできるのに一覧に出ない）。
     // PAT: バインドされた tenant_id の単一テナントのみ返す。
     // フィルタ自体が認可を兼ねているため追加チェックは不要。

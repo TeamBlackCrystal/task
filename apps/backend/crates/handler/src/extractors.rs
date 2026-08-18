@@ -136,32 +136,33 @@ impl AuthUser {
         tenant_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<(), AppError> {
-        match &self.method {
-            AuthMethod::Session => {
-                session_has_tenant_access(state, self.user_id, tenant_id, project_id).await
+        if let AuthMethod::PersonalToken {
+            tenant_id: pat_tenant,
+            allowed_project_ids,
+            ..
+        } = &self.method
+        {
+            if tenant_id != *pat_tenant {
+                return Err(AppError::Forbidden);
             }
-            AuthMethod::PersonalToken {
-                tenant_id: pat_tenant,
-                allowed_project_ids,
-                ..
-            } => {
-                if tenant_id != *pat_tenant {
-                    return Err(AppError::Forbidden);
-                }
-                if let Some(project_id) = project_id {
+            match project_id {
+                Some(project_id) => {
                     if let Some(allowed) = allowed_project_ids
                         && !allowed.contains(&project_id)
                     {
                         return Err(AppError::Forbidden);
                     }
-                    verify_project_in_tenant(state, tenant_id, project_id).await?;
-                } else if allowed_project_ids.is_some() {
-                    // プロジェクト制限付き PAT はテナント全体操作（project_id=None）を禁止
-                    return Err(AppError::Forbidden);
                 }
-                Ok(())
+                // プロジェクト制限付き PAT はテナント全体操作（project_id=None）を禁止
+                None if allowed_project_ids.is_some() => return Err(AppError::Forbidden),
+                None => {}
             }
         }
+
+        // PAT のバインドは「どのテナントを触れるか」の制限であって、所属の証明ではない。
+        // テナントから外した利用者のトークンが読み取りを保持しないよう、
+        // 所属判定はセッションと同じ経路に通す。
+        has_tenant_access(state, self.user_id, tenant_id, project_id).await
     }
 }
 
@@ -182,7 +183,9 @@ async fn verify_project_in_tenant(
     }
 }
 
-async fn session_has_tenant_access(
+/// テナントに入れるか（＋プロジェクト指定時はその中に入れるか）。
+/// セッションと PAT の双方が通る唯一の所属判定。
+async fn has_tenant_access(
     state: &AppState,
     user_id: Uuid,
     tenant_id: Uuid,
