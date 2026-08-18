@@ -8318,6 +8318,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description 既にメンバーとして登録済み */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
+                };
+            };
             /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
             500: {
                 headers: {
@@ -9911,6 +9920,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectMemberResponse"];
+                };
+            };
+            /** @description テナントメンバーでない利用者は追加できません */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
                 };
             };
             /** @description ログインまたはセッションが必要です */
