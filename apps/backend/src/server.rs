@@ -31,6 +31,7 @@ use job::{
     already_registered_email::{
         self, MAX_RETRIES as ALREADY_REGISTERED_MAX_RETRIES, QUEUE_NAME as ALREADY_REGISTERED_QUEUE,
     },
+    github_issue_sync::{self, QUEUE_NAME as GITHUB_ISSUE_SYNC_QUEUE},
     github_webhook::{self, QUEUE_NAME as GITHUB_WEBHOOK_QUEUE},
     password_reset_email::{
         self, MAX_RETRIES as PW_RESET_MAX_RETRIES, QUEUE_NAME as PW_RESET_QUEUE,
@@ -98,8 +99,10 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     // ワーカーには AppState 全体ではなく、実際に使う依存だけを渡す（job → handler の循環回避）。
     let job_state = JobState {
         settings: state.settings.clone(),
+        db: state.db.clone(),
         redis_client: state.redis_client.clone(),
         smtp_client: state.smtp_client.clone(),
+        http_client: state.http_client.clone(),
     };
 
     let email_worker_storage = state.verification_email_storage.as_ref().clone();
@@ -137,7 +140,7 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let worker_shutdown = shutdown_rx.clone();
     let github_worker_storage = state.github_webhook_storage.as_ref().clone();
-    let github_worker_state = job_state;
+    let github_worker_state = job_state.clone();
     let github_worker = WorkerBuilder::new(format!("{GITHUB_WEBHOOK_QUEUE}-worker"))
         .backend(github_worker_storage)
         .retry(RetryPolicy::retries(github_webhook::MAX_RETRIES))
@@ -146,10 +149,26 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         .data(github_worker_state)
         .build(github_webhook::process);
 
+    let issue_sync_worker_storage = state.github_issue_sync_storage.as_ref().clone();
+    let issue_sync_worker = WorkerBuilder::new(format!("{GITHUB_ISSUE_SYNC_QUEUE}-worker"))
+        .backend(issue_sync_worker_storage)
+        .retry(RetryPolicy::retries(github_issue_sync::MAX_RETRIES))
+        .enable_tracing()
+        .concurrency(github_issue_sync::worker_concurrency(settings))
+        .data(job_state)
+        .build(github_issue_sync::process);
+
     let github_shutdown = shutdown_rx.clone();
     let github_worker_handle = tokio::spawn(async move {
         github_worker
             .run_until(wait_for_shutdown(github_shutdown))
+            .await
+    });
+
+    let issue_sync_shutdown = shutdown_rx.clone();
+    let issue_sync_worker_handle = tokio::spawn(async move {
+        issue_sync_worker
+            .run_until(wait_for_shutdown(issue_sync_shutdown))
             .await
     });
 
@@ -239,6 +258,12 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         Ok(Ok(())) => info!("github webhook worker stopped"),
         Ok(Err(e)) => warn!("github webhook worker error: {e}"),
         Err(e) => warn!("github webhook worker join error: {e}"),
+    }
+
+    match issue_sync_worker_handle.await {
+        Ok(Ok(())) => info!("github issue sync worker stopped"),
+        Ok(Err(e)) => warn!("github issue sync worker error: {e}"),
+        Err(e) => warn!("github issue sync worker join error: {e}"),
     }
 
     Ok(())

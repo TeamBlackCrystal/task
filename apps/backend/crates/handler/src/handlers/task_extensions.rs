@@ -461,6 +461,7 @@ async fn apply_bulk_update(
     }
 
     txn.commit().await?;
+    crate::handlers::github::enqueue_issue_push(state, task_id).await?;
     Ok(())
 }
 

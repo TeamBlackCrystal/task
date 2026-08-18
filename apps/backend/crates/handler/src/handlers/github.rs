@@ -16,7 +16,8 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use crate::settings::GithubAppSettings;
-use entity::{github_integrations, projects, tenants};
+use entity::{github_integrations, github_issue_links, projects, tenants};
+use job::github_issue_sync::{self, GithubIssueSyncJob};
 use job::github_webhook::{self, GithubWebhookJob};
 use payload::github::*;
 use service::github::{
@@ -447,4 +448,67 @@ pub async fn delete_github_integration(
     active.delete(&state.db).await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// GitHub Issue にリンク済みのタスクなら、変更を書き戻すジョブを積む。
+/// 連携していないプロジェクトのタスクでは何もしない。
+pub(crate) async fn enqueue_issue_push(state: &AppState, task_id: Uuid) -> Result<(), AppError> {
+    if !state.settings.github_app_enabled() {
+        return Ok(());
+    }
+    let linked = github_issue_links::Entity::find()
+        .filter(github_issue_links::Column::TaskId.eq(task_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+    if !linked {
+        return Ok(());
+    }
+    github_issue_sync::enqueue(
+        &state.github_issue_sync_storage,
+        GithubIssueSyncJob::Push { task_id },
+    )
+    .await
+    .map_err(AppError::Internal)
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/import",
+    tag = "GitHub",
+    summary = "GitHub Issue の取り込みを開始",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("project_id" = Uuid, Path, description = "プロジェクトID"),
+    ),
+    responses(
+        (status = 202, description = "取り込みジョブを登録しました"),
+        CrudErrors,
+    )
+)]
+pub async fn import_github_issues(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    state.settings.require_github_app()?;
+    auth.require_session()?;
+    require_tenant_owner(&state, tenant_id, auth.user_id).await?;
+    require_project_in_tenant(&state, tenant_id, project_id).await?;
+
+    github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    github_issue_sync::enqueue(
+        &state.github_issue_sync_storage,
+        GithubIssueSyncJob::Import { project_id },
+    )
+    .await
+    .map_err(AppError::Internal)?;
+
+    Ok(StatusCode::ACCEPTED)
 }

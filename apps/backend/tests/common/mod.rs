@@ -23,8 +23,9 @@ use entity::{github_integrations, oauth_connections, projects, tenant_members, t
 use backend::{
     AppState,
     jobs::{
-        setup_already_registered_email_storage, setup_github_webhook_storage,
-        setup_password_reset_email_storage, setup_pool, setup_verification_email_storage,
+        setup_already_registered_email_storage, setup_github_issue_sync_storage,
+        setup_github_webhook_storage, setup_password_reset_email_storage, setup_pool,
+        setup_verification_email_storage,
     },
     routes, settings,
     utils::{
@@ -519,6 +520,9 @@ impl TestApp {
         let github_webhook_storage = setup_github_webhook_storage(&pg_pool, &settings)
             .await
             .expect("github webhook storage");
+        let github_issue_sync_storage = setup_github_issue_sync_storage(&pg_pool, &settings)
+            .await
+            .expect("github issue sync storage");
         let password_reset_email_storage = setup_password_reset_email_storage(&pg_pool, &settings)
             .await
             .expect("password reset email storage");
@@ -565,6 +569,7 @@ impl TestApp {
             smtp_client,
             verification_email_storage,
             github_webhook_storage,
+            github_issue_sync_storage,
             password_reset_email_storage,
             already_registered_email_storage,
             storage,

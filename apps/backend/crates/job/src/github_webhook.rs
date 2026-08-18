@@ -65,8 +65,22 @@ pub async fn enqueue(
     Ok(())
 }
 
-/// Wave 0: 受信をログに残すのみ（タスクリンクは PR #9b）。
-pub async fn process(job: GithubWebhookJob, _state: Data<JobState>) -> Result<(), BoxDynError> {
+/// `issues` イベントはタスクへ反映する。それ以外は受信をログに残すのみ。
+pub async fn process(job: GithubWebhookJob, state: Data<JobState>) -> Result<(), BoxDynError> {
+    if job.event == "issues" {
+        let applied =
+            service::github::sync::apply_issue_event(&state.db, job.project_id, &job.payload)
+                .await?;
+        tracing::info!(
+            integration_id = %job.integration_id,
+            project_id = %job.project_id,
+            delivery_id = ?job.delivery_id,
+            applied,
+            "github issues event processed"
+        );
+        return Ok(());
+    }
+
     tracing::info!(
         integration_id = %job.integration_id,
         project_id = %job.project_id,

@@ -4,6 +4,7 @@ pub mod drive_files;
 pub mod drive_folder_shares;
 pub mod drive_folders;
 pub mod github_integrations;
+pub mod github_issue_links;
 pub mod labels;
 pub mod milestones;
 pub mod notification_settings;

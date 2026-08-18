@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20260520000000_initial_schema;
 mod m20260818000000_tenant_members;
+mod m20260818010000_github_issue_links;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260520000000_initial_schema::Migration),
             Box::new(m20260818000000_tenant_members::Migration),
+            Box::new(m20260818010000_github_issue_links::Migration),
         ]
     }
 }

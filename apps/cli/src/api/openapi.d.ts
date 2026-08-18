@@ -1110,6 +1110,23 @@ export interface paths {
         patch: operations["update_custom_field"];
         trace?: never;
     };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/github/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** GitHub Issue の取り込みを開始 */
+        post: operations["import_github_issues"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant_id}/projects/{project_id}/github/install": {
         parameters: {
             query?: never;
@@ -9107,6 +9124,77 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProjectCustomFieldResponse"];
                 };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    import_github_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 取り込みジョブを登録しました */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description ログインまたはセッションが必要です */
             401: {

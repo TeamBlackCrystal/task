@@ -3097,6 +3097,8 @@ dependencies = [
  "apalis-postgres",
  "chrono",
  "common",
+ "reqwest 0.13.4",
+ "sea-orm",
  "serde",
  "serde_json",
  "service",
