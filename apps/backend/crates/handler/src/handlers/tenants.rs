@@ -11,6 +11,7 @@ use sea_orm::{
 };
 
 use crate::AppState;
+use crate::auth_helpers::is_tenant_member;
 use crate::error::AppError;
 use crate::extractors::AuthMethod;
 use crate::extractors::AuthUser;
@@ -71,7 +72,7 @@ pub async fn list_tenants(
     // Session: 自分が所有するテナント + テナントメンバーとして参加しているテナント。
     //          has_tenant_access が許可する経路と同じ条件で抽出する
     //          （ここが owner だけだと、参加者はアクセスできるのに一覧に出ない）。
-    // PAT: バインドされた tenant_id の単一テナントのみ返す。
+    // PAT: バインドされた tenant_id のうち、所属しているものだけ返す。
     // フィルタ自体が認可を兼ねているため追加チェックは不要。
     auth.require_scope(Scope::AdminTenant)?;
     let tenants = match &auth.method {
@@ -94,12 +95,19 @@ pub async fn list_tenants(
                 .await?
         }
         AuthMethod::PersonalToken { tenant_id, .. } => {
-            // PAT はバインドされた単一テナントのみ返す
-            tenants::Entity::find_by_id(*tenant_id)
+            // PAT はバインドされた単一テナントのみ返す。
+            // ただしバインドは「どのテナントを触れるか」の制限であって所属の証明ではないので、
+            // テナントから外した利用者のトークンでは一覧にも出さない（`get_tenant` と同じ判定）
+            let mut visible = Vec::new();
+            if let Some(tenant) = tenants::Entity::find_by_id(*tenant_id)
                 .one(&state.db)
                 .await?
-                .into_iter()
-                .collect()
+                && (tenant.owner_id == auth.user_id
+                    || is_tenant_member(&state.db, *tenant_id, auth.user_id).await?)
+            {
+                visible.push(tenant);
+            }
+            visible
         }
     };
     Ok(Json(tenants.into_iter().map(Into::into).collect()))

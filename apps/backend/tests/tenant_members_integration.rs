@@ -492,6 +492,12 @@ async fn removed_member_pat_loses_tenant_read_access() {
         StatusCode::OK,
         "テナントメンバーの PAT はメンバー一覧を取得できる"
     );
+    assert!(
+        tenant_ids(app.get_with_bearer("/v1/tenants", &alice_pat).await)
+            .await
+            .contains(&tp.tenant_id),
+        "テナントメンバーの PAT は一覧にそのテナントが出る"
+    );
 
     // alice をテナントから外す
     app.reset_session_client();
@@ -515,12 +521,25 @@ async fn removed_member_pat_loses_tenant_read_access() {
         StatusCode::FORBIDDEN,
         "テナントから外した利用者の PAT でメンバー一覧を取得できてはいけない"
     );
+    // 取得が 403 でも一覧に名前や設定が出ては同じことなので、こちらも落ちること
+    assert!(
+        !tenant_ids(app.get_with_bearer("/v1/tenants", &alice_pat).await)
+            .await
+            .contains(&tp.tenant_id),
+        "テナントから外した利用者の PAT ではテナント一覧にも出してはいけない"
+    );
 
     // オーナーの PAT は影響を受けない
     assert_eq!(
         app.get_with_bearer(&tenant_path, &owner_pat).await.status(),
         StatusCode::OK,
         "オーナーの PAT は従来どおり通る"
+    );
+    assert!(
+        tenant_ids(app.get_with_bearer("/v1/tenants", &owner_pat).await)
+            .await
+            .contains(&tp.tenant_id),
+        "オーナーの PAT は一覧に従来どおり出る"
     );
 
     app.cleanup_user(alice.id).await;
