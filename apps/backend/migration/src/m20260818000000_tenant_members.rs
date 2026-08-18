@@ -21,6 +21,14 @@ impl MigrationTrait for Migration {
         "#,
             )
             .await?;
+        // UNIQUE (tenant_id, user_id) の索引は先頭列が tenant_id なので user_id 単独では効かない。
+        // ログインのたびに通る 2FA 強制の判定（`service::login_session`）が user_id だけで引く
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "CREATE INDEX idx_tenant_members_user ON tenant_members(user_id)",
+            )
+            .await?;
         Ok(())
     }
 
