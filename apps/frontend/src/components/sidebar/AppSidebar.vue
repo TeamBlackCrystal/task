@@ -54,13 +54,7 @@ const navProjectsLoading = computed(
     (Boolean(tenantSlug.value) && routeAlignedTenantId.value === null && tenantStore.isLoading),
 );
 
-watch(
-  tenantSlug,
-  (slug) => {
-    if (slug) void tenantStore.loadTenants(slug);
-  },
-  { immediate: true },
-);
+watch(tenantSlug, (slug) => void tenantStore.loadTenants(slug || undefined), { immediate: true });
 
 function selectTenant(tenant: Tenant) {
   tenantStore.selectTenant(tenant);
