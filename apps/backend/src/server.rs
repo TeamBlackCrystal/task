@@ -172,6 +172,30 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
             .await
     });
 
+    // 書き戻し要求（pending_push）の取りこぼしを定期的に拾い直す。
+    // タスク更新後のジョブ登録が失敗しても、要求は DB に残っているのでここで回収する。
+    let sweep_db = state.db.clone();
+    let sweep_storage = state.github_issue_sync_storage.clone();
+    let mut sweep_shutdown = shutdown_rx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            github_issue_sync::SWEEP_INTERVAL_SECS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    match github_issue_sync::sweep_pending(&sweep_db, &sweep_storage).await {
+                        Ok(0) => {}
+                        Ok(n) => info!(count = n, "github issue push sweep re-enqueued"),
+                        Err(e) => warn!(error = %e, "github issue push sweep failed"),
+                    }
+                }
+                _ = sweep_shutdown.changed() => break,
+            }
+        }
+    });
+
     let pw_reset_shutdown = shutdown_rx.clone();
     let email_worker_handle = tokio::spawn(async move {
         email_worker

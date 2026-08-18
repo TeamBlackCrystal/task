@@ -22,6 +22,8 @@ pub struct GithubIssue {
     pub body: Option<String>,
     /// `open` / `closed`
     pub state: String,
+    /// GitHub 側の最終更新時刻。古いイベントの巻き戻し防止に使う。
+    pub updated_at: chrono::DateTime<chrono::Utc>,
     /// `/issues` は PR も返すため、このフィールドの有無で PR を判別する。
     #[serde(default)]
     pub pull_request: Option<serde_json::Value>,
@@ -115,12 +117,14 @@ mod tests {
     fn detects_pull_request_entries() {
         let pr = issue(serde_json::json!({
             "number": 7, "title": "feat", "body": null, "state": "open",
+            "updated_at": "2026-01-01T00:00:00Z",
             "pull_request": { "url": "https://api.github.com/repos/o/r/pulls/7" }
         }));
         assert!(pr.is_pull_request());
 
         let plain = issue(serde_json::json!({
-            "number": 8, "title": "bug", "body": "detail", "state": "closed"
+            "number": 8, "title": "bug", "body": "detail", "state": "closed",
+            "updated_at": "2026-01-01T00:00:00Z"
         }));
         assert!(!plain.is_pull_request());
         assert!(plain.is_closed());

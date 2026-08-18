@@ -10,11 +10,14 @@ pub struct Model {
     pub id: Uuid,
     #[sea_orm(unique_key = "github_issue_links_project_id_github_number_key")]
     pub project_id: Uuid,
+    pub integration_id: Uuid,
     #[sea_orm(unique)]
     pub task_id: Uuid,
     #[sea_orm(unique_key = "github_issue_links_project_id_github_number_key")]
     pub github_number: i32,
     pub synced_hash: String,
+    pub github_updated_at: DateTimeWithTimeZone,
+    pub pending_push: bool,
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(
         belongs_to,
@@ -24,6 +27,14 @@ pub struct Model {
         on_delete = "Cascade"
     )]
     pub projects: HasOne<super::projects::Entity>,
+    #[sea_orm(
+        belongs_to,
+        from = "integration_id",
+        to = "id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    pub github_integrations: HasOne<super::github_integrations::Entity>,
     #[sea_orm(
         belongs_to,
         from = "task_id",

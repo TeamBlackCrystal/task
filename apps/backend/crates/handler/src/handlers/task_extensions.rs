@@ -460,8 +460,11 @@ async fn apply_bulk_update(
         }
     }
 
+    let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
     txn.commit().await?;
-    crate::handlers::github::enqueue_issue_push(state, task_id).await?;
+    if linked {
+        crate::handlers::github::enqueue_issue_push(state, task_id).await;
+    }
     Ok(())
 }
 

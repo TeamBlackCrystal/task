@@ -92,6 +92,25 @@ pub fn worker_concurrency(settings: &Settings) -> usize {
     settings.github_webhook_worker_concurrency
 }
 
+/// pending_push の残留分を拾って書き戻しジョブを積み直すスイープ間隔。
+pub const SWEEP_INTERVAL_SECS: u64 = 300;
+
+/// タスク更新時のジョブ登録に失敗した書き戻し要求（pending_push が立ったまま
+/// のリンク）を拾い直す。要求はタスク更新と同一トランザクションで永続化されて
+/// いるため、ここで再登録すれば取りこぼしがない。二重登録になっても
+/// `push_task` がハッシュ比較で no-op になるだけで害はない。
+pub async fn sweep_pending(
+    db: &sea_orm::DatabaseConnection,
+    storage: &GithubIssueSyncStorage,
+) -> Result<usize, anyhow::Error> {
+    let task_ids = service::github::sync::find_pending_push_tasks(db).await?;
+    let count = task_ids.len();
+    for task_id in task_ids {
+        enqueue(storage, GithubIssueSyncJob::Push { task_id }).await?;
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

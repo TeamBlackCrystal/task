@@ -727,8 +727,11 @@ pub async fn update_task(
         if let Some(ref values) = payload.custom_field_values {
             upsert_task_custom_field_values(&txn, project_id, task_id, values).await?;
         }
+        let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
         txn.commit().await?;
-        crate::handlers::github::enqueue_issue_push(&state, task_id).await?;
+        if linked {
+            crate::handlers::github::enqueue_issue_push(&state, task_id).await;
+        }
         Ok(Json(
             build_task_detail_response(&state, project_id, updated).await?,
         ))
@@ -746,8 +749,11 @@ pub async fn update_task(
         if let Some(ref values) = payload.custom_field_values {
             upsert_task_custom_field_values(&txn, project_id, task_id, values).await?;
         }
+        let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
         txn.commit().await?;
-        crate::handlers::github::enqueue_issue_push(&state, task_id).await?;
+        if linked {
+            crate::handlers::github::enqueue_issue_push(&state, task_id).await;
+        }
         Ok(Json(
             build_task_detail_response(&state, project_id, updated).await?,
         ))

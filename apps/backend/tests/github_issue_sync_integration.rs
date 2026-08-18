@@ -1,7 +1,9 @@
 mod common;
 
 use axum::http::StatusCode;
-use backend::utils::github::sync::{apply_issue_event, import_project, push_task};
+use backend::utils::github::sync::{
+    apply_issue_event, import_project, mark_pending_push, push_task,
+};
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, github_issue_links, project_statuses, tasks};
 use sea_orm::{
@@ -25,25 +27,38 @@ fn unique_installation_id() -> i64 {
     400_000_000_000_i64 + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
 }
 
-fn issue_json(number: i32, title: &str, body: Option<&str>, state: &str) -> serde_json::Value {
+fn issue_json(
+    number: i32,
+    title: &str,
+    body: Option<&str>,
+    state: &str,
+    updated_at: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "number": number,
         "title": title,
         "body": body,
         "state": state,
+        "updated_at": updated_at,
     })
 }
+
+/// インポート時点の Issue 更新時刻。イベントはこれより新しい時刻を使う。
+const T_IMPORT: &str = "2026-08-01T00:00:00Z";
+const T_EVENT: &str = "2026-08-02T00:00:00Z";
+const T_STALE: &str = "2026-07-01T00:00:00Z";
 
 /// インポート対象のリポジトリ Issue 一覧。呼ばれるたび同じ 2 件 + PR 1 件を返す。
 fn issue_list() -> serde_json::Value {
     serde_json::json!([
-        issue_json(1, "ログインできない", Some("再現手順"), "open"),
-        issue_json(2, "古いバグ", None, "closed"),
+        issue_json(1, "ログインできない", Some("再現手順"), "open", T_IMPORT),
+        issue_json(2, "古いバグ", None, "closed", T_IMPORT),
         {
             "number": 3,
             "title": "feat: 何か",
             "body": null,
             "state": "open",
+            "updated_at": T_IMPORT,
             "pull_request": { "url": "https://api.github.com/repos/acme/backend/pulls/3" }
         },
     ])
@@ -108,7 +123,11 @@ async fn seed_statuses(app: &TestApp, project_id: Uuid) -> (Uuid, Uuid) {
     (ids[0], ids[1])
 }
 
-async fn insert_integration(app: &TestApp, project_id: Uuid, created_by: Uuid) {
+async fn insert_integration(
+    app: &TestApp,
+    project_id: Uuid,
+    created_by: Uuid,
+) -> github_integrations::Model {
     github_integrations::ActiveModel {
         id: Set(Uuid::new_v4()),
         project_id: Set(project_id),
@@ -123,7 +142,7 @@ async fn insert_integration(app: &TestApp, project_id: Uuid, created_by: Uuid) {
     }
     .insert(&app.state.db)
     .await
-    .expect("insert integration");
+    .expect("insert integration")
 }
 
 async fn project_tasks(app: &TestApp, project_id: Uuid) -> Vec<tasks::Model> {
@@ -277,7 +296,7 @@ async fn github_issue_sync_suite() {
             tp.project_id,
             &serde_json::json!({
                 "action": "closed",
-                "issue": issue_json(1, "ログインできない", Some("再現手順"), "closed"),
+                "issue": issue_json(1, "ログインできない", Some("再現手順"), "closed", T_EVENT),
             }),
         )
         .await
@@ -293,7 +312,7 @@ async fn github_issue_sync_suite() {
             tp.project_id,
             &serde_json::json!({
                 "action": "deleted",
-                "issue": issue_json(9, "消えた Issue", None, "open"),
+                "issue": issue_json(9, "消えた Issue", None, "open", T_EVENT),
             }),
         )
         .await
@@ -342,6 +361,13 @@ async fn github_issue_sync_suite() {
         active.status_id = Set(done_id);
         active.update(&app.state.db).await.expect("update task");
 
+        // 書き戻し要求はハンドラーがタスク更新と同一トランザクションで pending_push に永続化する
+        let marked = mark_pending_push(&app.state.db, task.id)
+            .await
+            .expect("mark pending");
+        assert!(marked, "リンク済みタスクは pending_push が立つ");
+        assert!(link_for_number(&app, tp.project_id, 1).await.pending_push);
+
         push_task(&app.state.db, &app.state.http_client, &github, task.id)
             .await
             .expect("push changed");
@@ -349,6 +375,10 @@ async fn github_issue_sync_suite() {
             patch_count(&mock_server).await,
             before_patches + 1,
             "変更は 1 回書き戻す"
+        );
+        assert!(
+            !link_for_number(&app, tp.project_id, 1).await.pending_push,
+            "書き戻し後は pending_push が消える"
         );
 
         push_task(&app.state.db, &app.state.http_client, &github, task.id)
@@ -373,7 +403,7 @@ async fn github_issue_sync_suite() {
             tp.project_id,
             &serde_json::json!({
                 "action": "edited",
-                "issue": issue_json(1, "ログインできない（調査中）", Some("再現手順"), "closed"),
+                "issue": issue_json(1, "ログインできない（調査中）", Some("再現手順"), "closed", T_EVENT),
             }),
         )
         .await
@@ -390,6 +420,100 @@ async fn github_issue_sync_suite() {
         assert_eq!(
             link_for_number(&app, tp.project_id, 1).await.synced_hash,
             synced_before
+        );
+
+        app.cleanup_user(owner.id).await;
+    }
+
+    // 6. 遅延・再送された古いイベントは新しい内容を巻き戻さない
+    {
+        let owner = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(owner.id).await;
+        seed_statuses(&app, tp.project_id).await;
+        insert_integration(&app, tp.project_id, owner.id).await;
+        import_project(
+            &app.state.db,
+            &app.state.http_client,
+            &github,
+            tp.project_id,
+        )
+        .await
+        .expect("import");
+
+        // 新しいイベントでタイトルが変わる
+        apply_issue_event(
+            &app.state.db,
+            tp.project_id,
+            &serde_json::json!({
+                "action": "edited",
+                "issue": issue_json(1, "新しいタイトル", Some("再現手順"), "open", T_EVENT),
+            }),
+        )
+        .await
+        .expect("apply new event");
+        assert_eq!(
+            project_tasks(&app, tp.project_id).await[0].title,
+            "新しいタイトル"
+        );
+
+        // その後に届いた古いイベント（インポート時点より前の内容）は捨てられる
+        apply_issue_event(
+            &app.state.db,
+            tp.project_id,
+            &serde_json::json!({
+                "action": "edited",
+                "issue": issue_json(1, "古いタイトル", Some("昔の本文"), "open", T_STALE),
+            }),
+        )
+        .await
+        .expect("apply stale event");
+        assert_eq!(
+            project_tasks(&app, tp.project_id).await[0].title,
+            "新しいタイトル",
+            "古いイベントで巻き戻らない"
+        );
+
+        app.cleanup_user(owner.id).await;
+    }
+
+    // 7. 連携解除（integration 削除）でリンクがカスケード削除され、別リポジトリへの再連携後に
+    //    残った書き戻しジョブが走っても Issue を触らない
+    {
+        let owner = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(owner.id).await;
+        seed_statuses(&app, tp.project_id).await;
+        let integration = insert_integration(&app, tp.project_id, owner.id).await;
+        import_project(
+            &app.state.db,
+            &app.state.http_client,
+            &github,
+            tp.project_id,
+        )
+        .await
+        .expect("import");
+        let task = project_tasks(&app, tp.project_id).await.remove(0);
+
+        github_integrations::Entity::delete_by_id(integration.id)
+            .exec(&app.state.db)
+            .await
+            .expect("delete integration");
+
+        let remaining = github_issue_links::Entity::find()
+            .filter(github_issue_links::Column::ProjectId.eq(tp.project_id))
+            .all(&app.state.db)
+            .await
+            .expect("query links");
+        assert!(remaining.is_empty(), "連携解除でリンクも消える");
+
+        // リンクが消えているので、残っていた書き戻しジョブが走っても GitHub を叩かない
+        let before_patches = patch_count(&mock_server).await;
+        push_task(&app.state.db, &app.state.http_client, &github, task.id)
+            .await
+            .expect("push after unlink");
+        assert_eq!(
+            patch_count(&mock_server).await,
+            before_patches,
+            "解除後の書き戻しは no-op"
         );
 
         app.cleanup_user(owner.id).await;

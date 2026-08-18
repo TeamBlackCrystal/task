@@ -7,7 +7,9 @@ use axum::{
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -233,13 +235,24 @@ pub async fn github_callback(
 
     if let Some(model) = existing {
         // 再連携: created_by / created_at は変更しない
+        let repo_changed = model.repo_owner != repo_owner || model.repo_name != repo_name;
+        let txn = state.db.begin().await?;
+        if repo_changed {
+            // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
+            // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
+            github_issue_links::Entity::delete_many()
+                .filter(github_issue_links::Column::ProjectId.eq(payload.project_id))
+                .exec(&txn)
+                .await?;
+        }
         let mut active: github_integrations::ActiveModel = model.into();
         active.installation_id = Set(query.installation_id);
         active.repo_owner = Set(repo_owner);
         active.repo_name = Set(repo_name);
         active.access_token_enc = Set(token_enc);
         active.token_expires_at = Set(access.expires_at);
-        active.update(&state.db).await?;
+        active.update(&txn).await?;
+        txn.commit().await?;
     } else {
         github_integrations::ActiveModel {
             id: Set(Uuid::new_v4()),
@@ -450,26 +463,23 @@ pub async fn delete_github_integration(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// GitHub Issue にリンク済みのタスクなら、変更を書き戻すジョブを積む。
-/// 連携していないプロジェクトのタスクでは何もしない。
-pub(crate) async fn enqueue_issue_push(state: &AppState, task_id: Uuid) -> Result<(), AppError> {
+/// 書き戻しジョブを積む（ベストエフォート）。
+///
+/// 呼び出し時点で書き戻し要求はタスク更新と同じトランザクション内の
+/// `pending_push`（`service::github::sync::mark_pending_push`）として永続化済み。
+/// ここでの登録失敗は API エラーにせず、定期スイープに回収を任せる。
+pub(crate) async fn enqueue_issue_push(state: &AppState, task_id: Uuid) {
     if !state.settings.github_app_enabled() {
-        return Ok(());
+        return;
     }
-    let linked = github_issue_links::Entity::find()
-        .filter(github_issue_links::Column::TaskId.eq(task_id))
-        .one(&state.db)
-        .await?
-        .is_some();
-    if !linked {
-        return Ok(());
-    }
-    github_issue_sync::enqueue(
+    if let Err(e) = github_issue_sync::enqueue(
         &state.github_issue_sync_storage,
         GithubIssueSyncJob::Push { task_id },
     )
     .await
-    .map_err(AppError::Internal)
+    {
+        tracing::warn!(error = %e, %task_id, "enqueue github issue push failed; sweep will retry");
+    }
 }
 
 #[axum::debug_handler]
