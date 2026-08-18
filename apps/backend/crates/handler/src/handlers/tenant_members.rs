@@ -206,6 +206,9 @@ pub async fn remove_member(
     let txn = state.db.begin().await?;
     let project_ids: Vec<Uuid> = projects::Entity::find()
         .filter(projects::Column::TenantId.eq(tenant_id))
+        // 個人プロジェクト（Inbox）は本人しか居ない私物なので残す。
+        // 消すとメンバー 0 人になり、再度追加されたときに本人が入れなくなる
+        .filter(projects::Column::IsPersonal.eq(false))
         .select_only()
         .column(projects::Column::Id)
         .into_tuple()

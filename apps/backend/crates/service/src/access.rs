@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
     prelude::Uuid,
 };
 
@@ -32,8 +32,10 @@ pub async fn is_tenant_member<C: ConnectionTrait>(
 /// メンバーを 1 人も指定していないプロジェクトはテナント全体に開放し、
 /// 指定がある場合だけその中に居るかを見る（#568）。
 ///
-/// 個人プロジェクト（Inbox）は作成時に本人が `project_members` に入る
-/// （`my_tasks::seed_personal_project_defaults`）ので、ここで開放されることはない。
+/// 個人プロジェクト（Inbox）は、メンバー行が消えても開放しない。
+/// 作成時には本人が `project_members` に入る（`my_tasks::seed_personal_project_defaults`）が、
+/// テナントメンバーの削除や利用者の削除でその行は消えうるため、行の有無に頼らず
+/// `is_personal` で明示的に閉じる。
 pub async fn project_is_open_or_member<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
@@ -50,11 +52,21 @@ pub async fn project_is_open_or_member<C: ConnectionTrait>(
         return Ok(true);
     }
 
-    Ok(project_members::Entity::find()
+    if project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))
         .count(db)
         .await?
-        == 0)
+        != 0
+    {
+        return Ok(false);
+    }
+
+    // メンバー 0 人でテナント全体に開放するのは共有プロジェクトだけ。
+    // 個人プロジェクト（Inbox）はメンバー行が消えても本人以外に開けない
+    let Some(project) = projects::Entity::find_by_id(project_id).one(db).await? else {
+        return Ok(false);
+    };
+    Ok(!project.is_personal || project.personal_owner_id == Some(user_id))
 }
 
 /// 候補プロジェクトのうち、そのユーザーに見えるものを返す。
@@ -94,8 +106,27 @@ pub async fn visible_project_ids<C: ConnectionTrait>(
         .into_iter()
         .collect();
 
+    // 他人の個人プロジェクト（Inbox）は、メンバー行が消えても開放しない
+    let foreign_personal: HashSet<Uuid> = projects::Entity::find()
+        .filter(projects::Column::Id.is_in(candidate_ids.clone()))
+        .filter(projects::Column::IsPersonal.eq(true))
+        // NULL != user_id は NULL 判定になり素通りするので、明示的に落とす
+        .filter(
+            Condition::any()
+                .add(projects::Column::PersonalOwnerId.ne(user_id))
+                .add(projects::Column::PersonalOwnerId.is_null()),
+        )
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
     Ok(candidate_ids
         .into_iter()
+        .filter(|id| !foreign_personal.contains(id))
         .filter(|id| !restricted.contains(id) || mine.contains(id))
         .collect())
 }
@@ -123,6 +154,11 @@ pub async fn project_accessible_user_ids<C: ConnectionTrait>(
         .collect();
     if !members.is_empty() {
         return Ok(members);
+    }
+
+    // メンバー 0 人で宛先をテナント全体に広げるのは共有プロジェクトだけ
+    if project.is_personal {
+        return Ok(project.personal_owner_id.into_iter().collect());
     }
 
     Ok(tenant_members::Entity::find()

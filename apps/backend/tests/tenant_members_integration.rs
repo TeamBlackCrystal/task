@@ -279,6 +279,26 @@ async fn personal_project_is_not_open_to_other_tenant_members() {
         "他人の個人プロジェクトはテナントメンバーでも入れない"
     );
 
+    // bob をテナントから外しても開放されない。
+    // 外すと bob の project_members が消えるため、メンバー 0 人になった Inbox が
+    // 「メンバー未指定＝テナント全体に開放」の規則に流れ込まないことを見る
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.delete_with_session(&format!("{members_path}/{}", bob.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    app.reset_session_client();
+    app.login_session(&alice.email, &alice.password).await;
+    assert_eq!(
+        app.get_with_session(&personal_tasks_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "テナントから外した人の個人プロジェクトも他のメンバーには開かない"
+    );
+
     // 個人プロジェクトが作った drive_folders が bob を参照するので、
     // 先にテナントごと消す（オーナー削除でテナントが CASCADE される）
     app.cleanup_user(owner.id).await;
