@@ -653,3 +653,101 @@ async fn removed_tenant_member_does_not_hold_last_project_admin_slot() {
     app.cleanup_user(bob.id).await;
     app.cleanup_user(owner.id).await;
 }
+
+/// 管理者による利用者の強制削除でも、プロジェクトの絞り込みが壊れてはいけない。
+///
+/// `delete_user_cascade` が `project_members` の行を消していた頃は、
+/// その人しか指定されていなかったプロジェクトがメンバー 0 件になり、
+/// 「メンバー未指定はテナント全体に開放」の規則でテナント全員に開いてしまっていた（#568）。
+#[tokio::test]
+async fn deleting_user_keeps_project_scoping() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let admin = app.insert_user(true, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_path = format!("/v1/tenants/{}/projects/{}", tp.tenant_id, tp.project_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        let res = app
+            .post_json_with_session(
+                &members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+    // alice だけをプロジェクトに指定する（= 絞り込み状態にする）
+    let assigned = app
+        .post_json_with_session(
+            &project_members_path,
+            serde_json::json!({ "user_id": alice.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(assigned.status(), StatusCode::CREATED);
+
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "絞り込み状態のプロジェクトには指定された人しか入れない"
+    );
+
+    // 管理者が alice を強制削除する
+    app.reset_session_client();
+    app.login_session(&admin.email, &admin.password).await;
+    assert_eq!(
+        app.delete_with_session(&format!("/v1/admin/users/{}", alice.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // 絞り込みは壊れない。bob は依然として入れない
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "利用者を削除しても、絞り込み済みのプロジェクトは他のメンバーに開かない"
+    );
+
+    // 削除された利用者はテナントメンバーから外れている
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    let members = app.get_with_session(&members_path).await;
+    assert_eq!(members.status(), StatusCode::OK);
+    let members_body: Value = members.json().await.expect("tenant members json");
+    let member_ids: Vec<Uuid> = members_body
+        .as_array()
+        .expect("tenant members must be an array")
+        .iter()
+        .map(|m| {
+            m["user_id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .expect("member user_id")
+        })
+        .collect();
+    assert!(
+        !member_ids.contains(&alice.id),
+        "削除した利用者はテナントメンバー一覧に残ってはいけない"
+    );
+    assert!(member_ids.contains(&bob.id), "他のメンバーは影響を受けない");
+
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+    app.cleanup_user(admin.id).await;
+    app.cleanup_user(owner.id).await;
+}
