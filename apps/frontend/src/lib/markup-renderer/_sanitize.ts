@@ -1,0 +1,109 @@
+/**
+ * _sanitize.ts — DOMPurify 設定 (構造専任・registry 方式)。
+ *
+ * DOMPurify は HTML 構造の allowlist に専念し、CSS の意味解釈はしない:
+ * - 🔴 FORBID_ATTR: ['style'] — inline style は一切通さない。プラグインは名前空間クラス
+ *   でのみ装飾する契約であり、この FORBID を外すと kfm-sanitize テストが落ちる。
+ * - class は既知トークン完全一致 allowlist (afterSanitizeAttributes フック)。DOMPurify は
+ *   class の「値」を検査しないためフック必須。悪意 HTML がアプリ側クラス
+ *   (modal-overlay 等) を騙る UI redressing を封じる。
+ * - CUSTOM_ELEMENT_HANDLING は registry 登録制 (Phase 1 は登録タグ空)。
+ *   allowCustomizedBuiltInElements: false で is="" 経路を封鎖。
+ *
+ * 許可集合は各プラグインが export する SanitizeSchema を createRenderer({ sanitizeSchemas })
+ * で合成した registry が単一ソース (コアはプラグインを import しない規約のまま、emit と
+ * sanitize の許可が同時に増減する)。
+ */
+import DOMPurify from 'isomorphic-dompurify';
+
+export type SanitizeSchema = {
+  /** 許可するカスタム要素タグ (Phase 2 で kfm-animation 等が合流。Phase 1 は空) */
+  readonly tags?: readonly string[];
+  /** カスタム要素タグごとの許可属性 (Phase 1 は空) */
+  readonly attrs?: Readonly<Record<string, readonly string[]>>;
+  /** class 完全一致 allowlist トークン */
+  readonly classTokens?: readonly string[];
+  /** class パターン許可 (language-* 等の固定形パターンに限る) */
+  readonly classPatterns?: readonly RegExp[];
+};
+
+type Registry = {
+  readonly tags: ReadonlySet<string>;
+  readonly attrsByTag: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly classTokens: ReadonlySet<string>;
+  readonly classPatterns: readonly RegExp[];
+};
+
+export function buildRegistry(schemas: readonly SanitizeSchema[]): Registry {
+  const tags = new Set<string>();
+  const attrsByTag = new Map<string, Set<string>>();
+  const classTokens = new Set<string>();
+  const classPatterns: RegExp[] = [];
+  for (const schema of schemas) {
+    for (const tag of schema.tags ?? []) tags.add(tag);
+    for (const [tag, attrs] of Object.entries(schema.attrs ?? {})) {
+      const set = attrsByTag.get(tag) ?? new Set<string>();
+      for (const attr of attrs) set.add(attr);
+      attrsByTag.set(tag, set);
+    }
+    for (const token of schema.classTokens ?? []) classTokens.add(token);
+    classPatterns.push(...(schema.classPatterns ?? []));
+  }
+  return { tags, attrsByTag, classTokens, classPatterns };
+}
+
+// isomorphic-dompurify の DOMPurify はモジュール singleton で addHook もグローバルに効く。
+// フックは一度だけ据え、許可集合は sanitize() 実行中のみ activeRegistry に差して参照する
+// (DOMPurify.sanitize は同期・再入なし)。registry 不在で走った場合は fail-closed
+// (class 全除去) に倒す。
+let activeRegistry: Registry | null = null;
+let hookInstalled = false;
+
+function isAllowedClassToken(token: string, registry: Registry | null): boolean {
+  if (registry === null) return false;
+  if (registry.classTokens.has(token)) return true;
+  return registry.classPatterns.some((pattern) => pattern.test(token));
+}
+
+function installHook(): void {
+  if (hookInstalled) return;
+  hookInstalled = true;
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    const element = node as Element;
+    if (typeof element.hasAttribute !== 'function') return;
+    if (!element.hasAttribute('class')) return;
+    const kept = (element.getAttribute('class') ?? '')
+      .split(/[ \t\n\r\f]+/)
+      .filter((token) => token.length > 0 && isAllowedClassToken(token, activeRegistry));
+    if (kept.length > 0) {
+      element.setAttribute('class', kept.join(' '));
+    } else {
+      element.removeAttribute('class');
+    }
+  });
+}
+
+/** schemas を合成した registry で閉じた sanitizer を返す */
+export function createSanitizer(schemas: readonly SanitizeSchema[]): (html: string) => string {
+  const registry = buildRegistry(schemas);
+  installHook();
+  const config = {
+    // GFM 出力は HTML のみ (SVG / MathML は不要ゆえ落とす)
+    USE_PROFILES: { html: true },
+    FORBID_ATTR: ['style'],
+    CUSTOM_ELEMENT_HANDLING: {
+      tagNameCheck: (tagName: string) => registry.tags.has(tagName),
+      attributeNameCheck: (attrName: string, tagName?: string) =>
+        tagName !== undefined && (registry.attrsByTag.get(tagName)?.has(attrName) ?? false),
+      allowCustomizedBuiltInElements: false,
+    },
+  };
+  return (html: string): string => {
+    activeRegistry = registry;
+    try {
+      return DOMPurify.sanitize(html, config);
+    } finally {
+      activeRegistry = null;
+    }
+  };
+}

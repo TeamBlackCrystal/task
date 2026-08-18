@@ -1,0 +1,105 @@
+import { describe, expect, it } from 'vitest';
+import { createSanitizer } from '../markup-renderer/_sanitize';
+import { gfmSanitizeSchema } from '../remark-gfm';
+import { koyoriAlertsSanitizeSchema } from '../remark-koyori-alerts';
+
+// Phase 1 本番構成と同じ registry
+const sanitize = createSanitizer([gfmSanitizeSchema, koyoriAlertsSanitizeSchema]);
+
+describe('createSanitizer (🔴 FORBID_ATTR: style)', () => {
+  it('inline style 入力は style を落として出る (内容と許可 class は残る陽性対照)', () => {
+    const html = sanitize('<p style="color:red;background:url(//evil)" class="kfm-alert">本文</p>');
+    expect(html).not.toContain('style');
+    expect(html).toContain('本文');
+    expect(html).toContain('class="kfm-alert"');
+  });
+
+  it('どのタグでも style 属性は残らない', () => {
+    const html = sanitize('<div style="position:fixed"><span style="display:none">x</span></div>');
+    expect(html).not.toContain('style=');
+    expect(html).toContain('x');
+  });
+});
+
+describe('createSanitizer (class 完全一致 allowlist)', () => {
+  it('アプリ側クラスの騙り (modal-overlay 等) を剥がし、許可トークンだけ残す', () => {
+    const html = sanitize('<div class="modal-overlay kfm-alert kfm-alert--note">x</div>');
+    expect(html).not.toContain('modal-overlay');
+    expect(html).toContain('kfm-alert');
+    expect(html).toContain('kfm-alert--note');
+  });
+
+  it('許可トークンが 1 つも無ければ class 属性ごと除去する', () => {
+    const html = sanitize('<div class="evil-class another">x</div>');
+    expect(html).not.toContain('class=');
+    expect(html).toContain('x');
+  });
+
+  it('language-* パターンは小文字英数ハイフンのみ許可する', () => {
+    expect(sanitize('<code class="language-ts">x</code>')).toContain('language-ts');
+    expect(sanitize('<code class="language-TS">x</code>')).not.toContain('language-TS');
+    expect(sanitize('<code class="language-">x</code>')).not.toContain('class=');
+  });
+
+  it('前方一致・部分一致では通らない (完全一致のみ)', () => {
+    const html = sanitize('<div class="kfm-alert-evil kfm-alert__title2">x</div>');
+    expect(html).not.toContain('kfm-alert-evil');
+    expect(html).not.toContain('kfm-alert__title2');
+  });
+});
+
+describe('createSanitizer (XSS 基本)', () => {
+  it('script タグを除去する', () => {
+    const html = sanitize('前<script>alert(1)</script>後');
+    expect(html).not.toContain('<script');
+    expect(html).toContain('前');
+    expect(html).toContain('後');
+  });
+
+  it('img onerror を除去する (img 自体は残る陽性対照)', () => {
+    const html = sanitize('<img src="x.png" onerror="alert(1)">');
+    expect(html).not.toContain('onerror');
+    expect(html).toContain('<img');
+    expect(html).toContain('src="x.png"');
+  });
+
+  it('javascript: URL を除去する', () => {
+    const html = sanitize('<a href="javascript:alert(1)">リンク</a>');
+    expect(html).not.toContain('javascript:');
+    expect(html).toContain('リンク');
+  });
+});
+
+describe('createSanitizer (カスタム要素 registry)', () => {
+  it('未登録カスタム要素タグは除去する (Phase 1 は登録タグ空 = kfm-animation も通らない)', () => {
+    const html = sanitize('<kfm-animation fn="spin" speed="3s">子テキスト</kfm-animation>');
+    expect(html).not.toContain('kfm-animation');
+    expect(html).toContain('子テキスト');
+  });
+
+  it('is="" 経路 (customized built-in) を封鎖する (DOMPurify は is の値を空にする)', () => {
+    const html = sanitize('<div is="evil-widget">x</div>');
+    expect(html).not.toContain('evil-widget');
+    expect(html).toContain('x');
+  });
+
+  it('registry に登録すればタグと宣言済み属性のみ通る (registry 機構の陽性対照)', () => {
+    const withElement = createSanitizer([
+      { tags: ['kfm-test-element'], attrs: { 'kfm-test-element': ['speed'] } },
+    ]);
+    const html = withElement(
+      '<kfm-test-element speed="3s" onclick="alert(1)" unlisted="x">子</kfm-test-element>',
+    );
+    expect(html).toContain('<kfm-test-element');
+    expect(html).toContain('speed="3s"');
+    expect(html).not.toContain('onclick');
+    expect(html).not.toContain('unlisted');
+  });
+
+  it('registry の違いは sanitizer 間で漏れない (排他制御)', () => {
+    const withElement = createSanitizer([{ tags: ['kfm-test-element'] }]);
+    expect(withElement('<kfm-test-element>x</kfm-test-element>')).toContain('kfm-test-element');
+    // Phase 1 構成の sanitize では同じ入力が通らない
+    expect(sanitize('<kfm-test-element>x</kfm-test-element>')).not.toContain('kfm-test-element');
+  });
+});
