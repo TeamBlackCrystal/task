@@ -50,6 +50,7 @@ const props = defineProps<{
   /** undefined は未取得（ロード中・エラー）。正常な 0 件は空配列で渡すこと */
   labels?: LabelOption[];
   labelsLoading?: boolean;
+  /** ラベル一覧が手元に無いときだけ true にすること（使えるキャッシュがあれば false） */
   labelsError?: boolean;
 }>();
 

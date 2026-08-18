@@ -770,7 +770,7 @@ const table = useVueTable({
             :statuses="statusesQuery.data.value ?? []"
             :labels="labelsQuery.data.value"
             :labels-loading="labelsQuery.isLoading.value"
-            :labels-error="labelsQuery.isError.value"
+            :labels-error="labelsQuery.isError.value && !projectLabels.length"
             @created="onTaskCreated"
             @retry-labels="labelsQuery.refetch()"
           />
