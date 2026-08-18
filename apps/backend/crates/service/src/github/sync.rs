@@ -152,14 +152,22 @@ pub async fn apply_issue(
             .one(&txn)
             .await?
             .ok_or_else(|| anyhow::anyhow!("linked task {} is gone", link.task_id))?;
-        let status = resolve_status(&txn, project_id, content.closed).await?;
+        // Issue のタイトル・本文編集では、タスク固有のワークフロー状態を保持する。
+        // 開閉状態が実際に変わったときだけ、対応するステータスへ移動させる。
+        let current_status = project_statuses::Entity::find_by_id(task.status_id)
+            .one(&txn)
+            .await?;
+        let status_id = match current_status {
+            Some(status) if status.is_done_state == content.closed => task.status_id,
+            _ => resolve_status(&txn, project_id, content.closed).await?.id,
+        };
         // 完了済みのまま再同期されたときに完了日時を上書きしない。
         let completed_at = task.completed_at;
 
         let mut active: tasks::ActiveModel = task.into();
         active.title = Set(content.title.clone());
         active.description = Set(description_of(&content.body));
-        active.status_id = Set(status.id);
+        active.status_id = Set(status_id);
         active.completed_at = Set(if content.closed {
             completed_at.or_else(|| Some(chrono::Utc::now().into()))
         } else {
@@ -353,9 +361,16 @@ pub async fn push_task(
     let hash = content.hash();
     if link.synced_hash == hash {
         if link.pending_push {
-            let mut active: github_issue_links::ActiveModel = link.into();
-            active.pending_push = Set(false);
-            active.update(db).await?;
+            github_issue_links::Entity::update_many()
+                .col_expr(github_issue_links::Column::PendingPush, Expr::value(false))
+                .col_expr(
+                    github_issue_links::Column::UpdatedAt,
+                    Expr::value(chrono::Utc::now()),
+                )
+                .filter(github_issue_links::Column::Id.eq(link.id))
+                .filter(github_issue_links::Column::UpdatedAt.eq(link.updated_at.clone()))
+                .exec(db)
+                .await?;
         }
         return Ok(());
     }
@@ -371,11 +386,19 @@ pub async fn push_task(
     )
     .await?;
 
-    let mut active: github_issue_links::ActiveModel = link.into();
-    active.synced_hash = Set(hash);
-    active.pending_push = Set(false);
-    active.updated_at = Set(chrono::Utc::now().into());
-    active.update(db).await?;
+    // 自分が読み取った後に立った pending_push は消さない。条件付き更新に失敗した場合は
+    // pending_push を残し、スイープが最新状態を再度書き戻せるようにする。
+    github_issue_links::Entity::update_many()
+        .col_expr(github_issue_links::Column::SyncedHash, Expr::value(hash))
+        .col_expr(github_issue_links::Column::PendingPush, Expr::value(false))
+        .col_expr(
+            github_issue_links::Column::UpdatedAt,
+            Expr::value(chrono::Utc::now()),
+        )
+        .filter(github_issue_links::Column::Id.eq(link.id))
+        .filter(github_issue_links::Column::UpdatedAt.eq(link.updated_at))
+        .exec(db)
+        .await?;
     Ok(())
 }
 

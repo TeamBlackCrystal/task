@@ -440,6 +440,29 @@ async fn github_issue_sync_suite() {
         .await
         .expect("import");
 
+        // Issue が open のままタイトルだけ編集されても、タスク固有のワークフロー状態は保持する。
+        let in_progress_id = Uuid::new_v4();
+        project_statuses::ActiveModel {
+            id: Set(in_progress_id),
+            project_id: Set(tp.project_id),
+            name: Set("In Progress".into()),
+            color: Set("#888888".into()),
+            position: Set(1),
+            is_default: Set(false),
+            is_done_state: Set(false),
+            created_at: Set(chrono::Utc::now().into()),
+        }
+        .insert(&app.state.db)
+        .await
+        .expect("insert in-progress status");
+        let task = project_tasks(&app, tp.project_id).await.remove(0);
+        let mut task_active: tasks::ActiveModel = task.into();
+        task_active.status_id = Set(in_progress_id);
+        task_active
+            .update(&app.state.db)
+            .await
+            .expect("set in-progress");
+
         // 新しいイベントでタイトルが変わる
         apply_issue_event(
             &app.state.db,
@@ -454,6 +477,11 @@ async fn github_issue_sync_suite() {
         assert_eq!(
             project_tasks(&app, tp.project_id).await[0].title,
             "新しいタイトル"
+        );
+        assert_eq!(
+            project_tasks(&app, tp.project_id).await[0].status_id,
+            in_progress_id,
+            "open Issue の編集ではタスクのワークフロー状態を保持する"
         );
 
         // その後に届いた古いイベント（インポート時点より前の内容）は捨てられる
