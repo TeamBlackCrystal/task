@@ -9,12 +9,13 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, Quer
 
 use crate::AppState;
 use crate::auth_helpers::is_tenant_owner;
-use crate::error::AppError;
+use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
 use entity::{scopes::Scope, tenant_members, tenants, users};
 use payload::tenant_members::*;
+use service::db::is_postgres_unique_violation;
 
 async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     tenants::Entity::find_by_id(tenant_id)
@@ -97,6 +98,7 @@ pub async fn list_members(
     request_body = AddTenantMemberRequest,
     responses(
         (status = 201, description = "追加されたメンバー", body = TenantMemberResponse),
+        (status = 409, description = "既にメンバーとして登録済み", body = ServerError),
         CrudErrors,
     )
 )]
@@ -115,24 +117,21 @@ pub async fn add_member(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    if tenant_members::Entity::find()
-        .filter(tenant_members::Column::TenantId.eq(tenant_id))
-        .filter(tenant_members::Column::UserId.eq(payload.user_id))
-        .one(&state.db)
-        .await?
-        .is_some()
-    {
-        return Err(AppError::Conflict);
-    }
-
-    let member = tenant_members::ActiveModel {
+    // 二重追加は UNIQUE (tenant_id, user_id) に任せる。
+    // 事前に引いてから INSERT すると、同時に 2 回追加されたときに 500 になる
+    let member = match (tenant_members::ActiveModel {
         id: Set(Uuid::new_v4()),
         tenant_id: Set(tenant_id),
         user_id: Set(payload.user_id),
         role: Set(payload.role),
-    }
+    })
     .insert(&state.db)
-    .await?;
+    .await
+    {
+        Ok(member) => member,
+        Err(e) if is_postgres_unique_violation(&e) => return Err(AppError::Conflict),
+        Err(e) => return Err(e.into()),
+    };
 
     Ok((StatusCode::CREATED, Json(member.into())))
 }
