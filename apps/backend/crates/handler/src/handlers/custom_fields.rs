@@ -1,5 +1,4 @@
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -51,7 +50,6 @@ pub async fn list_custom_fields(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let fields = project_custom_fields::Entity::find()
         .filter(project_custom_fields::Column::ProjectId.eq(project_id))
         .order_by_asc(project_custom_fields::Column::Position)
@@ -88,7 +86,6 @@ pub async fn create_custom_field(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     if payload.field_type == project_custom_fields::CustomFieldType::Select {
         validate_select_options(&payload.options)?;
     } else if payload.options.is_some() {
@@ -138,7 +135,6 @@ pub async fn update_custom_field(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let field = project_custom_fields::Entity::find_by_id(field_id)
         .filter(project_custom_fields::Column::ProjectId.eq(project_id))
         .one(&state.db)
@@ -191,7 +187,6 @@ pub async fn delete_custom_field(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let result = project_custom_fields::Entity::delete_many()
         .filter(project_custom_fields::Column::Id.eq(field_id))
         .filter(project_custom_fields::Column::ProjectId.eq(project_id))

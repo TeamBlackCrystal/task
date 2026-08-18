@@ -11,7 +11,6 @@ use sea_orm::{
 };
 
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -40,7 +39,6 @@ pub async fn list_milestones(
     auth.require_scope(entity::scopes::Scope::ReadMilestone)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let list = milestones::Entity::find()
         .filter(milestones::Column::ProjectId.eq(project_id))
         .all(&state.db)
@@ -73,7 +71,6 @@ pub async fn create_milestone(
     auth.require_scope(entity::scopes::Scope::WriteMilestone)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let model = milestones::ActiveModel {
         id: Set(Uuid::new_v4()),
         project_id: Set(project_id),
@@ -113,7 +110,6 @@ pub async fn get_milestone(
     auth.require_scope(entity::scopes::Scope::ReadMilestone)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let milestone = milestones::Entity::find_by_id(id)
         .filter(milestones::Column::ProjectId.eq(project_id))
         .one(&state.db)
@@ -180,7 +176,6 @@ pub async fn update_milestone(
     auth.require_scope(entity::scopes::Scope::WriteMilestone)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let milestone = milestones::Entity::find_by_id(id)
         .filter(milestones::Column::ProjectId.eq(project_id))
         .one(&state.db)
@@ -226,7 +221,6 @@ pub async fn delete_milestone(
     auth.require_scope(entity::scopes::Scope::WriteMilestone)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     // tasks.milestone_id cascades to NULL via FK ON DELETE SET NULL
     let result = milestones::Entity::delete_many()
         .filter(milestones::Column::Id.eq(id))

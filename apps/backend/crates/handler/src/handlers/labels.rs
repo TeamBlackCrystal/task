@@ -1,5 +1,4 @@
 use crate::AppState;
-use crate::auth_helpers::require_member_or_owner;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
@@ -40,7 +39,6 @@ pub async fn list_labels(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let list = labels::Entity::find()
         .filter(labels::Column::ProjectId.eq(project_id))
         .all(&state.db)
@@ -73,7 +71,6 @@ pub async fn create_label(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let label = labels::ActiveModel {
         id: Set(Uuid::new_v4()),
         name: Set(payload.name),
@@ -113,7 +110,6 @@ pub async fn update_label(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let label = labels::Entity::find_by_id(id)
         .filter(labels::Column::ProjectId.eq(project_id))
         .one(&state.db)
@@ -161,7 +157,6 @@ pub async fn delete_label(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let result = labels::Entity::delete_many()
         .filter(labels::Column::Id.eq(id))
         .filter(labels::Column::ProjectId.eq(project_id))
@@ -196,7 +191,6 @@ pub async fn export_labels(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let list = labels::Entity::find()
         .filter(labels::Column::ProjectId.eq(project_id))
         .all(&state.db)
@@ -240,7 +234,6 @@ pub async fn import_labels(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let txn = state.db.begin().await?;
     for item in &payload.labels {

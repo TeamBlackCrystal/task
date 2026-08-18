@@ -7,7 +7,11 @@ use crate::error::AppError;
 pub use service::access::{is_tenant_member, project_is_open_or_member, visible_project_ids};
 pub use service::drive::is_tenant_owner;
 
-pub async fn require_member_or_owner(
+/// **指定した利用者**がそのプロジェクトに入れるかを確認する。
+///
+/// リクエスト元自身の認可は `AuthUser::ensure_tenant_access` が同じ判定を含んでいるので、
+/// ここを重ねて呼ぶ必要はない。担当者の追加など、自分以外を検証するときだけ使う。
+pub async fn require_project_access(
     state: &AppState,
     tenant_id: Uuid,
     project_id: Uuid,

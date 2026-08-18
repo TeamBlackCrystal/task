@@ -1,7 +1,7 @@
 //! 全文検索・バルク操作・保存済みビュー・ファイル添付。
 
 use crate::AppState;
-use crate::auth_helpers::{is_tenant_owner, require_member_or_owner};
+use crate::auth_helpers::{is_tenant_owner, require_project_access};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::handlers::tasks::resolve_task;
@@ -62,7 +62,6 @@ pub async fn search_tasks(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let query = q.q.trim();
     if query.is_empty() {
@@ -290,7 +289,6 @@ pub async fn bulk_update_tasks(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     if payload.task_ids.len() > BULK_MAX_TASKS {
         return Err(AppError::BadRequest);
@@ -402,7 +400,7 @@ async fn apply_bulk_update(
     active.update(&txn).await?;
 
     if let Some(assignee_id) = update.assignee_id {
-        require_member_or_owner(state, tenant_id, project_id, assignee_id).await?;
+        require_project_access(state, tenant_id, project_id, assignee_id).await?;
         let exists = task_assignees::Entity::find()
             .filter(task_assignees::Column::TaskId.eq(task_id))
             .filter(task_assignees::Column::UserId.eq(assignee_id))
@@ -489,7 +487,6 @@ pub async fn list_task_views(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let views = project_task_views::Entity::find()
         .filter(project_task_views::Column::ProjectId.eq(project_id))
@@ -532,7 +529,6 @@ pub async fn create_task_view(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let model = project_task_views::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -578,7 +574,6 @@ pub async fn update_task_view(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let view = project_task_views::Entity::find_by_id(view_id)
         .filter(project_task_views::Column::ProjectId.eq(project_id))
@@ -637,7 +632,6 @@ pub async fn delete_task_view(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
 
     let view = project_task_views::Entity::find_by_id(view_id)
         .filter(project_task_views::Column::ProjectId.eq(project_id))
@@ -680,7 +674,6 @@ pub async fn list_task_attachments(
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let rows = task_attachments::Entity::find()
@@ -735,7 +728,6 @@ pub async fn attach_task_file(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let file = drive_files::Entity::find_by_id(payload.drive_file_id)
@@ -816,7 +808,6 @@ pub async fn detach_task_file(
     auth.require_scope(entity::scopes::Scope::WriteTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
-    require_member_or_owner(&state, tenant_id, project_id, auth.user_id).await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     let attachment = task_attachments::Entity::find()
