@@ -126,7 +126,9 @@ pub async fn visible_project_ids<C: ConnectionTrait>(
 
     Ok(candidate_ids
         .into_iter()
-        .filter(|id| !foreign_personal.contains(id))
+        // 他人の個人プロジェクトでも、明示的に指定されていれば見える
+        // （`project_is_open_or_member` が自分の行を先に見るのと同じ扱い）
+        .filter(|id| !foreign_personal.contains(id) || mine.contains(id))
         .filter(|id| !restricted.contains(id) || mine.contains(id))
         .collect())
 }
@@ -143,6 +145,16 @@ pub async fn project_accessible_user_ids<C: ConnectionTrait>(
         return Ok(HashSet::new());
     };
 
+    let tenant_member_ids: HashSet<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(project.tenant_id))
+        .select_only()
+        .column(tenant_members::Column::UserId)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
     let members: HashSet<Uuid> = project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))
         .select_only()
@@ -153,7 +165,9 @@ pub async fn project_accessible_user_ids<C: ConnectionTrait>(
         .into_iter()
         .collect();
     if !members.is_empty() {
-        return Ok(members);
+        // テナントから外れた人の行は残る（`tenant_members::remove_member`）ので宛先から落とす。
+        // そのプロジェクトに入れない人に通知を送らないため
+        return Ok(members.intersection(&tenant_member_ids).copied().collect());
     }
 
     // メンバー 0 人で宛先をテナント全体に広げるのは共有プロジェクトだけ
@@ -161,13 +175,5 @@ pub async fn project_accessible_user_ids<C: ConnectionTrait>(
         return Ok(project.personal_owner_id.into_iter().collect());
     }
 
-    Ok(tenant_members::Entity::find()
-        .filter(tenant_members::Column::TenantId.eq(project.tenant_id))
-        .select_only()
-        .column(tenant_members::Column::UserId)
-        .into_tuple::<Uuid>()
-        .all(db)
-        .await?
-        .into_iter()
-        .collect())
+    Ok(tenant_member_ids)
 }

@@ -2,6 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{TestApp, insert_personal_token_for_test};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -258,6 +259,7 @@ async fn personal_project_is_not_open_to_other_tenant_members() {
     let body: Value = personal.json().await.expect("personal project json");
     assert_eq!(body["is_personal"], true);
     let personal_id = body["id"].as_str().expect("personal project id");
+    let personal_uuid: Uuid = personal_id.parse().expect("personal project uuid");
     let personal_tasks_path = format!(
         "/v1/tenants/{}/projects/{}/tasks",
         tp.tenant_id, personal_id
@@ -279,9 +281,30 @@ async fn personal_project_is_not_open_to_other_tenant_members() {
         "他人の個人プロジェクトはテナントメンバーでも入れない"
     );
 
-    // bob をテナントから外しても開放されない。
-    // 外すと bob の project_members が消えるため、メンバー 0 人になった Inbox が
+    // メンバー行が消えても開放しない。
+    // 利用者削除（`admin_users`）などで Inbox の project_members が 0 件になっても、
     // 「メンバー未指定＝テナント全体に開放」の規則に流れ込まないことを見る
+    entity::project_members::Entity::delete_many()
+        .filter(entity::project_members::Column::ProjectId.eq(personal_uuid))
+        .exec(&app.state.db)
+        .await
+        .expect("delete personal project members");
+
+    assert_eq!(
+        app.get_with_session(&personal_tasks_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "メンバー行が 0 件になっても他人の個人プロジェクトは開かない"
+    );
+
+    app.reset_session_client();
+    app.login_session(&bob.email, &bob.password).await;
+    assert_eq!(
+        app.get_with_session(&personal_tasks_path).await.status(),
+        StatusCode::OK,
+        "メンバー行が消えても本人は自分の個人プロジェクトに入れる"
+    );
+
+    // bob をテナントから外しても開放されない
     app.reset_session_client();
     app.login_session(&owner.email, &owner.password).await;
     assert_eq!(
@@ -306,10 +329,11 @@ async fn personal_project_is_not_open_to_other_tenant_members() {
     app.cleanup_user(bob.id).await;
 }
 
-/// テナントから外したら、そのテナント配下の project_members からも外す。
-/// 残すとプロジェクトが「メンバー指定あり」のままになり、他のメンバーから見えなくなる。
+/// テナントから外しても、プロジェクトの絞り込みは壊さない。
+/// project_members の行を消すと、その人しか指定されていなかったプロジェクトが
+/// メンバー 0 人になり、「メンバー未指定＝テナント全体に開放」の規則で他のメンバーに開いてしまう。
 #[tokio::test]
-async fn removing_tenant_member_also_removes_project_membership() {
+async fn removing_tenant_member_keeps_project_scoping() {
     let mut app = TestApp::new().await;
 
     let owner = app.insert_user(false, false).await;
@@ -364,30 +388,52 @@ async fn removing_tenant_member_also_removes_project_membership() {
     let remaining = app.get_with_session(&project_members_path).await;
     assert_eq!(remaining.status(), StatusCode::OK);
     let remaining_body: Value = remaining.json().await.expect("project members json");
-    assert!(
+    assert_eq!(
         remaining_body
             .as_array()
             .expect("project members must be an array")
-            .is_empty(),
-        "テナントから外した人はプロジェクトメンバーにも残らない"
+            .len(),
+        1,
+        "再参加したときに戻せるよう、プロジェクトの指定自体は残す"
     );
 
-    // 指定が 0 人に戻ったので、テナントメンバーに開放される
+    // 絞り込みは壊れない。bob は依然として入れない
     app.reset_session_client();
     app.login_session(&bob.email, &bob.password).await;
     assert_eq!(
         app.get_with_session(&project_path).await.status(),
-        StatusCode::OK,
-        "指定が無くなったプロジェクトはテナントメンバーに開放される"
+        StatusCode::FORBIDDEN,
+        "メンバーを外しても、絞り込み済みのプロジェクトは他のメンバーに開かない"
     );
 
-    // テナントから外れた alice は入れない
+    // テナントから外れた alice も入れない（残った行はアクセスを与えない）
     app.reset_session_client();
     app.login_session(&alice.email, &alice.password).await;
     assert_eq!(
         app.get_with_session(&project_path).await.status(),
         StatusCode::FORBIDDEN,
         "テナントから外れた人は入れない"
+    );
+
+    // テナントに戻せば、元のプロジェクト指定がそのまま効く
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.post_json_with_session(
+            &members_path,
+            serde_json::json!({ "user_id": alice.id, "role": "Member" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    app.reset_session_client();
+    app.login_session(&alice.email, &alice.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::OK,
+        "テナントに戻したら元のプロジェクト指定が戻る"
     );
 
     app.cleanup_user(alice.id).await;

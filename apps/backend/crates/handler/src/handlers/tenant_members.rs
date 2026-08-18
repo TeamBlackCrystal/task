@@ -5,10 +5,7 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QuerySelect,
-    TransactionTrait,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::AppState;
 use crate::auth_helpers::is_tenant_owner;
@@ -16,7 +13,7 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
-use entity::{project_members, projects, scopes::Scope, tenant_members, tenants, users};
+use entity::{scopes::Scope, tenant_members, tenants, users};
 use payload::tenant_members::*;
 
 async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -199,32 +196,15 @@ pub async fn remove_member(
 
     let member = find_member(&state, tenant_id, user_id).await?;
 
-    // テナントから外したら、そのテナント配下の project_members からも外す。
-    // 残すと「プロジェクトには居るがテナントには入れない」不整合ができ、
-    // 残った行のせいでプロジェクトが「メンバー指定あり」のままになって
-    // 他のテナントメンバーから見えなくなる（通知の宛先にも残り続ける）
-    let txn = state.db.begin().await?;
-    let project_ids: Vec<Uuid> = projects::Entity::find()
-        .filter(projects::Column::TenantId.eq(tenant_id))
-        // 個人プロジェクト（Inbox）は本人しか居ない私物なので残す。
-        // 消すとメンバー 0 人になり、再度追加されたときに本人が入れなくなる
-        .filter(projects::Column::IsPersonal.eq(false))
-        .select_only()
-        .column(projects::Column::Id)
-        .into_tuple()
-        .all(&txn)
-        .await?;
-    if !project_ids.is_empty() {
-        project_members::Entity::delete_many()
-            .filter(project_members::Column::ProjectId.is_in(project_ids))
-            .filter(project_members::Column::UserId.eq(user_id))
-            .exec(&txn)
-            .await?;
-    }
+    // project_members の行はあえて残す。テナント所属は has_tenant_access が先に見るので、
+    // テナントに居ない人の行は何のアクセスも与えない。
+    // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
+    // 「メンバー未指定＝テナント全体に開放」の規則で他のメンバーに開いてしまう。
+    // 残しておけば再参加したときに元の割り当てがそのまま戻る。
+    // 通知の宛先はテナントに居る人だけに絞られる（`service::access`）
     tenant_members::Entity::delete_by_id(member.id)
-        .exec(&txn)
+        .exec(&state.db)
         .await?;
-    txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
