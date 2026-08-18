@@ -6,36 +6,6 @@ settings:
 
 catalogs:
   default:
-    '@types/hast':
-      specifier: 3.0.5
-      version: 3.0.5
-    '@types/mdast':
-      specifier: 4.0.4
-      version: 4.0.4
-    isomorphic-dompurify:
-      specifier: 3.22.0
-      version: 3.22.0
-    lru-cache:
-      specifier: 11.5.2
-      version: 11.5.2
-    rehype-stringify:
-      specifier: 10.0.1
-      version: 10.0.1
-    remark-gfm:
-      specifier: 4.0.1
-      version: 4.0.1
-    remark-parse:
-      specifier: 11.0.0
-      version: 11.0.0
-    remark-rehype:
-      specifier: 11.1.2
-      version: 11.1.2
-    unified:
-      specifier: 11.0.5
-      version: 11.0.5
-    unist-util-visit:
-      specifier: 5.1.0
-      version: 5.1.0
     vite-plus:
       specifier: 0.2.5
       version: 0.2.5
@@ -111,10 +81,10 @@ importers:
         specifier: 1.4.29
         version: 1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3)
       isomorphic-dompurify:
-        specifier: 'catalog:'
+        specifier: 3.22.0
         version: 3.22.0
       lru-cache:
-        specifier: 'catalog:'
+        specifier: 11.5.2
         version: 11.5.2
       openapi-fetch:
         specifier: 0.17.0
@@ -126,28 +96,28 @@ importers:
         specifier: 4.7.1
         version: 4.7.1(pinia@3.0.4(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3)))
       rehype-stringify:
-        specifier: 'catalog:'
+        specifier: 10.0.1
         version: 10.0.1
       reka-ui:
         specifier: 2.10.1
         version: 2.10.1(vue@3.5.41(typescript@6.0.3))
       remark-gfm:
-        specifier: 'catalog:'
+        specifier: 4.0.1
         version: 4.0.1(supports-color@10.2.2)
       remark-parse:
-        specifier: 'catalog:'
+        specifier: 11.0.0
         version: 11.0.0(supports-color@10.2.2)
       remark-rehype:
-        specifier: 'catalog:'
+        specifier: 11.1.2
         version: 11.1.2
       tailwind-merge:
         specifier: 3.6.0
         version: 3.6.0
       unified:
-        specifier: 'catalog:'
+        specifier: 11.0.5
         version: 11.0.5
       unist-util-visit:
-        specifier: 'catalog:'
+        specifier: 5.1.0
         version: 5.1.0
       vike:
         specifier: 0.4.260
@@ -208,10 +178,10 @@ importers:
         specifier: 6.1.38
         version: 6.1.38(@tanstack/vue-query@5.101.4(vue@3.5.41(typescript@6.0.3)))(vue@3.5.41(typescript@6.0.3))
       '@types/hast':
-        specifier: 'catalog:'
+        specifier: 3.0.5
         version: 3.0.5
       '@types/mdast':
-        specifier: 'catalog:'
+        specifier: 4.0.4
         version: 4.0.4
       '@types/node':
         specifier: 24.13.3
