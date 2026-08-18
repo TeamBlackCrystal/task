@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -15,7 +17,9 @@ use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use entity::project_members::ProjectRole;
-use entity::{project_members, projects, scopes::Scope, task_watchers, tasks, users};
+use entity::{
+    project_members, projects, scopes::Scope, task_watchers, tasks, tenant_members, tenants, users,
+};
 use payload::project_members::*;
 
 async fn get_project_in_tenant(
@@ -84,20 +88,32 @@ async fn would_drop_last_admin(
         .into_tuple()
         .all(&state.db)
         .await?;
-    let mut target_is_active_admin = false;
-    let mut remaining = 0u64;
-    for user_id in admin_ids {
-        if !is_tenant_owner(&state.db, tenant_id, user_id).await?
-            && !is_tenant_member(&state.db, tenant_id, user_id).await?
-        {
-            continue;
-        }
-        if user_id == target_user_id {
-            target_is_active_admin = true;
-        } else {
-            remaining += 1;
-        }
+    if admin_ids.is_empty() {
+        return Ok(false);
     }
+
+    // 在籍確認は 1 人ずつ引かずまとめて引く（Admin の人数分クエリを出さない）
+    let owner_id = tenants::Entity::find_by_id(tenant_id)
+        .one(&state.db)
+        .await?
+        .map(|t| t.owner_id);
+    let member_ids: HashSet<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.is_in(admin_ids.clone()))
+        .select_only()
+        .column(tenant_members::Column::UserId)
+        .into_tuple::<Uuid>()
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+
+    let active = |user_id: Uuid| owner_id == Some(user_id) || member_ids.contains(&user_id);
+    let target_is_active_admin = admin_ids.contains(&target_user_id) && active(target_user_id);
+    let remaining = admin_ids
+        .iter()
+        .filter(|id| **id != target_user_id && active(**id))
+        .count();
     Ok(target_is_active_admin && remaining == 0)
 }
 
