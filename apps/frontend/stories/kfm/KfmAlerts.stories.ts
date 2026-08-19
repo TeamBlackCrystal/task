@@ -3,8 +3,11 @@ import { expect } from 'storybook/test';
 import allFiveHtml from '@/lib/kfm-story-fixtures/rendered/alerts-all-five.html?raw';
 import hardBreakHtml from '@/lib/kfm-story-fixtures/rendered/alerts-hard-break-marker.html?raw';
 import unknownTypeHtml from '@/lib/kfm-story-fixtures/rendered/alerts-unknown-type.html?raw';
-// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
+// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import。
+// 本番消費側は alerts / GFM の両サイドカーを import するため story も両方揃える
+// (片方だけだと UnknownType の素の blockquote 等が本番と違う絵で baseline になる)
 import '@/lib/remark-koyori-alerts/style.css';
+import '@/lib/remark-gfm/style.css';
 // 器は本番と同じ .kfm-content (alerts CSS は .kfm-alert を直接指すため器 scope 不要だが、
 // story の器 = 本番の器 という形を崩さない。単一ソース = content-class.ts)
 import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
@@ -18,6 +21,43 @@ import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 type KfmStoryArgs = { html: string };
 
 const ALERT_TYPES = ['note', 'tip', 'important', 'warning', 'caution'] as const;
+
+// アクセント色 (縦線・タイトル) の期待値 = style.css の実色。CSS 変更でここが落ちるのは
+// 意図した関門 (絵が変わる変更を play にも触らせる)。値は getComputedStyle の rgb 表記
+const ALERT_ACCENTS: Record<(typeof ALERT_TYPES)[number], string> = {
+  note: 'rgb(9, 105, 218)', // #0969da
+  tip: 'rgb(26, 127, 55)', // #1a7f37
+  important: 'rgb(130, 80, 223)', // #8250df
+  warning: 'rgb(154, 103, 0)', // #9a6700
+  caution: 'rgb(207, 34, 46)', // #cf222e
+};
+
+// .dark 上書き (GitHub ダークパレット) の期待値
+const ALERT_ACCENTS_DARK: Record<(typeof ALERT_TYPES)[number], string> = {
+  note: 'rgb(68, 147, 248)', // #4493f8
+  tip: 'rgb(63, 185, 80)', // #3fb950
+  important: 'rgb(171, 125, 248)', // #ab7df8
+  warning: 'rgb(210, 153, 34)', // #d29922
+  caution: 'rgb(248, 81, 73)', // #f85149
+};
+
+/** 5 種の callout に種別アクセント (縦線・タイトル色・アイコン) が実際に当たっていること */
+const expectAlertAccents = async (
+  canvasElement: HTMLElement,
+  accents: Record<(typeof ALERT_TYPES)[number], string>,
+) => {
+  for (const type of ALERT_TYPES) {
+    const alert = canvasElement.querySelector(`.kfm-alert--${type}`);
+    await expect(alert).not.toBeNull();
+    await expect(alert ? getComputedStyle(alert).borderLeftColor : '').toBe(accents[type]);
+    const title = alert?.querySelector('.kfm-alert__title');
+    await expect(title).not.toBeNull();
+    await expect(title ? getComputedStyle(title).color : '').toBe(accents[type]);
+    // アイコンの実体 (mask 塗りの ::before)。mask が剥がれると色付き矩形かアイコン無しになる
+    const before = title ? getComputedStyle(title, '::before') : null;
+    await expect(before?.maskImage ?? 'none').not.toBe('none');
+  }
+};
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
@@ -47,15 +87,15 @@ export const AllFive: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: 5 種の callout のどれかが blockquote に退化する・アクセント色/アイコンが消えると絵が変わる (プラグイン変換か sanitize の class 許可の変化)。',
+          '壊れたら: 5 種の callout のどれかが blockquote に退化する・アクセント色/アイコンが消えると絵が変わる (プラグイン変換か sanitize の class 許可の変化。play で class と computed アクセントを固定)。',
       },
     },
   },
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelectorAll('.kfm-alert')).toHaveLength(5);
-    for (const type of ALERT_TYPES) {
-      await expect(canvasElement.querySelector(`.kfm-alert--${type}`)).not.toBeNull();
-    }
+    // class の存在だけでは「CSS サイドカー欠落で全部素の文になる」絵の変化を見逃す。
+    // 種別アクセントの実効まで computed で固定する
+    await expectAlertAccents(canvasElement, ALERT_ACCENTS);
   },
 };
 
@@ -75,6 +115,9 @@ export const AllFiveDark: Story = {
     await expect(canvasElement.querySelectorAll('.kfm-alert')).toHaveLength(5);
     // ダーク切替の実体 (.dark ancestor) が絵の前提として存在していること
     await expect(canvasElement.querySelector('.dark .kfm-alert')).not.toBeNull();
+    // .dark 上書きの実効。ライト色のままダーク地に沈む再発 (yupix 殿指摘 4 件目) を
+    // ダークパレット実色の computed で固定する
+    await expectAlertAccents(canvasElement, ALERT_ACCENTS_DARK);
   },
 };
 
@@ -103,12 +146,17 @@ export const UnknownType: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: [!HINT] が callout の絵になったら未知型フォールバックの崩れ (GitHub 互換の境界仕様違反)。',
+          '壊れたら: [!HINT] が callout の絵になったら未知型フォールバックの崩れ (GitHub 互換の境界仕様違反)。素の blockquote の縦線 (GFM サイドカー) が消えても絵が変わる。',
       },
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelector('blockquote')).not.toBeNull();
+    const quote = canvasElement.querySelector('blockquote');
+    await expect(quote).not.toBeNull();
     await expect(canvasElement.querySelector('.kfm-alert')).toBeNull();
+    // 「素の blockquote の絵」の実体 = GFM サイドカーの縦線 (本番器と同じ CSS 条件)
+    const style = quote ? getComputedStyle(quote) : null;
+    await expect(style?.borderLeftWidth).toBe('4px');
+    await expect(style?.borderLeftStyle).toBe('solid');
   },
 };
