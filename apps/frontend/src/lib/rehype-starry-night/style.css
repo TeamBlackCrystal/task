@@ -6,3 +6,49 @@
  * "./style/*.css") に合わせて拡張子なしで書く。
  */
 @import '@wooorm/starry-night/style/both';
+
+/*
+ * .dark ブリッジ (アプリの class 戦略ダークへの追従)。
+ * both.css の dark パレットは prefers-color-scheme (OS 設定) でしか発火しないが、
+ * 本アプリのダークは tailwind.css の .dark ancestor class 戦略 (@custom-variant dark)。
+ * このままでは .dark 配下でもコードがライト配色のまま沈む——alerts が cmd_668 で
+ * 踏んだ「CSS ライト固定」と同型。alerts と同じ前例 (.dark で実値上書き・理由明記) に
+ * 倣い、both.css の @media dark ブロックと同じ変数値を .dark 配下へ複写する。
+ * 値の出典: @wooorm/starry-night@3.10.0 style/both.css (upstream 更新時は同期が必要)。
+ * 変数は継承ゆえ、:root (media) より対象に近い .dark 祖先の宣言が常に勝つ。
+ * 残る継ぎ目: OS ダーク × アプリライトでは media 側が発火しコードのみ暗転する
+ * (アプリに OS 連動が無い現状の upstream 挙動)。テーマ制御層 (Phase 2) で
+ * アプリ側にテーマ所有権を一元化する際に解消する。
+ */
+.dark {
+  --color-prettylights-syntax-brackethighlighter-angle: #9198a1;
+  --color-prettylights-syntax-brackethighlighter-unmatched: #f85149;
+  --color-prettylights-syntax-carriage-return-bg: #b62324;
+  --color-prettylights-syntax-carriage-return-text: #f0f6fc;
+  --color-prettylights-syntax-comment: #9198a1;
+  --color-prettylights-syntax-constant: #79c0ff;
+  --color-prettylights-syntax-constant-other-reference-link: #a5d6ff;
+  --color-prettylights-syntax-entity: #d2a8ff;
+  --color-prettylights-syntax-entity-tag: #7ee787;
+  --color-prettylights-syntax-invalid-illegal-bg: #8e1519;
+  --color-prettylights-syntax-invalid-illegal-text: #f0f6fc;
+  --color-prettylights-syntax-keyword: #ff7b72;
+  --color-prettylights-syntax-markup-bold: #f0f6fc;
+  --color-prettylights-syntax-markup-changed-bg: #5a1e02;
+  --color-prettylights-syntax-markup-changed-text: #ffdfb6;
+  --color-prettylights-syntax-markup-deleted-bg: #67060c;
+  --color-prettylights-syntax-markup-deleted-text: #ffdcd7;
+  --color-prettylights-syntax-markup-heading: #1f6feb;
+  --color-prettylights-syntax-markup-ignored-bg: #1158c7;
+  --color-prettylights-syntax-markup-ignored-text: #f0f6fc;
+  --color-prettylights-syntax-markup-inserted-bg: #033a16;
+  --color-prettylights-syntax-markup-inserted-text: #aff5b4;
+  --color-prettylights-syntax-markup-italic: #f0f6fc;
+  --color-prettylights-syntax-markup-list: #f2cc60;
+  --color-prettylights-syntax-meta-diff-range: #d2a8ff;
+  --color-prettylights-syntax-storage-modifier-import: #f0f6fc;
+  --color-prettylights-syntax-string: #a5d6ff;
+  --color-prettylights-syntax-string-regexp: #7ee787;
+  --color-prettylights-syntax-sublimelinter-gutter-mark: #3d444d;
+  --color-prettylights-syntax-variable: #ffa657;
+}
