@@ -116,8 +116,30 @@ const sampleTaskDetail = {
     { role: 'assignee', user: mockUsers.alpha },
     { role: 'assignee', user: mockUsers.beta },
   ],
+  labels: [
+    {
+      id: 'label-bug',
+      name: 'bug',
+      description: '',
+      color: '#e11d48',
+      icon_url: null,
+      project_id: 'proj-eng',
+    },
+  ],
   custom_field_values: [],
 };
+
+const sampleLabels = [
+  ...sampleTaskDetail.labels,
+  {
+    id: 'label-feature',
+    name: 'feature',
+    description: '',
+    color: '#3b82f6',
+    icon_url: null,
+    project_id: 'proj-eng',
+  },
+];
 
 type MockOptions = {
   task?: typeof sampleTaskDetail | null;
@@ -150,6 +172,10 @@ function applyPutBody(
   if (typeof body.title === 'string') next.title = body.title;
   if (typeof body.status_id === 'string') next.status_id = body.status_id;
 
+  if (Array.isArray(body.label_ids)) {
+    next.labels = sampleLabels.filter((label) => (body.label_ids as string[]).includes(label.id));
+  }
+
   return next;
 }
 
@@ -170,16 +196,11 @@ function createMockFetch(overrides: MockOptions = {}) {
     if (overrides.hang) return new Promise(() => {});
 
     const method = typeof req === 'string' ? 'GET' : req.method;
-    if (
-      url.includes('/v1/tenants/') &&
-      url.includes('/projects') &&
-      !url.includes('/tasks') &&
-      !url.includes('/statuses')
-    ) {
-      return jsonResponse(sampleProjects);
-    }
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
+    }
+    if (url.includes('/labels')) {
+      return jsonResponse(sampleLabels);
     }
     if (method === 'PUT' && url.includes('/tasks/')) {
       if (overrides.rejectPut) {
@@ -203,6 +224,14 @@ function createMockFetch(overrides: MockOptions = {}) {
         return jsonResponse({ message: 'not-found' }, 404);
       }
       return jsonResponse(overrides.task ?? mutableTaskDetail);
+    }
+    // tasks 一覧はこのストーリーでは未使用。projects の分岐に吸われないようここで受ける
+    if (url.includes('/tasks')) {
+      return jsonResponse({});
+    }
+    // 残ったプロジェクト系だけを最後に受ける
+    if (url.includes('/v1/tenants/') && url.includes('/projects')) {
+      return jsonResponse(sampleProjects);
     }
     return jsonResponse({});
   });

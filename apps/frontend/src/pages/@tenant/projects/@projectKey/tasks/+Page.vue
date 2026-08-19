@@ -33,6 +33,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -51,20 +53,20 @@ import { useResolvedTenantId } from '@/composables/useResolvedTenantId';
 import { fetchClient, taskSearchQueryOptions } from '@/lib/api-vue-query';
 import { formatDeadline, taskDetailHref, taskSeqKey } from '@/lib/task-display';
 import type { components } from '@/generated/api';
+import {
+  buildTasksListQueryParams,
+  taskListPlaceholderData,
+  useTaskLabelFilter,
+  watchAvailableTaskLabels,
+} from './task-list-label-filter';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
+const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
 const TASKS_PAGE_SIZE = 20;
 const SEARCH_PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
-
-type TasksListQueryKeyParams = {
-  params?: {
-    path?: { tenant_id?: string; project_id?: string | null };
-    query?: { limit?: number; offset?: number };
-  };
-};
 
 type TaskSearchQueryKeyParams = {
   params?: {
@@ -218,31 +220,31 @@ watch(projectKey, () => {
   pagination.value = { ...pagination.value, pageIndex: 0 };
 });
 
+// ---- ラベルフィルタ ----
+// null は「すべて」。切り替え時は先頭ページへ戻す
+const { selectedLabelId } = useTaskLabelFilter(pagination, projectKey);
+
 // ---- クエリ②: タスク一覧 ----
 const tasksQuery = useQuery({
   queryKey: computed(() => [
     'get',
     LIST_TASKS_PATH,
-    {
-      params: {
-        path: { tenant_id: tenantId.value!, project_id: projectId.value! },
-        query: {
-          limit: pagination.value.pageSize,
-          offset: pagination.value.pageIndex * pagination.value.pageSize,
-        },
-      },
-    },
+    buildTasksListQueryParams(
+      tenantId.value!,
+      projectId.value!,
+      pagination.value,
+      selectedLabelId.value,
+    ),
   ]),
   queryFn: async ({ signal }) => {
     const { data, error } = await fetchClient.GET(LIST_TASKS_PATH, {
       // query パラメータは openapi-typescript 7.13.0 が正しく operation レベルに生成する
-      params: {
-        path: { tenant_id: tenantId.value!, project_id: projectId.value! },
-        query: {
-          limit: pagination.value.pageSize,
-          offset: pagination.value.pageIndex * pagination.value.pageSize,
-        },
-      },
+      ...buildTasksListQueryParams(
+        tenantId.value!,
+        projectId.value!,
+        pagination.value,
+        selectedLabelId.value,
+      ),
       signal,
     });
     if (error) throw error;
@@ -250,12 +252,13 @@ const tasksQuery = useQuery({
   },
   enabled: computed(() => !!tenantId.value && !!projectId.value),
   placeholderData: (previousData, previousQuery) => {
-    const prevParams = previousQuery?.queryKey[2] as TasksListQueryKeyParams | undefined;
-    const prevProjectId = prevParams?.params?.path?.project_id;
-    if (prevProjectId && projectId.value && prevProjectId === projectId.value) {
-      return keepPreviousData(previousData);
-    }
-    return undefined;
+    // ラベルフィルタが変わったときは旧条件のデータを見せない（ページング時のみ維持）
+    return taskListPlaceholderData(
+      previousData,
+      previousQuery,
+      projectId.value,
+      selectedLabelId.value,
+    );
   },
 });
 
@@ -279,6 +282,30 @@ const statusesQuery = useQuery({
   },
   enabled: computed(() => !!tenantId.value && !!projectId.value),
 });
+
+// ---- クエリ④: ラベル一覧（フィルタ用） ----
+const labelsQuery = useQuery({
+  queryKey: computed(() => [
+    'get',
+    LIST_LABELS_PATH,
+    { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
+  ]),
+  queryFn: async ({ signal }) => {
+    const { data, error } = await fetchClient.GET(LIST_LABELS_PATH, {
+      params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
+      signal,
+    });
+    if (error) throw error;
+    return data;
+  },
+  enabled: computed(() => !!tenantId.value && !!projectId.value),
+});
+
+const projectLabels = computed(() => labelsQuery.data.value ?? []);
+watchAvailableTaskLabels(selectedLabelId, projectLabels);
+const selectedLabelName = computed(
+  () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
+);
 
 /** status_id → { name, color } 解決用 Map */
 const statusMap = computed(() => {
@@ -632,6 +659,54 @@ const table = useVueTable({
             <Button size="sm" class="ml-auto h-8 text-xs" @click="isCreateDialogOpen = true">
               新規タスク
             </Button>
+            <!-- ラベル取得失敗はタスク一覧をブロックせず、ツールバー内で再試行を出す -->
+            <div
+              v-if="!isSearchActive && labelsQuery.isError.value && !projectLabels.length"
+              class="flex items-center gap-1.5 text-xs text-destructive"
+            >
+              <span>ラベルの取得に失敗しました</span>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs"
+                @click="labelsQuery.refetch()"
+              >
+                再試行
+              </Button>
+            </div>
+            <DropdownMenu v-if="!isSearchActive && projectLabels.length">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-8 text-xs"
+                  :class="selectedLabelId ? 'border-primary text-primary' : ''"
+                >
+                  {{ selectedLabelName ?? 'ラベル' }} <PhCaretDown class="ml-1 size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  :model-value="selectedLabelId ?? ''"
+                  @update:model-value="(v) => (selectedLabelId = v ? String(v) : null)"
+                >
+                  <DropdownMenuRadioItem class="text-sm" value="">すべて</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem
+                    v-for="label in projectLabels"
+                    :key="label.id"
+                    class="text-sm"
+                    :value="label.id"
+                  >
+                    <span
+                      class="mr-1.5 inline-block size-2.5 shrink-0 rounded-full"
+                      :style="{ backgroundColor: label.color }"
+                      aria-hidden="true"
+                    />
+                    {{ label.name }}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <DropdownMenu v-if="!isSearchActive">
               <DropdownMenuTrigger as-child>
                 <Button variant="outline" size="sm" class="h-8 text-xs">

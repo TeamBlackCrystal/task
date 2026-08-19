@@ -362,6 +362,12 @@ pub async fn list_tasks(
             vec![sea_orm::Value::from(uid)],
         ));
     }
+    if let Some(lid) = q.label_id {
+        query = query.filter(Expr::cust_with_values(
+            "EXISTS (SELECT 1 FROM task_labels WHERE task_labels.task_id = tasks.id AND task_labels.label_id = $1)",
+            vec![sea_orm::Value::from(lid)],
+        ));
+    }
 
     query = match q.sort.as_deref().unwrap_or("created_at_desc") {
         "priority_asc" => query.order_by_asc(tasks::Column::Priority),
@@ -713,6 +719,45 @@ pub async fn update_task(
         active.is_archived = Set(v);
     }
     active.updated_at = Set(chrono::Utc::now().into());
+
+    if let Some(ref label_ids) = payload.label_ids {
+        // task_labels が空でも同じタスクへのラベル置換を直列化するため、
+        // 関連行ではなく必ず存在する親タスク行を共通のロック対象にする。
+        // 一括更新もラベル操作前の tasks UPDATE で同じ行ロックを取る。
+        tasks::Entity::find_by_id(task_id)
+            .filter(tasks::Column::ProjectId.eq(project_id))
+            .filter(tasks::Column::DeletedAt.is_null())
+            .lock(LockType::Update)
+            .one(&txn)
+            .await?
+            .ok_or(AppError::NotFound)?;
+
+        let mut unique = label_ids.clone();
+        unique.sort();
+        unique.dedup();
+        if !unique.is_empty() {
+            let in_project = labels::Entity::find()
+                .filter(labels::Column::Id.is_in(unique.clone()))
+                .filter(labels::Column::ProjectId.eq(project_id))
+                .all(&txn)
+                .await?;
+            if in_project.len() != unique.len() {
+                return Err(AppError::BadRequest);
+            }
+        }
+        task_labels::Entity::delete_many()
+            .filter(task_labels::Column::TaskId.eq(task_id))
+            .exec(&txn)
+            .await?;
+        for lid in unique {
+            task_labels::ActiveModel {
+                task_id: Set(task_id),
+                label_id: Set(lid),
+            }
+            .insert(&txn)
+            .await?;
+        }
+    }
 
     if parent_changes {
         let fresh = tasks::Entity::find_by_id(task_id)

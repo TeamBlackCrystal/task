@@ -5,6 +5,7 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::custom_fields::{CustomFieldValueInput, TaskCustomFieldValueResponse};
+use crate::labels::LabelResponse;
 use crate::users::UserSummary;
 use entity::{task_assignees, task_relations, tasks};
 
@@ -39,6 +40,7 @@ pub struct TaskResponse {
     #[schema(nullable)]
     pub created_by: Option<UserSummary>,
     pub assignees: Vec<TaskAssigneeSummary>,
+    pub labels: Vec<LabelResponse>,
     #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = "date-time")]
@@ -60,6 +62,7 @@ impl TaskResponse {
         model: tasks::Model,
         created_by: Option<UserSummary>,
         assignees: Vec<TaskAssigneeSummary>,
+        labels: Vec<LabelResponse>,
     ) -> Self {
         Self {
             id: model.id,
@@ -79,6 +82,7 @@ impl TaskResponse {
             is_archived: model.is_archived,
             created_by,
             assignees,
+            labels,
             created_at: model.created_at.with_timezone(&Utc),
             updated_at: model.updated_at.with_timezone(&Utc),
             completed_at: model.completed_at.map(|dt| dt.with_timezone(&Utc)),
@@ -160,6 +164,8 @@ pub struct UpdateTaskRequest {
     #[serde(default)]
     pub clear_estimated_minutes: bool,
     pub is_archived: Option<bool>,
+    /// タスクのラベルをこの ID 集合で置き換える（`Some(vec![])` で全解除）。None は変更なし
+    pub label_ids: Option<Vec<Uuid>>,
     pub custom_field_values: Option<Vec<CustomFieldValueInput>>,
 }
 
@@ -169,6 +175,7 @@ pub struct ListTasksQuery {
     pub status_id: Option<Uuid>,
     pub priority: Option<String>,
     pub assignee_id: Option<Uuid>,
+    pub label_id: Option<Uuid>,
     pub milestone_id: Option<Uuid>,
     pub sprint_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
