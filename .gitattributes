@@ -1,1 +1,47 @@
+# Cargo.lock: keep union merge strategy (pre-existing)
 Cargo.lock merge=union
+apps/backend/Cargo.lock merge=union
+apps/backend/migration/Cargo.lock merge=union
+
+# Default: detect text, normalize line endings to LF on checkout/commit
+* text=auto eol=lf
+
+# Binary assets — explicit -text so renormalize never touches them.
+# Extension catalog from `git ls-files` survey (764 tracked files, 2026-08-20):
+#   rs(238) ts(183) vue(180) md(39) bru(35) yml(27) json(14) sh(13) html(13)
+#   toml(11) yaml(7) mjs(4) mts(4) svg(3) css(3) lock(2) pem(1) …
+# No png/jpg/woff/jar tracked today; rules kept for future adds.
+*.png -text binary
+*.jpg -text binary
+*.jpeg -text binary
+*.gif -text binary
+*.ico -text binary
+*.webp -text binary
+*.avif -text binary
+*.bmp -text binary
+*.tif -text binary
+*.tiff -text binary
+*.woff -text binary
+*.woff2 -text binary
+*.ttf -text binary
+*.otf -text binary
+*.eot -text binary
+*.pdf -text binary
+*.zip -text binary
+*.gz -text binary
+*.bz2 -text binary
+*.xz -text binary
+*.7z -text binary
+*.tar -text binary
+*.jar -text binary
+*.class -text binary
+*.exe -text binary
+*.dll -text binary
+*.so -text binary
+*.dylib -text binary
+*.mp3 -text binary
+*.mp4 -text binary
+*.wav -text binary
+*.ogg -text binary
+*.sqlite -text binary
+*.db -text binary
