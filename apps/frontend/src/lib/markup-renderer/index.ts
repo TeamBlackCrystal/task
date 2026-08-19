@@ -35,6 +35,7 @@
  */
 import { starryNightSanitizeSchema } from '@/lib/rehype-starry-night/schema';
 import { gfmSanitizeSchema, remarkGfm } from '@/lib/remark-gfm';
+import { kfmMermaidSanitizeSchema, remarkKfmMermaid } from '@/lib/remark-kfm-mermaid';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
 import { resolveContentConfig } from './_config';
 import { createRenderer } from './_renderer';
@@ -90,13 +91,20 @@ export const renderDescription = createRenderer({
   profiles: {
     // github profile = 共有 core そのもの (GFM ＋ alerts ＋ 着色 ＋ sanitize ＋ cache ＋ SSR 契約)
     github: {
-      remarkPlugins: [remarkGfm, remarkKoyoriAlerts],
+      // remarkKfmMermaid は remark 層で code(lang=mermaid) を捕まえて hName を据えるため、
+      // rehype 層 (starry-night / 将来の language-* 拡張) は mermaid フェンスを見ない。
+      remarkPlugins: [remarkGfm, remarkKoyoriAlerts, remarkKfmMermaid],
       // GitHub 同様のコードブロック着色。rehype 層 (remark-rehype の後段) に挿す。
       rehypePlugins: [rehypeStarryNight],
     },
     // Phase 2 seam: kfm profile はここへ remark / rehype 層を足す (コアは不変)。
   },
-  sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema, starryNightSanitizeSchema],
+  sanitizeSchemas: [
+    gfmSanitizeSchema,
+    koyoriAlertsSanitizeSchema,
+    starryNightSanitizeSchema,
+    kfmMermaidSanitizeSchema,
+  ],
   contentConfig,
   // config の既定 profile を描画既定へ実際に接続する (contentConfig はキャッシュキー用の
   // 不透明値でしかないため、ここで渡さない限り defaultProfile は描画に効かない)

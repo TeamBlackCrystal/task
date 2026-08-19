@@ -10,15 +10,22 @@
  * ブラウザが upgrade する (Vue 標準挙動)。constructor は factory で遅延させ、
  * HTMLElement が無い環境でモジュール評価が落ちないようにする。
  */
+import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
+import { createKfmMermaidElement } from '../remark-kfm-mermaid/element';
+
 export type KfmCustomElementDefinition = readonly [
   tagName: `kfm-${string}`,
   factory: () => CustomElementConstructor,
 ];
 
-// Phase 2 seam: kfm-animation / kfm-sparkle はこの配列へ追加する (Phase 1 は登録タグ空)。
+// Phase 2 seam: kfm-animation / kfm-sparkle はこの配列へ追加する。
 // タグを足すときは対応プラグインの SanitizeSchema.tags / attrs にも同じタグを宣言し、
 // emit・sanitize・登録の三点を揃えること。
-const KFM_CUSTOM_ELEMENTS: readonly KfmCustomElementDefinition[] = [];
+// ⚠ ここから静的 import してよいのは軽量シェル (element.ts) のみ。重量物 (mermaid 本体等)
+// は要素側の dynamic import に閉じる (+client.ts が本ファイルを同期ロードするため)。
+const KFM_CUSTOM_ELEMENTS: readonly KfmCustomElementDefinition[] = [
+  [KFM_MERMAID_TAG, createKfmMermaidElement],
+];
 
 export type RegisterKfmCustomElementsResult = {
   /** true = customElements 不在 (SSR / Node) につき何もしなかった */
