@@ -5,6 +5,9 @@ import hardBreakHtml from '@/lib/kfm-story-fixtures/rendered/alerts-hard-break-m
 import unknownTypeHtml from '@/lib/kfm-story-fixtures/rendered/alerts-unknown-type.html?raw';
 // CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
 import '@/lib/remark-koyori-alerts/style.css';
+// 器は本番と同じ .kfm-content (alerts CSS は .kfm-alert を直接指すため器 scope 不要だが、
+// story の器 = 本番の器 という形を崩さない。単一ソース = content-class.ts)
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 
 /*
  * KFM GitHub alerts の story 群。
@@ -18,15 +21,14 @@ const ALERT_TYPES = ['note', 'tip', 'important', 'warning', 'caution'] as const;
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template: '<div class="kfm-story" v-html="args.html" />',
+  template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
 // アプリ本体と同じ .dark ancestor class 方式 (tailwind.css の @custom-variant dark)。
 // 背景/文字色もアプリのテーマトークンで塗って実際のダーク画面と同じ地の上で撮る。
 const kfmDarkRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template:
-    '<div class="dark bg-background text-foreground p-4"><div class="kfm-story" v-html="args.html" /></div>',
+  template: `<div class="dark bg-background text-foreground p-4"><div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div>`,
 });
 
 const meta = {

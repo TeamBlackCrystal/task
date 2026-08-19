@@ -1,58 +1,69 @@
 /*
  * remark-gfm サイドカー CSS。
  * Tailwind preflight が list-style / blockquote 縦線 / リンク装飾を消すため、
- * GFM 出力 (ul/ol/blockquote/a/del) に当てる。消費側 (+Layout.vue 等) で明示 import
- * する (SSR 副作用回避のためライブラリ側では import しない)。
+ * GFM 出力 (ul/ol/blockquote/a/del) に当てる。
+ *
+ * 消費契約 — import だけでは一行も当たらない:
+ *   1. 消費側 (+Layout.vue 等) で本ファイルを明示 import する
+ *      (SSR 副作用回避のためライブラリ側では import しない)
+ *   2. renderDescription の HTML を v-html する器に class="kfm-content" を付ける
+ *      (単一ソース = ./content-class.ts の KFM_CONTENT_CLASS)
+ *
+ * alert サイドカー (remark-koyori-alerts/style.css) と前提が違う理由:
+ * alerts はレンダラ自身が名前空間クラス (.kfm-alert 等) を emit し CSS がそれを
+ * 直接指すため import だけで当たる。GFM 出力には掴む class が無く、bare 要素へ
+ * 当てるとアプリ全体へ漏れるため、全ルールを .kfm-content 子孫限定で書く。
+ * この scope 一致は kfm-gfm-css-contract.test.ts が機構として強制する。
  */
 
-.kfm-story ul,
-.kfm-story ol {
+.kfm-content ul,
+.kfm-content ol {
   margin: 0.5rem 0;
   padding-left: 2em;
 }
 
-.kfm-story ul {
+.kfm-content ul {
   list-style-type: disc;
 }
 
-.kfm-story ol {
+.kfm-content ol {
   list-style-type: decimal;
 }
 
-.kfm-story ul ul {
+.kfm-content ul ul {
   list-style-type: circle;
 }
 
-.kfm-story ul ul ul {
+.kfm-content ul ul ul {
   list-style-type: square;
 }
 
 /* タスクリストは checkbox がマーカー役のため bullet を消す */
-.kfm-story ul.contains-task-list {
+.kfm-content ul.contains-task-list {
   list-style: none;
   padding-left: 0;
 }
 
-.kfm-story .task-list-item {
+.kfm-content .task-list-item {
   list-style: none;
 }
 
-.kfm-story blockquote {
+.kfm-content blockquote {
   margin: 0.5rem 0;
   padding: 0 1em;
   border-left: 0.25rem solid var(--border, #d0d7de);
   color: inherit;
 }
 
-.kfm-story a {
+.kfm-content a {
   color: #0969da;
   text-decoration: underline;
 }
 
-.kfm-story del {
+.kfm-content del {
   text-decoration: line-through;
 }
 
-.dark .kfm-story a {
+.dark .kfm-content a {
   color: #4493f8;
 }

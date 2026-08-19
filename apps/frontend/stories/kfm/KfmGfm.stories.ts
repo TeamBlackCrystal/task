@@ -7,7 +7,10 @@ import strikeAutolinkHtml from '@/lib/kfm-story-fixtures/rendered/gfm-strike-aut
 import tableAlignmentHtml from '@/lib/kfm-story-fixtures/rendered/gfm-table-alignment.html?raw';
 import tableOverflowHtml from '@/lib/kfm-story-fixtures/rendered/gfm-table-overflow.html?raw';
 import taskListHtml from '@/lib/kfm-story-fixtures/rendered/gfm-task-list.html?raw';
-// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
+// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import。
+// GFM CSS は .kfm-content 子孫限定ゆえ、器にも同じクラスを付けて初めて当たる
+// (本番消費側と同じ二点契約。単一ソース = content-class.ts)
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 import '@/lib/remark-gfm/style.css';
 
 /*
@@ -22,7 +25,7 @@ type KfmStoryArgs = { html: string };
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template: '<div class="kfm-story" v-html="args.html" />',
+  template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
 const meta = {
@@ -53,7 +56,7 @@ export const TableOverflow: Story = {
   // 横溢れを絵にするため、狭い親 (max-w-md) に閉じ込めて描画する
   render: (args: KfmStoryArgs) => ({
     setup: () => ({ args }),
-    template: '<div class="max-w-md"><div class="kfm-story" v-html="args.html" /></div>',
+    template: `<div class="max-w-md"><div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div>`,
   }),
   parameters: {
     docs: {
