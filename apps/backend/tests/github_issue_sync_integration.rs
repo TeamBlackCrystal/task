@@ -362,11 +362,19 @@ async fn github_issue_sync_suite() {
         active.update(&app.state.db).await.expect("update task");
 
         // 書き戻し要求はハンドラーがタスク更新と同一トランザクションで pending_push に永続化する
+        let updated_at_before = link_for_number(&app, tp.project_id, 1).await.updated_at;
         let marked = mark_pending_push(&app.state.db, task.id)
             .await
             .expect("mark pending");
         assert!(marked, "リンク済みタスクは pending_push が立つ");
-        assert!(link_for_number(&app, tp.project_id, 1).await.pending_push);
+        let marked_link = link_for_number(&app, tp.project_id, 1).await;
+        assert!(marked_link.pending_push);
+        // push_task の条件付き更新は updated_at を版として見る。ここが進まないと
+        // 「読み取った後に立った要求」を消してしまう。
+        assert!(
+            marked_link.updated_at > updated_at_before,
+            "pending_push を立てたら updated_at も進む"
+        );
 
         push_task(&app.state.db, &app.state.http_client, &github, task.id)
             .await

@@ -301,6 +301,11 @@ pub async fn mark_pending_push<C: ConnectionTrait>(
 ) -> Result<bool, sea_orm::DbErr> {
     let result = github_issue_links::Entity::update_many()
         .col_expr(github_issue_links::Column::PendingPush, Expr::value(true))
+        // push_task の条件付き更新が「読み取った後に立った要求」を見分けられるよう版として進める。
+        .col_expr(
+            github_issue_links::Column::UpdatedAt,
+            Expr::value(chrono::Utc::now()),
+        )
         .filter(github_issue_links::Column::TaskId.eq(task_id))
         .exec(db)
         .await?;
@@ -368,7 +373,7 @@ pub async fn push_task(
                     Expr::value(chrono::Utc::now()),
                 )
                 .filter(github_issue_links::Column::Id.eq(link.id))
-                .filter(github_issue_links::Column::UpdatedAt.eq(link.updated_at.clone()))
+                .filter(github_issue_links::Column::UpdatedAt.eq(link.updated_at))
                 .exec(db)
                 .await?;
         }
