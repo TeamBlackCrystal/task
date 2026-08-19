@@ -4756,6 +4756,13 @@ export interface operations {
                     "application/json": components["schemas"]["UserResponse"];
                 };
             };
+            /** @description 入力内容が制約を満たしていません */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description ログインまたはセッションが必要です */
             401: {
                 headers: {

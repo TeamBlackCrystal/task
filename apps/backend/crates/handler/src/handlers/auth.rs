@@ -304,6 +304,7 @@ pub async fn me(
     request_body = UpdateProfileRequest,
     responses(
         (status = 200, description = "更新後のアカウント情報", body = UserResponse),
+        (status = 400, description = "入力内容が制約を満たしていません"),
         SessionAuthErrors,
     )
 )]
