@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRenderer, renderDescription } from '../markup-renderer';
 import type { CreateRendererOptions, KfmProfile } from '../markup-renderer';
+import { createL1Cache } from '../markup-renderer/_cache';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '../remark-koyori-alerts';
 
@@ -146,6 +147,61 @@ describe('renderDescription (GitHub alerts 境界)', () => {
     // マーカー行が黙って消えないこと
     expect(html).toContain('[!NOTE]');
     expect(html).toContain('本文');
+  });
+
+  it('CRLF 本文の [!NOTE] が literal のまま残らず callout 化する', async () => {
+    // GitHub Issue 本文は CRLF が一般的 (#578 GitHub Issue 同期経路)。LF 入力しか
+    // 見ない試験だけでは、行末 \r でマーカー照合が不成立になる退行を検出できない。
+    const html = await renderDescription('> [!NOTE]\r\n> CRLF 本文');
+    expect(html).toContain('kfm-alert--note');
+    expect(html).toContain('CRLF 本文');
+    expect(html).not.toContain('[!NOTE]');
+    expect(html).not.toContain('<blockquote>');
+  });
+});
+
+describe('renderDescription (改行コード不変条件: LF と CRLF は同一 HTML)', () => {
+  // 不変条件: 同じ文書の LF 版と CRLF 版は同一の HTML を produce する。
+  // CRLF 版は LF 版から機械的に導出し、差が改行コードのみであることを構成で保証する。
+  it.each([
+    ['alert (本文複数行)', '> [!NOTE]\n> 一行目\n> 二行目'],
+    ['表', '| a | b |\n| - | - |\n| 1 | 2 |'],
+    ['入れ子リスト', '- 親\n  - 子\n    - 孫\n- 次'],
+    ['コードフェンス', '```ts\nconst x = 1;\nconst y = 2;\n```'],
+    ['脚注', '本文[^1]\n\n[^1]: 脚注内容'],
+  ])('%s: LF 版と CRLF 版は同一 HTML', async (_label, lfSource) => {
+    const crlfSource = lfSource.replaceAll('\n', '\r\n');
+    expect(await renderDescription(crlfSource)).toBe(await renderDescription(lfSource));
+  });
+
+  it('旧 Mac 形式の lone CR も LF 版と同一 HTML (正規化を \\r\\n 限定に狭めると赤)', async () => {
+    // micromark は lone \r も行末として解釈するため、\r\n と同じ「text 値に原文改行が
+    // 残る」穴を持つ。正規化正規表現を /\r\n/ に狭める変更はここで落ちる。
+    const lfSource = '> [!NOTE]\n> 一行目\n> 二行目';
+    expect(await renderDescription(lfSource.replaceAll('\n', '\r'))).toBe(
+      await renderDescription(lfSource),
+    );
+  });
+
+  it('コードフェンス内容は CR 正規化で壊れない (中身が LF で完全に残る)', async () => {
+    const html = await renderDescription('```ts\r\nconst x = 1;\r\nconst y = 2;\r\n```');
+    expect(html).toContain('const x = 1;\nconst y = 2;\n');
+    expect(html).not.toContain('\r');
+  });
+
+  it('LF 版と CRLF 版は同一キャッシュエントリに畳まれる (正規化はキー構築より前)', async () => {
+    // 入口正規化がキャッシュキー構築より後ろへ移動すると、同一文書が改行コード違いで
+    // 別エントリを占有する退行になる。エントリ数で機械検証する。
+    const cache = createL1Cache();
+    const render = createRenderer({
+      profiles: { github: { remarkPlugins: [remarkGfm, remarkKoyoriAlerts] } },
+      sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+      cache,
+    });
+    await render('> [!NOTE]\n> 本文');
+    expect(cache.size).toBe(1);
+    await render('> [!NOTE]\r\n> 本文');
+    expect(cache.size).toBe(1);
   });
 });
 

@@ -149,13 +149,20 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
         `[markup-renderer] scope "${scope}" must match [A-Za-z0-9_-]+ (id / URL fragment safety)`,
       );
     }
+    // 改行を LF へ正規化する (\r\n と lone \r の両方。micromark はどちらも行末として
+    // 解釈するが、text 値には原文の改行がそのまま残る)。正規化しないと (1) 行末 $ anchor
+    // で text 値を照合するプラグイン (alerts の MARKER_RE 等) が CRLF で不成立、
+    // (2) soft break の \r が HTML へ素通りし LF 版と CRLF 版が別 HTML になる。
+    // キー構築より前に行うことで、同一文書の改行コード違いが同一キャッシュエントリへ
+    // 畳まれる (後ろへ動かすと kfm-renderer の改行コード不変条件テストが落ちる)。
+    const normalized = text.replace(/\r\n?/g, '\n');
     const clobberPrefix =
       scope === undefined ? DEFAULT_CLOBBER_PREFIX : `${DEFAULT_CLOBBER_PREFIX}${scope}-`;
     // scope '' は上の検証で throw 済みのため、キーの空文字は「scope なし」と一意に対応する
-    const key = buildCacheKey(fingerprint, profile, scope ?? '', contentConfigJson, text);
+    const key = buildCacheKey(fingerprint, profile, scope ?? '', contentConfigJson, normalized);
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const html = sanitize(String(await getProcessor(profile, clobberPrefix).process(text)));
+    const html = sanitize(String(await getProcessor(profile, clobberPrefix).process(normalized)));
     cache.set(key, html);
     return html;
   };
