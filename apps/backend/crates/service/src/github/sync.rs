@@ -117,7 +117,7 @@ async fn resolve_status<C: ConnectionTrait>(
 ///
 /// - リンク行を行ロックして並行適用を直列化する
 /// - Issue の `updated_at` が最後に適用した時刻以前なら何もしない（古いイベントの巻き戻し防止）
-/// - 直前に同期した内容と同じなら時刻だけ進める
+/// - 直前に同期した内容と同じなら、内容は触らず時刻と版だけ進める
 pub async fn apply_issue(
     db: &DatabaseConnection,
     integration: &github_integrations::Model,
@@ -138,6 +138,9 @@ pub async fn apply_issue(
     if let Some(link) = link {
         if issue.updated_at <= link.github_updated_at.with_timezone(&chrono::Utc) {
             // すでに新しい内容を適用済み。遅延・再送された古いイベントは捨てる。
+            // GitHub の updated_at は秒精度なので、書き戻しと同じ秒に起きた対向編集も
+            // ここで落ちる。受理する側（`<`）に倒すと、今度は書き戻し前の編集を拾って
+            // 巻き戻すため、取りこぼす側に倒している。
             txn.rollback().await?;
             return Ok(());
         }
@@ -395,21 +398,24 @@ pub async fn push_task(
     )
     .await?;
 
-    // 自分が読み取った後に立った pending_push は消さない。条件付き更新に失敗した場合は
-    // pending_push を残し、スイープが最新状態を再度書き戻せるようにする。
-    //
-    // github_updated_at も PATCH 後の時刻へ進める。ここを据え置くと、書き戻し前に
+    // github_updated_at は PATCH 後の時刻へ進める。ここを据え置くと、書き戻し前に
     // GitHub 側で起きた編集の webhook が遅れて届いたときに「新しいイベント」として
     // 受理され、いま書き戻した内容がその古い内容へ巻き戻る。
-    // PATCH のレスポンスが読めなかったときだけ、読み取り時の値のまま据え置く。
+    //
+    // ウォーターマークは後退させない。PATCH のレスポンスが読めなかったときは読み取り時の
+    // 値のまま据え置き（その回だけ上の巻き戻しが起こりうる）、GitHub が古い値を返した
+    // ときも max で弾く。
+    let watermark = link.github_updated_at.with_timezone(&chrono::Utc);
+    let watermark = github_updated_at.map_or(watermark, |pushed| pushed.max(watermark));
+
+    // 自分が読み取った後に立った pending_push は消さない。条件付き更新に失敗した場合は
+    // pending_push を残し、スイープが最新状態を再度書き戻せるようにする。
     github_issue_links::Entity::update_many()
         .col_expr(github_issue_links::Column::SyncedHash, Expr::value(hash))
         .col_expr(github_issue_links::Column::PendingPush, Expr::value(false))
         .col_expr(
             github_issue_links::Column::GithubUpdatedAt,
-            Expr::value(
-                github_updated_at.unwrap_or(link.github_updated_at.with_timezone(&chrono::Utc)),
-            ),
+            Expr::value(watermark),
         )
         .col_expr(
             github_issue_links::Column::UpdatedAt,

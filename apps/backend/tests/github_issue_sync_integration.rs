@@ -89,7 +89,8 @@ async fn mount_mocks(server: &MockServer) {
 
     // GitHub と同じく更新後の Issue を返す。書き戻し側が使うのは updated_at だけ
     // （リンク行のウォーターマークを PATCH 後の時刻へ進めるため）なので、他のフィールドは
-    // どの Issue を PATCH したかによらず固定でよい。
+    // 固定にしている。番号もタイトルも状態も、実際に PATCH した内容とは対応していない。
+    // 書き戻し側が updated_at 以外を見るようになったら、ここも送信内容に合わせること。
     Mock::given(method("PATCH"))
         .and(path_regex(r"^/repos/acme/backend/issues/\d+$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(issue_json(
@@ -421,6 +422,24 @@ async fn github_issue_sync_suite() {
             .await
             .remove(0)
             .updated_at;
+
+        // 自分の PATCH の跳ね返りは updated_at が T_PUSH ちょうどで届く。ウォーターマークが
+        // すでに T_PUSH なので、ハッシュ比較より前に時刻のガード（<=）で捨てられる。
+        apply_issue_event(
+            &app.state.db,
+            tp.project_id,
+            &serde_json::json!({
+                "action": "edited",
+                "issue": issue_json(1, "ログインできない（調査中）", Some("再現手順"), "closed", T_PUSH),
+            }),
+        )
+        .await
+        .expect("apply patch echo");
+        assert_eq!(
+            link_for_number(&app, tp.project_id, 1).await.updated_at,
+            link.updated_at,
+            "書き戻しと同じ時刻のイベントは何も書かずに捨てる"
+        );
 
         let applied = apply_issue_event(
             &app.state.db,
