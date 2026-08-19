@@ -38,3 +38,15 @@ describe('registerKfmCustomElements (🔴 client ガード)', () => {
     expect(result).toEqual({ skipped: false, defined: 0 });
   });
 });
+
+describe('composition root の client 汚染ガード (🔴 バンドル退行の再発機構)', () => {
+  it('root は client registry を再エクスポートしない (再エクスポートを戻すと落ちる)', async () => {
+    // root は import しただけで createRenderer が副作用で走る。root から
+    // registerKfmCustomElements を再エクスポートすると、client entry が root 経由で
+    // import する退行 (+205 kB 実測) の再発経路になるため、直接経路
+    // (@/lib/markup-renderer/_client-registry) だけを残す。NOTE コメントは機構では
+    // ないので、この試験が機構 (再追加した瞬間に赤くなる関門) である。
+    const root = await import('../markup-renderer');
+    expect(Object.keys(root)).not.toContain('registerKfmCustomElements');
+  });
+});

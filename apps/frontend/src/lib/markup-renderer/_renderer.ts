@@ -35,22 +35,43 @@ export type CreateRendererOptions = {
   readonly sanitizeSchemas: readonly SanitizeSchema[];
   /** 解決済み content-scope config。キャッシュキーに全文が焼き込まれる */
   readonly contentConfig?: unknown;
+  /**
+   * profile 未指定時の既定。composition root が contentConfig.defaultProfile を渡す
+   * (ここへ渡さないと config の既定が描画に反映されない)。省略時 github。
+   */
+  readonly defaultProfile?: KfmProfile;
   /** テスト用 DI: L1 cache の差し替え (既定は createL1Cache) */
   readonly cache?: LRUCache<string, string>;
 };
 
 export type RenderOptions = {
-  /** 既定 = github (最も忠実・装飾なし。装飾は opt-in) */
+  /** 既定 = createRenderer の defaultProfile (それも無ければ github) */
   readonly profile?: KfmProfile;
+  /**
+   * 脚注 id の衝突回避 scope。同一ページへ複数の KFM 断片 (タスク本文＋コメント等) を
+   * 並べる場合、断片ごとに決定的な scope (例: `comment-42`) を渡す。remark-rehype の
+   * clobberPrefix へ `user-content-<scope>-` として反映され、キャッシュキーにも載る。
+   * random ではなく呼び出し側の決定的識別子である理由: 同一入力→同一 HTML を保たないと
+   * L1 キャッシュ前提 (SSR/CSR 同一性) が崩れるため。[A-Za-z0-9_-]+ 以外は throw。
+   */
+  readonly scope?: string;
 };
 
 export type RenderDescription = (text: string, options?: RenderOptions) => Promise<string>;
 
-function buildProcessor(definition: ProfileDefinition) {
+// remark-rehype 既定の clobberPrefix (GitHub 互換)。scope 付き描画は
+// `user-content-<scope>-` へ差し替えて脚注 id (fn-* / fnref-*) の衝突を避ける。
+const DEFAULT_CLOBBER_PREFIX = 'user-content-';
+
+// scope は id 属性と URL fragment (#...) にそのまま入るため、安全な字種に限定して
+// fail-closed で弾く (HTML 構造や href を scope 経由で汚染させない)。
+const SCOPE_RE = /^[A-Za-z0-9_-]+$/;
+
+function buildProcessor(definition: ProfileDefinition, clobberPrefix: string) {
   return unified()
     .use(remarkParse)
     .use(definition.remarkPlugins)
-    .use(remarkRehype)
+    .use(remarkRehype, { clobberPrefix })
     .use(rehypeStringify)
     .freeze();
 }
@@ -97,24 +118,44 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
   const contentConfigJson = JSON.stringify(options.contentConfig ?? null);
   const processorCache = new Map<KfmProfile, BuiltProcessor>();
 
-  function getProcessor(profile: KfmProfile): BuiltProcessor {
-    const memoized = processorCache.get(profile);
-    if (memoized) return memoized;
+  function getDefinition(profile: KfmProfile): ProfileDefinition {
     const definition = options.profiles[profile];
     if (!definition) {
       throw new Error(`[markup-renderer] profile "${profile}" is not configured`);
     }
-    const processor = buildProcessor(definition);
+    return definition;
+  }
+
+  function getProcessor(profile: KfmProfile, clobberPrefix: string): BuiltProcessor {
+    // memoize は既定 prefix のみ。scope の値空間は非有界 (comment id 等) で、singleton
+    // の SSR プロセスに scope ごとの processor を溜めるとメモリが漏れる。scope 付きは
+    // 都度構築する — 構築はプラグイン合成のみで、cache miss 時に必ず走る
+    // parse＋sanitize に比べ無視できる。
+    if (clobberPrefix !== DEFAULT_CLOBBER_PREFIX) {
+      return buildProcessor(getDefinition(profile), clobberPrefix);
+    }
+    const memoized = processorCache.get(profile);
+    if (memoized) return memoized;
+    const processor = buildProcessor(getDefinition(profile), DEFAULT_CLOBBER_PREFIX);
     processorCache.set(profile, processor);
     return processor;
   }
 
   return async function renderDescription(text, renderOptions = {}) {
-    const profile = renderOptions.profile ?? 'github';
-    const key = buildCacheKey(fingerprint, profile, contentConfigJson, text);
+    const profile = renderOptions.profile ?? options.defaultProfile ?? 'github';
+    const scope = renderOptions.scope;
+    if (scope !== undefined && !SCOPE_RE.test(scope)) {
+      throw new Error(
+        `[markup-renderer] scope "${scope}" must match [A-Za-z0-9_-]+ (id / URL fragment safety)`,
+      );
+    }
+    const clobberPrefix =
+      scope === undefined ? DEFAULT_CLOBBER_PREFIX : `${DEFAULT_CLOBBER_PREFIX}${scope}-`;
+    // scope '' は上の検証で throw 済みのため、キーの空文字は「scope なし」と一意に対応する
+    const key = buildCacheKey(fingerprint, profile, scope ?? '', contentConfigJson, text);
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const html = sanitize(String(await getProcessor(profile).process(text)));
+    const html = sanitize(String(await getProcessor(profile, clobberPrefix).process(text)));
     cache.set(key, html);
     return html;
   };

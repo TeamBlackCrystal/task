@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRenderer, renderDescription } from '../markup-renderer';
-import type { KfmProfile } from '../markup-renderer';
+import type { CreateRendererOptions, KfmProfile } from '../markup-renderer';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '../remark-koyori-alerts';
 
@@ -48,6 +48,17 @@ describe('renderDescription (GFM 基本)', () => {
     const html = await renderDescription('```ts\nconst x = 1;\n```');
     expect(html).toContain('language-ts');
   });
+
+  // yupix 実測 5 例の回帰固定: language-* パターンから大文字・+・# のいずれかを
+  // 落とす変更はここで赤くなる (starry-night は language-* class から言語を知るため、
+  // class が剥がれると C++/C#/大文字表記の言語は着色されない)。
+  it.each(['C++', 'c#', 'TS', 'JSON', 'objective-c'])(
+    '```%s の language-* class が sanitize を通る',
+    async (lang) => {
+      const html = await renderDescription(`\`\`\`${lang}\nx\n\`\`\``);
+      expect(html).toContain(`language-${lang}`);
+    },
+  );
 });
 
 describe('renderDescription (GitHub alerts 境界)', () => {
@@ -115,6 +126,27 @@ describe('renderDescription (GitHub alerts 境界)', () => {
     expect(html).toContain('<blockquote>');
     expect(html).toContain('[!TIP]');
   });
+
+  it('素の blockquote 内の > > [!NOTE] も alert 化しない (ネスト不可の対側)', async () => {
+    // 対の試験: 上の alert-in-alert (SKIP 側) だけでは「alert でない blockquote の内側」
+    // が塞がっていることを保証しない。両側を必ず残すこと。
+    const html = await renderDescription('> outer\n>\n> > [!NOTE]\n> > inner');
+    expect(html).not.toContain('kfm-alert');
+    expect(html).toContain('<blockquote>');
+    expect(html).toContain('[!NOTE]');
+    expect(html).toContain('inner');
+  });
+
+  it('エスケープした \\[!NOTE] は alert 化せず素の blockquote のまま (行も消えない)', async () => {
+    // GitHub は \[!NOTE] を素の blockquote ＋ literal な [!NOTE] として描く。
+    // remark-parse 済みの text 値ではエスケープが解決済みのため、原文照合で弾く。
+    const html = await renderDescription('> \\[!NOTE]\n> 本文');
+    expect(html).toContain('<blockquote>');
+    expect(html).not.toContain('kfm-alert');
+    // マーカー行が黙って消えないこと
+    expect(html).toContain('[!NOTE]');
+    expect(html).toContain('本文');
+  });
 });
 
 describe('renderDescription (安全 core)', () => {
@@ -165,5 +197,53 @@ describe('renderDescription (決定性・profile seam)', () => {
     await expect(renderDescription('本文', { profile: 'kfm' as KfmProfile })).rejects.toThrow(
       'profile "kfm" is not configured',
     );
+  });
+
+  it('defaultProfile が profile 未指定の描画を実際に変える', async () => {
+    // KfmProfile は Phase 1 で 'github' のみのため、第二 profile はテスト内 cast で足す
+    const profiles = {
+      github: { remarkPlugins: [remarkGfm, remarkKoyoriAlerts] },
+      kfm: { remarkPlugins: [] },
+    } as unknown as CreateRendererOptions['profiles'];
+    const render = createRenderer({
+      profiles,
+      sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+      defaultProfile: 'kfm' as KfmProfile,
+    });
+    // 既定が kfm (プラグイン無し) になった = GFM の打ち消し線が効かない
+    const html = await render('~~strike~~');
+    expect(html).not.toContain('<del>');
+    expect(html).toContain('~~strike~~');
+    // 明示指定は引き続き defaultProfile より勝つ
+    const githubHtml = await render('~~strike~~', { profile: 'github' });
+    expect(githubHtml).toContain('<del>strike</del>');
+  });
+});
+
+describe('renderDescription (脚注 id の scope)', () => {
+  const FOOTNOTE = '本文[^1]\n\n[^1]: 脚注内容';
+
+  it('scope 未指定は GitHub 既定 prefix のまま (user-content-fn-*)', async () => {
+    const html = await renderDescription(FOOTNOTE);
+    expect(html).toContain('id="user-content-fn-1"');
+  });
+
+  it('scope 違いは脚注 id が衝突しない (1 ページ複数描画で id 重複を出さない)', async () => {
+    const first = await renderDescription(FOOTNOTE, { scope: 'task-1' });
+    const second = await renderDescription(FOOTNOTE, { scope: 'comment-2' });
+    expect(first).toContain('id="user-content-task-1-fn-1"');
+    expect(second).toContain('id="user-content-comment-2-fn-1"');
+    expect(second).not.toContain('user-content-task-1-');
+  });
+
+  it('同一 scope は決定的 (独立 renderer 間で同一 HTML = L1 キャッシュ前提を壊さない)', async () => {
+    const first = await createGithubRenderer()(FOOTNOTE, { scope: 'task-1' });
+    const second = await createGithubRenderer()(FOOTNOTE, { scope: 'task-1' });
+    expect(first).toBe(second);
+  });
+
+  it('id / URL fragment に安全でない scope は fail-closed で throw', async () => {
+    await expect(renderDescription(FOOTNOTE, { scope: 'a b' })).rejects.toThrow('scope');
+    await expect(renderDescription(FOOTNOTE, { scope: '' })).rejects.toThrow('scope');
   });
 });

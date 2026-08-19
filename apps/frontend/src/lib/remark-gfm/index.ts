@@ -22,7 +22,10 @@ export const gfmSanitizeSchema = {
     'data-footnote-backref',
   ],
   classPatterns: [
-    // コードフェンスの言語クラス
-    /^language-[a-z0-9-]+$/,
+    // コードフェンスの言語クラス。mdast-util-to-hast は info string をそのまま
+    // language-<lang> にするため、実在する言語表記 (C++ / c# / TS / JSON /
+    // objective-c) を通す字種が要る。大文字・+・#・.・_ のどれかを落とすと
+    // starry-night が言語を認識できず着色されない (kfm-renderer テストで固定)。
+    /^language-[A-Za-z0-9+#._-]+$/,
   ],
 } as const;

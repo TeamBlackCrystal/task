@@ -36,10 +36,15 @@ describe('createSanitizer (class 完全一致 allowlist)', () => {
     expect(html).toContain('x');
   });
 
-  it('language-* パターンは小文字英数ハイフンのみ許可する', () => {
+  it('language-* パターンは実在言語表記の字種 ([A-Za-z0-9+#._-]) を許可する', () => {
+    // 大文字・+・# を含む実在表記 (yupix 実測 5 例は kfm-renderer テスト側で固定)
     expect(sanitize('<code class="language-ts">x</code>')).toContain('language-ts');
-    expect(sanitize('<code class="language-TS">x</code>')).not.toContain('language-TS');
+    expect(sanitize('<code class="language-TS">x</code>')).toContain('language-TS');
+    expect(sanitize('<code class="language-C++">x</code>')).toContain('language-C++');
+    expect(sanitize('<code class="language-c#">x</code>')).toContain('language-c#');
+    // 許可字種の外は依然弾く (空 suffix・スペース・引用符等の構造汚染)
     expect(sanitize('<code class="language-">x</code>')).not.toContain('class=');
+    expect(sanitize('<code class="language-a&quot;b">x</code>')).not.toContain('class=');
   });
 
   it('前方一致・部分一致では通らない (完全一致のみ)', () => {
