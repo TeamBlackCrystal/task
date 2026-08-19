@@ -15,7 +15,9 @@ import）は本 PR には含めず、別 PR で行う。現時点で `renderDesc
 apps/frontend/src/lib/
   remark-gfm/                  GFM 層の薄いラッパ ＋ GFM 由来 class の sanitize スキーマ
     index.ts
-    style.css                  サイドカー CSS（リスト/blockquote/リンク。preflight 対策）
+    content-class.ts           器クラス kfm-content の単一ソース（GFM CSS の scope）
+    style.css                  サイドカー CSS（リスト/blockquote/リンク。preflight 対策。
+                               全ルール .kfm-content 子孫限定）
   remark-koyori-alerts/        KFM 拡張第一号: GitHub alerts (> [!NOTE] 等) → callout
     index.ts                   自前 transformer（GitHub alerts の境界規則）
     style.css                  サイドカー CSS（アイコンは名前空間クラス・inline style 不使用）
@@ -140,6 +142,23 @@ import '@/lib/remark-koyori-alerts/style.css';
 import '@/lib/remark-gfm/style.css';
 ```
 
+```html
+<!-- 消費側コンポーネント: v-html する器に kfm-content を付ける（GFM CSS の scope） -->
+<div class="kfm-content" v-html="descriptionHtml" />
+```
+
+二つのサイドカー CSS は消費契約の前提が異なる:
+
+- **alerts CSS は import のみで当たる** — レンダラ自身が名前空間クラス
+  （`.kfm-alert` 等）を emit し、CSS がそれを直接指すため器は不要
+- **GFM CSS は import ＋ 器クラスの二点契約** — GFM 出力は素の ul/ol/blockquote/a/del
+  で掴む class が無く、bare 要素へ当てるとアプリ全体へ漏れるため、全ルールが
+  `.kfm-content` 子孫限定。器クラスを付け忘れると一行も当たらない
+
+器クラスの単一ソースは `remark-gfm/content-class.ts`（`KFM_CONTENT_CLASS`）。CSS との
+scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同じ定数を使う
+（VRT baseline の器 = 本番の器）。
+
 ## 拡張の口（seam）
 
 将来のフレーバー追加は以下の 3 点に閉じる。コア・sanitize・cache・SSR 契約は共有のまま:
@@ -156,12 +175,13 @@ import '@/lib/remark-gfm/style.css';
 
 ## テスト
 
-`src/lib/__tests__/kfm-*.test.ts` の 5 ファイル（件数は追加で変わるため書かない）:
+`src/lib/__tests__/kfm-*.test.ts` の 6 ファイル（件数は追加で変わるため書かない）:
 
 - `kfm-renderer.test.ts` — GFM 基本・alerts 境界・安全 core・決定性・profile fail-closed
 - `kfm-sanitize.test.ts` — FORBID style・class 完全一致・XSS 基本・カスタム要素 registry
 - `kfm-cache.test.ts` — djb2 衝突ペアの実衝突証明つき full-text キー検証・fingerprint 分離
 - `kfm-client-registry.test.ts` — SSR ガード（customElements 不在で no-op）・二重 define 安全
+- `kfm-gfm-css-contract.test.ts` — GFM サイドカー CSS の scope が器クラス単一ソースと一致
 - `kfm-story-fixtures.test.ts` — story fixture の drift 検査・孤立 rendered/*.html の検出
 
 セキュリティ上の要点（inline style 禁止・full-text キー・client ガード）はいずれも
@@ -170,7 +190,9 @@ import '@/lib/remark-gfm/style.css';
 ## story fixture
 
 KFM の Storybook story (`stories/kfm/*`) は本番と同じ「サーバ生成 HTML を v-html するだけ」
-の同期描画で VRT baseline を決定的にする。fixture の運用は次の四点:
+の同期描画で VRT baseline を決定的にする。器も本番と同じ `.kfm-content`
+（`remark-gfm/content-class.ts` の定数を import）で、GFM サイドカー CSS が本番と同じ条件で
+当たる。fixture の運用は次の四点:
 
 - 入力の単一ソースは `src/lib/kfm-story-fixtures/inputs.ts`（キー 1 つ = fixture 1 枚 = story 1 つが基本）
 - `rendered/*.html` は `renderDescription` の事前生成物で、手で書き換えない

@@ -5,6 +5,8 @@ import inlineStyleHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-inline-s
 import scriptHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-script.html?raw';
 // class-spoof story は正規 alert を含むため、消費側として CSS サイドカーを明示 import
 import '@/lib/remark-koyori-alerts/style.css';
+// 器は本番と同じ .kfm-content (単一ソース = content-class.ts)
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 
 /*
  * KFM サニタイズの story 群。「通すべきものが通り、通してはならぬものが通らない」の
@@ -17,7 +19,7 @@ type KfmStoryArgs = { html: string };
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template: '<div class="kfm-story" v-html="args.html" />',
+  template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
 const meta = {
@@ -62,7 +64,7 @@ export const InlineStyleDropped: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    const container = canvasElement.querySelector('.kfm-story');
+    const container = canvasElement.querySelector(`.${KFM_CONTENT_CLASS}`);
     // 通してはならぬもの: style 属性を持つ要素がひとつも無い
     await expect(container?.querySelector('[style]')).toBeNull();
     // 通すべきもの: markdown の強調は要素として生きている
