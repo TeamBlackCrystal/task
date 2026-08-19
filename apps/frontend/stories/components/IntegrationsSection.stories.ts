@@ -85,7 +85,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'プロジェクト設定の連携セクション。GitHub 連携の状態表示・解除を fetch モックで検証。' +
+          'プロジェクト設定の連携セクション。GitHub 連携の状態表示・解除・Issue の取り込み開始を fetch モックで検証。' +
           '「連携する」クリックは外部 URL へ実遷移するため story では扱わず、ユニットテストで担保。' +
           'Slack / Figma カードは API 実装後に追加予定。',
       },
@@ -169,6 +169,9 @@ export const ImportIssues: Story = {
         .filter((req): req is Request => typeof req !== 'string')
         .find((req) => req.url.includes('/github/import'));
       await expect(post).toBeTruthy();
+      await expect(post!.url).toContain(
+        `/tenants/${TENANT_UUID}/projects/${PROJECT_UUID}/github/import`,
+      );
     });
     await expect(canvas.findByText(/Issue の取り込みを開始しました/)).resolves.toBeInTheDocument();
   },

@@ -169,10 +169,17 @@ async function confirmDisconnect() {
         </Button>
       </div>
       <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
-      <p v-if="importStarted" role="status" class="text-sm text-muted-foreground">
+      <!-- 連携解除後に取り込みの結果表示が残らないよう、連携中だけ出す -->
+      <p
+        v-if="integration?.connected && importStarted"
+        role="status"
+        class="text-sm text-muted-foreground"
+      >
         Issue の取り込みを開始しました。タスクに反映されるまで少し時間がかかります。
       </p>
-      <p v-if="importError" role="alert" class="text-sm text-destructive">{{ importError }}</p>
+      <p v-if="integration?.connected && importError" role="alert" class="text-sm text-destructive">
+        {{ importError }}
+      </p>
     </div>
 
     <Dialog v-if="isDisconnectOpen" :open="true" @update:open="onDisconnectOpenChange">

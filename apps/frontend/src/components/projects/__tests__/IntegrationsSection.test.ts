@@ -19,6 +19,8 @@ type MockState = {
   hangDelete?: boolean;
   /** 400 以上を設定すると POST /github/import が失敗する */
   importStatus?: number;
+  /** true にすると POST /github/import が解決せず、mutation が pending のままになる */
+  hangImport?: boolean;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -52,6 +54,7 @@ function stubFetch(state: MockState) {
       );
     }
     if (method === 'POST' && pathname.endsWith('/github/import')) {
+      if (state.hangImport) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
       if (state.importStatus) return jsonResponse({ message: 'error' }, state.importStatus);
       return new Response(null, { status: 202 });
     }
@@ -136,17 +139,55 @@ describe('IntegrationsSection', () => {
     expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
   });
 
-  it('取り込みの開始に失敗したらエラーを表示し、再度押せる', async () => {
-    stubFetch({ connected: true, importStatus: 403 });
+  it('取り込みの開始に失敗したらエラーを表示し、成功メッセージは消えて再度押せる', async () => {
+    const state: MockState = { connected: true };
+    stubFetch(state);
     mountSection();
     await flushPromises();
 
+    // 一度成功させてから失敗させ、前回の成功メッセージが残らないことを見る
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    state.importStatus = 403;
     clickBodyButton('Issue を取り込む');
     await flushPromises();
 
     expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
     expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
     expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('取り込みの開始中はボタンを押せなくする', async () => {
+    stubFetch({ connected: true, hangImport: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeUndefined();
+    expect(bodyButton('開始中…')?.disabled).toBe(true);
+  });
+
+  it('取り込み後に連携を解除したら開始メッセージを残さない', async () => {
+    stubFetch({ connected: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    clickBodyButton('連携を解除');
+    await flushPromises();
+    clickBodyButton('解除する');
+    await flushPromises();
+    await flushPromises();
+
+    expect(bodyButton('連携する')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
   });
 
   it('未連携なら「Issue を取り込む」を表示しない', async () => {
