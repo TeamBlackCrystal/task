@@ -1,6 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { KFM_STORY_INPUTS } from '../kfm-story-fixtures/inputs';
 import { renderDescription } from '../markup-renderer';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const RENDERED_DIR = path.join(__dirname, '../kfm-story-fixtures/rendered');
 
 /**
  * KFM story fixture の drift 検査。
@@ -20,4 +26,14 @@ describe('KFM story fixtures (drift 検査)', () => {
       );
     },
   );
+
+  it('rendered/*.html に対応する入力キーが無い孤立 fixture が無い', () => {
+    const htmlFiles = fs
+      .readdirSync(RENDERED_DIR)
+      .filter((file) => file.endsWith('.html'))
+      .sort();
+    const inputKeys = new Set(Object.keys(KFM_STORY_INPUTS).map((name) => `${name}.html`));
+    const orphans = htmlFiles.filter((file) => !inputKeys.has(file));
+    expect(orphans).toEqual([]);
+  });
 });
