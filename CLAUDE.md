@@ -5,7 +5,7 @@
 ## プロジェクト構成
 
 - `apps/backend` — Rust (axum + SeaORM + apalis)。Cargo ワークスペース
-- `apps/frontend` — Vike + React。`openapi.json` から API 型を生成
+- `apps/frontend` — Vike + Vue 3 (Pinia + TanStack Query)。`openapi.json` から API 型を生成
 - `apps/cli` — TypeScript CLI
 
 ### backend ワークスペース（依存は一方向・逆流禁止）
