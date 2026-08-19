@@ -79,6 +79,10 @@ pub async fn list_issues(
 }
 
 /// Issue のタイトル・本文・開閉状態を書き戻す。
+///
+/// 戻り値は書き戻し後の `updated_at`。PATCH で GitHub 側の時刻が進むため、これを
+/// リンク行のウォーターマークに反映しないと、書き戻し前に発生した古いイベントが
+/// あとから届いたときに受理されてしまう。
 pub async fn update_issue(
     http: &Client,
     token: &str,
@@ -86,7 +90,7 @@ pub async fn update_issue(
     repo: &str,
     number: i32,
     content: &SyncedContent,
-) -> Result<(), anyhow::Error> {
+) -> Result<chrono::DateTime<chrono::Utc>, anyhow::Error> {
     let url = format!("{}/repos/{owner}/{repo}/issues/{number}", api_base());
     let res = request(http, Method::PATCH, &url, token)
         .json(&serde_json::json!({
@@ -102,7 +106,7 @@ pub async fn update_issue(
         let body = res.text().await.unwrap_or_default();
         return Err(anyhow::anyhow!("update issue failed: {status}: {body}"));
     }
-    Ok(())
+    Ok(res.json::<GithubIssue>().await?.updated_at)
 }
 
 #[cfg(test)]

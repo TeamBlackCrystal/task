@@ -381,7 +381,7 @@ pub async fn push_task(
     }
 
     let token = installation_token(http, settings, integration.installation_id).await?;
-    issues::update_issue(
+    let github_updated_at = issues::update_issue(
         http,
         &token,
         &integration.repo_owner,
@@ -393,9 +393,17 @@ pub async fn push_task(
 
     // 自分が読み取った後に立った pending_push は消さない。条件付き更新に失敗した場合は
     // pending_push を残し、スイープが最新状態を再度書き戻せるようにする。
+    //
+    // github_updated_at も PATCH 後の時刻へ進める。ここを据え置くと、書き戻し前に
+    // GitHub 側で起きた編集の webhook が遅れて届いたときに「新しいイベント」として
+    // 受理され、いま書き戻した内容がその古い内容へ巻き戻る。
     github_issue_links::Entity::update_many()
         .col_expr(github_issue_links::Column::SyncedHash, Expr::value(hash))
         .col_expr(github_issue_links::Column::PendingPush, Expr::value(false))
+        .col_expr(
+            github_issue_links::Column::GithubUpdatedAt,
+            Expr::value(github_updated_at),
+        )
         .col_expr(
             github_issue_links::Column::UpdatedAt,
             Expr::value(chrono::Utc::now()),

@@ -46,6 +46,11 @@ fn issue_json(
 /// インポート時点の Issue 更新時刻。イベントはこれより新しい時刻を使う。
 const T_IMPORT: &str = "2026-08-01T00:00:00Z";
 const T_EVENT: &str = "2026-08-02T00:00:00Z";
+/// 書き戻し（PATCH）で GitHub 側の updated_at が進む先。T_EVENT より後。
+const T_PUSH: &str = "2026-08-03T00:00:00Z";
+/// 書き戻した内容が webhook で返ってくる時刻。T_PUSH より後にして、
+/// 時刻ではなくハッシュ一致でループが止まることを確かめる。
+const T_ECHO: &str = "2026-08-04T00:00:00Z";
 const T_STALE: &str = "2026-07-01T00:00:00Z";
 
 /// インポート対象のリポジトリ Issue 一覧。呼ばれるたび同じ 2 件 + PR 1 件を返す。
@@ -80,9 +85,18 @@ async fn mount_mocks(server: &MockServer) {
         .mount(server)
         .await;
 
+    // GitHub と同じく更新後の Issue を返す。書き戻し側が使うのは updated_at だけ
+    // （リンク行のウォーターマークを PATCH 後の時刻へ進めるため）なので、他のフィールドは
+    // どの Issue を PATCH したかによらず固定でよい。
     Mock::given(method("PATCH"))
         .and(path_regex(r"^/repos/acme/backend/issues/\d+$"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue_json(
+            1,
+            "書き戻し後",
+            None,
+            "open",
+            T_PUSH,
+        )))
         .mount(server)
         .await;
 }
@@ -411,7 +425,7 @@ async fn github_issue_sync_suite() {
             tp.project_id,
             &serde_json::json!({
                 "action": "edited",
-                "issue": issue_json(1, "ログインできない（調査中）", Some("再現手順"), "closed", T_EVENT),
+                "issue": issue_json(1, "ログインできない（調査中）", Some("再現手順"), "closed", T_ECHO),
             }),
         )
         .await
@@ -550,6 +564,61 @@ async fn github_issue_sync_suite() {
             patch_count(&mock_server).await,
             before_patches,
             "解除後の書き戻しは no-op"
+        );
+
+        app.cleanup_user(owner.id).await;
+    }
+
+    // 8. 書き戻しより前に GitHub 側で起きた編集が、書き戻しの後に届いても巻き戻さない
+    {
+        let owner = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(owner.id).await;
+        seed_statuses(&app, tp.project_id).await;
+        insert_integration(&app, tp.project_id, owner.id).await;
+        import_project(
+            &app.state.db,
+            &app.state.http_client,
+            &github,
+            tp.project_id,
+        )
+        .await
+        .expect("import");
+
+        // ローカルの変更を書き戻す。GitHub 側の updated_at は PATCH で T_PUSH まで進む
+        let task = project_tasks(&app, tp.project_id).await.remove(0);
+        let mut active: tasks::ActiveModel = task.clone().into();
+        active.title = Set("ローカルで直した".into());
+        active.update(&app.state.db).await.expect("update task");
+        push_task(&app.state.db, &app.state.http_client, &github, task.id)
+            .await
+            .expect("push");
+
+        // 書き戻しより前（T_EVENT）に GitHub 側で起きていた編集の webhook が、遅れて届く
+        apply_issue_event(
+            &app.state.db,
+            tp.project_id,
+            &serde_json::json!({
+                "action": "edited",
+                "issue": issue_json(1, "GitHub 側の古い編集", Some("昔の本文"), "open", T_EVENT),
+            }),
+        )
+        .await
+        .expect("apply delayed event");
+
+        assert_eq!(
+            project_tasks(&app, tp.project_id).await[0].title,
+            "ローカルで直した",
+            "書き戻し前の編集が遅れて届いてもローカルの変更を巻き戻さない"
+        );
+        assert_eq!(
+            link_for_number(&app, tp.project_id, 1)
+                .await
+                .github_updated_at
+                .with_timezone(&chrono::Utc),
+            T_PUSH
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .expect("parse T_PUSH"),
+            "遅れて届いた古いイベントでウォーターマークを巻き戻さない"
         );
 
         app.cleanup_user(owner.id).await;
