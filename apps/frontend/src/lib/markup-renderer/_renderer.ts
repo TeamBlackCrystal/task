@@ -9,12 +9,14 @@
  *   composition root (index.ts) が注入する。
  * - processor は profile ごとに 1 回だけ build して memoize する (N 重初期化回避)。
  */
+import type { Root } from 'hast';
 import type { LRUCache } from 'lru-cache';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import type { PluggableList } from 'unified';
 import { unified } from 'unified';
+import { visit } from 'unist-util-visit';
 import { buildCacheKey, createL1Cache } from './_cache';
 import type { SanitizeSchema } from './_sanitize';
 import { createSanitizer } from './_sanitize';
@@ -88,11 +90,50 @@ const SCOPE_RE = /^[A-Za-z0-9_-]+$/;
 // fn / fnref トークンが必ずマーカー由来となり、scope 境界が一意に復元できて衝突は起きない。
 const SCOPE_RESERVED_SEGMENT_RE = /(^|-)(fn|fnref)(-|$)/;
 
+// remark-rehype (mdast-util-to-hast) が脚注 footer 見出しへ焼き込む固定 id。
+// clobberPrefix は fn-* / fnref-* にしか効かず、この id と脚注参照側の
+// aria-describedby は scope を渡しても固定のまま残る。scope 契約 (1 ページ複数断片で
+// 全 id 一意) の一部としてコアが書き換える — プラグインへ出すと scope を知る層が
+// 二つに割れるため、clobberPrefix と同じ場所 (core) で完結させる。
+const FOOTNOTE_LABEL_ID = 'footnote-label';
+
+/**
+ * scope 付き描画専用の rehype 層。footnote-label の id と、それを指す
+ * aria-describedby の双方を `${clobberPrefix}footnote-label` へ書き換える。
+ * 片方だけでは aria の参照が切れる。scope 無し (既定) はこの層自体を挿さず、
+ * GitHub 互換の固定 footnote-label を保つ。
+ */
+function rehypeScopeFootnoteLabel(clobberPrefix: string) {
+  const scopedId = `${clobberPrefix}${FOOTNOTE_LABEL_ID}`;
+  return function transform(tree: Root): void {
+    visit(tree, 'element', (node) => {
+      if (node.properties.id === FOOTNOTE_LABEL_ID) {
+        node.properties.id = scopedId;
+      }
+      // hast では aria-describedby (spaceSeparated) が配列にも文字列にもなり得る
+      const describedBy = node.properties.ariaDescribedBy;
+      if (Array.isArray(describedBy)) {
+        node.properties.ariaDescribedBy = describedBy.map((token) =>
+          token === FOOTNOTE_LABEL_ID ? scopedId : token,
+        );
+      } else if (describedBy === FOOTNOTE_LABEL_ID) {
+        // spaceSeparated 属性ゆえ配列でも直列化結果は同一 (型は配列側に寄せる)
+        node.properties.ariaDescribedBy = [scopedId];
+      }
+    });
+  };
+}
+
 function buildProcessor(definition: ProfileDefinition, clobberPrefix: string) {
+  // footnote-label の scope 書き換えは remark-rehype 直後 (他 rehype 層より前) に挿し、
+  // 後段プラグインには書き換え済みの id しか見せない
+  const scopeLayer: PluggableList =
+    clobberPrefix === DEFAULT_CLOBBER_PREFIX ? [] : [[rehypeScopeFootnoteLabel, clobberPrefix]];
   return unified()
     .use(remarkParse)
     .use(definition.remarkPlugins)
     .use(remarkRehype, { clobberPrefix })
+    .use(scopeLayer)
     .use(definition.rehypePlugins ?? [])
     .use(rehypeStringify)
     .freeze();

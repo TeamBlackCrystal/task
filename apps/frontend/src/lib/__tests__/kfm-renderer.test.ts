@@ -415,3 +415,71 @@ describe('renderDescription (ユーザーリンクの現状契約)', () => {
     expect(html).not.toContain('rel=');
   });
 });
+
+describe('renderDescription (scope 不変条件: 断片連結で全 id 一意)', () => {
+  // 脚注に限らず「id を出しうる要素」を広く含む入力。見出し・タスクリスト・コード
+  // フェンス・mermaid・テーブル・alert は今は id を出さないが、将来 id を出す層
+  // (rehype-slug 等) が固定 id のまま合流したらこの不変条件が赤くなる。
+  const RICH = [
+    '# 見出し anchor 候補',
+    '本文[^1] と別脚注[^note] を参照',
+    '- [x] 済みタスク\n- [ ] 未了タスク',
+    '```ts\nconst x = 1;\n```',
+    '```mermaid\ngraph TD; A-->B\n```',
+    '| a |\n| - |\n| 1 |',
+    '> [!NOTE]\n> alert 本文',
+    '[^1]: 一つ目の脚注',
+    '[^note]: 二つ目の脚注',
+  ].join('\n\n');
+
+  function extractIds(html: string): string[] {
+    return [...html.matchAll(/ id="([^"]*)"/g)].map((m) => m[1]);
+  }
+
+  function extractAriaDescribedBy(html: string): string[] {
+    return [...html.matchAll(/ aria-describedby="([^"]*)"/g)].flatMap((m) => m[1].split(' '));
+  }
+
+  it('異なる scope で描画した出力を連結しても全 id が一意 (footnote-label 含む)', async () => {
+    const fragments = await Promise.all([
+      renderDescription(RICH, { scope: 'task-1' }),
+      renderDescription(RICH, { scope: 'comment-2' }),
+      renderDescription(RICH, { scope: 'comment-3' }),
+    ]);
+    const ids = fragments.flatMap(extractIds);
+    // 陽性対照: sanitize が id を落とすと「id ゼロ→重複ゼロ」で偽の緑になるため、
+    // 断片ごとに fn-1 / fn-note / fnref-1 / fnref-note / footnote-label の 5 個以上を要求
+    expect(ids.length).toBeGreaterThanOrEqual(fragments.length * 5);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('断片内で aria-describedby と href="#..." の参照が閉じる (片側書き換えの取り零し検知)', async () => {
+    const html = await renderDescription(RICH, { scope: 'task-9' });
+    const ids = new Set(extractIds(html));
+    const describedBy = extractAriaDescribedBy(html);
+    // 陽性対照: sanitize が aria-describedby を落とすと空集合で偽の緑になる
+    expect(describedBy.length).toBeGreaterThan(0);
+    for (const token of describedBy) {
+      expect(ids).toContain(token);
+    }
+    const fragmentRefs = [...html.matchAll(/ href="#([^"]+)"/g)].map((m) => m[1]);
+    expect(fragmentRefs.length).toBeGreaterThan(0);
+    for (const ref of fragmentRefs) {
+      expect(ids).toContain(ref);
+    }
+  });
+
+  it('scope 付きは footnote-label の id と aria-describedby が双方 scope 付きになる', async () => {
+    const html = await renderDescription(RICH, { scope: 'task-1' });
+    expect(html).toContain('id="user-content-task-1-footnote-label"');
+    expect(html).toContain('aria-describedby="user-content-task-1-footnote-label"');
+    expect(html).not.toContain('id="footnote-label"');
+    expect(html).not.toContain('aria-describedby="footnote-label"');
+  });
+
+  it('scope 無し (既定) は GitHub 互換 footnote-label のまま (id / aria-describedby 双方)', async () => {
+    const html = await renderDescription(RICH);
+    expect(html).toContain('id="footnote-label"');
+    expect(html).toContain('aria-describedby="footnote-label"');
+  });
+});
