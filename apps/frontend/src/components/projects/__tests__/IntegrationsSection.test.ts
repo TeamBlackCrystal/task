@@ -171,14 +171,20 @@ describe('IntegrationsSection', () => {
     expect(bodyButton('開始中…')?.disabled).toBe(true);
   });
 
-  it('取り込み後に連携を解除したら開始メッセージを残さない', async () => {
-    stubFetch({ connected: true });
+  it('取り込み後に連携を解除したら取り込みの結果表示を残さない', async () => {
+    const state: MockState = { connected: true };
+    stubFetch(state);
     mountSection();
     await flushPromises();
 
     clickBodyButton('Issue を取り込む');
     await flushPromises();
     expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    state.importStatus = 500;
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
 
     clickBodyButton('連携を解除');
     await flushPromises();
@@ -188,6 +194,7 @@ describe('IntegrationsSection', () => {
 
     expect(bodyButton('連携する')).toBeTruthy();
     expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
   });
 
   it('未連携なら「Issue を取り込む」を表示しない', async () => {
