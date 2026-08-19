@@ -37,6 +37,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         backend::jobs::setup_verification_email_storage(&pg_pool, &settings).await?;
     let github_webhook_storage =
         backend::jobs::setup_github_webhook_storage(&pg_pool, &settings).await?;
+    let github_issue_sync_storage =
+        backend::jobs::setup_github_issue_sync_storage(&pg_pool, &settings).await?;
     let password_reset_email_storage =
         backend::jobs::setup_password_reset_email_storage(&pg_pool, &settings).await?;
     let already_registered_email_storage =
@@ -89,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         smtp_client,
         verification_email_storage,
         github_webhook_storage,
+        github_issue_sync_storage,
         password_reset_email_storage,
         already_registered_email_storage,
         storage,

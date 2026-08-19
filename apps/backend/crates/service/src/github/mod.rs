@@ -7,10 +7,13 @@
 
 pub mod client;
 pub mod install_state;
+pub mod issues;
 pub mod repositories;
+pub mod sync;
 
 pub use client::github_app;
 pub use install_state::{
     GithubOAuthStatePayload, TTL_SECS, consume_state, new_state_token, store_state,
 };
 pub use repositories::{fetch_primary_repository, select_primary_repository};
+pub use sync::{apply_issue, import_project, push_task};

@@ -8,6 +8,7 @@ pub fn tenant_github_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::handlers::github::start_github_install))
         .routes(routes!(crate::handlers::github::get_github_integration))
         .routes(routes!(crate::handlers::github::delete_github_integration))
+        .routes(routes!(crate::handlers::github::import_github_issues))
 }
 
 pub fn public_github_routes() -> OpenApiRouter<AppState> {

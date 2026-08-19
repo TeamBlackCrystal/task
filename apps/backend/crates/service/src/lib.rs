@@ -26,6 +26,7 @@ pub mod smtp;
 pub mod storage;
 pub mod task_activities;
 pub mod task_responses;
+pub mod tasks;
 pub mod totp;
 pub mod verification_email_delivery;
 pub mod webauthn;

@@ -19,8 +19,8 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use entity::{
-    labels, milestones, project_statuses, project_task_counters, sprints, task_assignees,
-    task_labels, task_relations, tasks,
+    labels, milestones, project_statuses, sprints, task_assignees, task_labels, task_relations,
+    tasks,
 };
 use payload::tasks::*;
 use service::custom_fields::{
@@ -164,32 +164,6 @@ async fn record_task_field_activities<C: ConnectionTrait>(
     }
     let _ = project_id;
     Ok(())
-}
-
-// ─── Seq ID counter ──────────────────────────────────────────────────────
-
-async fn next_seq_id(db: &sea_orm::DatabaseTransaction, project_id: Uuid) -> Result<i32, AppError> {
-    let existing = project_task_counters::Entity::find_by_id(project_id)
-        .lock(LockType::Update)
-        .one(db)
-        .await?;
-    Ok(match existing {
-        Some(c) => {
-            let new_seq = c.last_seq + 1;
-            let mut active: project_task_counters::ActiveModel = c.into();
-            active.last_seq = Set(new_seq);
-            active.update(db).await?.last_seq
-        }
-        None => {
-            project_task_counters::ActiveModel {
-                project_id: Set(project_id),
-                last_seq: Set(1),
-            }
-            .insert(db)
-            .await?
-            .last_seq
-        }
-    })
 }
 
 // ─── BFS cycle detection ─────────────────────────────────────────────────
@@ -451,7 +425,7 @@ pub async fn create_task(
         }
     }
 
-    let seq_id = next_seq_id(&txn, project_id).await?;
+    let seq_id = service::tasks::next_seq_id(&txn, project_id).await?;
 
     let model = tasks::ActiveModel {
         id: Set(Uuid::new_v4()),
@@ -798,7 +772,11 @@ pub async fn update_task(
         if let Some(ref values) = payload.custom_field_values {
             upsert_task_custom_field_values(&txn, project_id, task_id, values).await?;
         }
+        let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
         txn.commit().await?;
+        if linked {
+            crate::handlers::github::enqueue_issue_push(&state, task_id).await;
+        }
         Ok(Json(
             build_task_detail_response(&state, project_id, updated).await?,
         ))
@@ -816,7 +794,11 @@ pub async fn update_task(
         if let Some(ref values) = payload.custom_field_values {
             upsert_task_custom_field_values(&txn, project_id, task_id, values).await?;
         }
+        let linked = service::github::sync::mark_pending_push(&txn, task_id).await?;
         txn.commit().await?;
+        if linked {
+            crate::handlers::github::enqueue_issue_push(&state, task_id).await;
+        }
         Ok(Json(
             build_task_detail_response(&state, project_id, updated).await?,
         ))

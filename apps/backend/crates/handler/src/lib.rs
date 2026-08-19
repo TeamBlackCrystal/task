@@ -7,8 +7,8 @@ use apalis_postgres::PgPool;
 use common::cache::redis::RedisConnection;
 use common::settings::Settings;
 use job::{
-    AlreadyRegisteredEmailStorage, GithubWebhookStorage, PasswordResetEmailStorage,
-    VerificationEmailStorage,
+    AlreadyRegisteredEmailStorage, GithubIssueSyncStorage, GithubWebhookStorage,
+    PasswordResetEmailStorage, VerificationEmailStorage,
 };
 use sea_orm::DatabaseConnection;
 use service::{
@@ -35,6 +35,7 @@ pub struct AppState {
     pub smtp_client: SmtpClient,
     pub verification_email_storage: Arc<VerificationEmailStorage>,
     pub github_webhook_storage: Arc<GithubWebhookStorage>,
+    pub github_issue_sync_storage: Arc<GithubIssueSyncStorage>,
     pub password_reset_email_storage: Arc<PasswordResetEmailStorage>,
     pub already_registered_email_storage: Arc<AlreadyRegisteredEmailStorage>,
     pub storage: Arc<dyn StorageBackend>,
