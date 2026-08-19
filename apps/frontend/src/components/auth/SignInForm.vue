@@ -24,10 +24,18 @@ const loginMutation = useLoginMutation();
 const logoutMutation = useLogoutMutation();
 const submitError = ref<string | null>(null);
 const unverifiedEmail = ref<string | null>(null);
+const submitAttempted = ref(false);
 
 const form = useForm({
   defaultValues: { email: '', password: '' },
   validators: { onSubmit: schema },
+  // canSubmit が false だと 1 回目の送信が握り潰される（form-core の _handleSubmit が
+  // submissionAttempts <= 1 のとき早期 return する）。パスワードは onBlur 検証で、
+  // 直した値を change で検証しても onBlur 由来のエラーは残るため、フィールド内から
+  // Enter を押すと無反応になっていた。送信時は全フィールドが submit 起因で再検証され
+  // （onChange / onBlur / onSubmit がまとめて走る）古いエラーも消えるので、
+  // canSubmit で入口を塞ぐ必要はない
+  canSubmitWhenInvalid: true,
   onSubmit: async ({ value }) => {
     submitError.value = null;
     unverifiedEmail.value = null;
@@ -63,6 +71,11 @@ const form = useForm({
     }
   },
 });
+
+function handleSubmit() {
+  submitAttempted.value = true;
+  return form.handleSubmit();
+}
 </script>
 
 <template>
@@ -75,11 +88,7 @@ const form = useForm({
   <div v-else class="flex flex-col gap-6">
     <Card class="overflow-hidden p-0">
       <CardContent class="grid p-0 md:grid-cols-2">
-        <HydrationSafeForm
-          v-slot="{ isHydrated }"
-          class="p-6 md:p-8"
-          @submit="() => form.handleSubmit()"
-        >
+        <HydrationSafeForm v-slot="{ isHydrated }" class="p-6 md:p-8" @submit="handleSubmit">
           <FieldGroup>
             <div class="flex flex-col items-center gap-2 text-center">
               <h1 class="text-2xl font-bold">おかえりなさい</h1>
@@ -87,7 +96,15 @@ const form = useForm({
                 メールアドレスを入力してサインインしてください
               </p>
             </div>
-            <form.Field name="email" :validators="{ onBlur: type('string.email') }">
+            <!--
+              onBlur だと、一度エラーを出した後に入力を直しても次にフォーカスを外すまで
+              エラーが残る（onBlur 由来のエラーが errorMap に残るため）。onChange で
+              毎回検証し、表示は isBlurred で抑えて入力途中のエラー表示は避ける
+              （isTouched は change でも true になるので使えない）。
+              一度もフォーカスを外さずに送信した場合は理由が見えなくなるため、
+              送信を試みた後は isBlurred に関係なく表示する
+            -->
+            <form.Field name="email" :validators="{ onChange: type('string.email') }">
               <template #default="{ field }">
                 <Field>
                   <FieldLabel :for="field.name">メールアドレス</FieldLabel>
@@ -103,7 +120,8 @@ const form = useForm({
                   />
                   <FieldError class="min-h-[1.25rem]">
                     {{
-                      field.state.meta.errors.length
+                      field.state.meta.errors.length &&
+                      (field.state.meta.isBlurred || submitAttempted)
                         ? arkMessage(String(field.state.meta.errors[0]))
                         : ''
                     }}
@@ -144,14 +162,14 @@ const form = useForm({
             <p v-if="submitError" class="text-destructive text-center text-sm">
               {{ submitError }}
             </p>
+            <!--
+              canSubmit で無効化すると、入力途中の不正値でボタンだけが押せなくなり
+              理由が画面に出ない。送信は submit 起因の検証に任せ、押せる状態を保つ
+            -->
             <form.Subscribe>
-              <template #default="{ canSubmit, isSubmitting }">
+              <template #default="{ isSubmitting }">
                 <Field>
-                  <Button
-                    type="submit"
-                    class="w-full"
-                    :disabled="!canSubmit || isSubmitting || !isHydrated"
-                  >
+                  <Button type="submit" class="w-full" :disabled="isSubmitting || !isHydrated">
                     {{ isSubmitting ? 'サインイン中…' : 'サインイン' }}
                   </Button>
                 </Field>
