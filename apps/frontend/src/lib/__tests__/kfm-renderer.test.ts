@@ -186,7 +186,11 @@ describe('renderDescription (改行コード不変条件: LF と CRLF は同一 
 
   it('コードフェンス内容は CR 正規化で壊れない (中身が LF で完全に残る)', async () => {
     const html = await renderDescription('```ts\r\nconst x = 1;\r\nconst y = 2;\r\n```');
-    expect(html).toContain('const x = 1;\nconst y = 2;\n');
+    // 着色層 (starry-night) が入るとトークンが span へ分割され、本文は連続した
+    // 文字列として現れない。この試験の主眼は CR 正規化であって着色の有無ではないので、
+    // タグを外した本文で比べる (着色が有っても無くても成り立つ形)。
+    const text = html.replace(/<[^>]+>/g, '');
+    expect(text).toContain('const x = 1;\nconst y = 2;\n');
     expect(html).not.toContain('\r');
   });
 
