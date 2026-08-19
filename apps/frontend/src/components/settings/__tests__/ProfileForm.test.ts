@@ -111,6 +111,19 @@ describe('ProfileForm', () => {
     expect(wrapper.text()).toContain('3文字以上で入力してください。');
   });
 
+  it('前後の空白は取り除いて送る', async () => {
+    const bodies = stubPatchMe();
+    const wrapper = mountForm();
+    await flushPromises();
+
+    await wrapper.find('#avatarUrl').setValue('  https://example.com/b.png  ');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ avatar_url: 'https://example.com/b.png' });
+  });
+
   it('保存に失敗したらエラーを表示する', async () => {
     stubPatchMe(500);
     const wrapper = mountForm();
@@ -120,5 +133,31 @@ describe('ProfileForm', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('保存できませんでした。');
+  });
+
+  it('400 のときは入力内容の確認を促す', async () => {
+    stubPatchMe(400);
+    const wrapper = mountForm();
+    await flushPromises();
+
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('入力内容を確認してください。');
+  });
+
+  it('保存後に編集を再開すると「保存しました。」が消える', async () => {
+    stubPatchMe();
+    const wrapper = mountForm();
+    await flushPromises();
+
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+    expect(wrapper.text()).toContain('保存しました。');
+
+    await wrapper.find('#bio').setValue('編集を再開する');
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('保存しました。');
   });
 });

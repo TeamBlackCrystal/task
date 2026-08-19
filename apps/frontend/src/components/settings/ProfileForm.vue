@@ -34,7 +34,10 @@ function validateBio(value: string) {
   return value.length > BIO_MAX ? `${BIO_MAX}文字以内で入力してください。` : undefined;
 }
 
-function validateAvatarUrl(value: string) {
+function validateAvatarUrl(raw: string) {
+  // 送信時と同じく trim した値で判定する。貼り付けで前後に空白が入っても、
+  // 画面で弾いておいて送信では通る（またはその逆）というずれを作らない。
+  const value = raw.trim();
   if (value === '') return undefined;
   if (value.length > AVATAR_URL_MAX) return `${AVATAR_URL_MAX}文字以内で入力してください。`;
   if (!isHttpUrl(value)) return 'http:// または https:// で始まる URL を入力してください。';
@@ -80,7 +83,11 @@ const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCas
 </script>
 
 <template>
-  <HydrationSafeForm v-slot="{ isHydrated }" @submit="() => form.handleSubmit()">
+  <HydrationSafeForm
+    v-slot="{ isHydrated }"
+    @submit="() => form.handleSubmit()"
+    @input="saved = false"
+  >
     <FieldGroup>
       <form.Field
         name="avatarUrl"
@@ -118,7 +125,10 @@ const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCas
                     variant="outline"
                     size="sm"
                     :disabled="!field.state.value"
-                    @click="field.handleChange('')"
+                    @click="
+                      field.handleChange('');
+                      saved = false;
+                    "
                   >
                     削除
                   </Button>
