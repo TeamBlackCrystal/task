@@ -103,8 +103,11 @@ const data = computed(() => ({
       />
     </SidebarHeader>
     <SidebarContent>
-      <NavMain :items="data.navMain" />
+      <!-- テナント外のページ（/settings/... など）ではテナント文脈が無く、
+           リンク先も一覧も作れないためテナント依存のナビ自体を出さない。 -->
+      <NavMain v-if="tenantSlug" :items="data.navMain" />
       <NavProjects
+        v-if="tenantSlug"
         :tenant-slug="tenantSlug"
         :projects="navProjects"
         :current-path="pageContext.urlPathname"
