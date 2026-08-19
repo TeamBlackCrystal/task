@@ -4,6 +4,7 @@
  * GitHub 完全互換の境界仕様 (fixture テストで固定):
  * - 5 種のみ (NOTE / TIP / IMPORTANT / WARNING / CAUTION)・type は case-insensitive
  * - マーカーは blockquote 先頭行に単独。同一行に後続テキストがあれば通常 blockquote のまま
+ *   (行末スペース 2 つの hard break は「単独」扱いで alert 化する)
  * - ネスト不可 (alert 内側の blockquote は通常 blockquote のまま)
  * - 5 種以外の type (`[!HINT]` 等) は通常 blockquote へフォールバック
  *
@@ -52,14 +53,21 @@ export function remarkKoyoriAlerts() {
       const markerLine = newline === -1 ? lead.value : lead.value.slice(0, newline);
       const match = MARKER_RE.exec(markerLine);
       if (!match) return;
-      // マーカーと同一行に inline 構文 (強調等) が続く場合も GitHub 準拠でフォールバック
-      if (newline === -1 && first.children.length > 1) return;
+      // マーカーと同一行に inline 構文 (強調等) が続く場合も GitHub 準拠でフォールバック。
+      // ただし行末スペース 2 つ (hard break) は独立した break ノードとしてここへ来るが、
+      // GitHub はマーカー行単独として alert 化する。子の個数では inline 構文と hard break
+      // を区別できないため「次の子が break か」で判定する。
+      const second = first.children[1];
+      if (newline === -1 && second !== undefined && second.type !== 'break') return;
 
       const type = match[1]!.toLowerCase() as AlertType;
 
       // マーカーを本文から除去
       if (newline === -1) {
         first.children.shift();
+        // 行末スペース 2 つ由来の hard break はマーカーの一部として一緒に除去する
+        // (残すと alert 本文の先頭に <br> が漏れる)
+        if (first.children[0]?.type === 'break') first.children.shift();
         if (first.children.length === 0) node.children.shift();
       } else {
         lead.value = lead.value.slice(newline + 1);

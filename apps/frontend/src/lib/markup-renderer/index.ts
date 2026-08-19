@@ -36,6 +36,9 @@ export type {
   KfmCustomElementDefinition,
   RegisterKfmCustomElementsResult,
 } from './_client-registry';
+// NOTE: client 専用 entry (+client.ts) はこの root からではなく _client-registry から直接
+// import すること。root 経由は下の createRenderer がモジュール副作用で走り、KFM 一式が
+// client バンドルへ載る (CI バンドル診断で +417.5 KB raw を実測した経緯あり)。
 export { registerKfmCustomElements } from './_client-registry';
 export type { SanitizeSchema } from './_sanitize';
 

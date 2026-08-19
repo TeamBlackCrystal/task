@@ -53,40 +53,39 @@ export function buildRegistry(schemas: readonly SanitizeSchema[]): Registry {
 }
 
 // isomorphic-dompurify の DOMPurify はモジュール singleton で addHook もグローバルに効く。
-// フックは一度だけ据え、許可集合は sanitize() 実行中のみ activeRegistry に差して参照する
-// (DOMPurify.sanitize は同期・再入なし)。registry 不在で走った場合は fail-closed
-// (class 全除去) に倒す。
-let activeRegistry: Registry | null = null;
-let hookInstalled = false;
-
-function isAllowedClassToken(token: string, registry: Registry | null): boolean {
-  if (registry === null) return false;
+// 常駐フックは素の DOMPurify.sanitize を使う無関係コードの出力まで書き換えてしまう
+// (registry 不在の fail-closed で class 全消去) ため、フックは sanitize() 実行中のみ
+// 据え付け、finally で必ず撤去して有効範囲を sanitizer 内に閉じる。
+// - DOMPurify.sanitize は同期であり、据え付け〜撤去の間に他者のコードは走らない。
+// - removeHook は関数指定の除去 (dompurify 3.x) を使い、他者が据えたフックには触れない。
+// - 別インスタンス化 (createDOMPurify(window) 相当) は SSR 側 window (jsdom) が
+//   isomorphic-dompurify 内部に閉じており、dompurify / jsdom の直接依存追加なしには
+//   成立しないためこの方式を採る。
+function isAllowedClassToken(token: string, registry: Registry): boolean {
   if (registry.classTokens.has(token)) return true;
   return registry.classPatterns.some((pattern) => pattern.test(token));
 }
 
-function installHook(): void {
-  if (hookInstalled) return;
-  hookInstalled = true;
-  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+function createClassAllowlistHook(registry: Registry): (node: Node) => void {
+  return (node) => {
     const element = node as Element;
     if (typeof element.hasAttribute !== 'function') return;
     if (!element.hasAttribute('class')) return;
     const kept = (element.getAttribute('class') ?? '')
       .split(/[ \t\n\r\f]+/)
-      .filter((token) => token.length > 0 && isAllowedClassToken(token, activeRegistry));
+      .filter((token) => token.length > 0 && isAllowedClassToken(token, registry));
     if (kept.length > 0) {
       element.setAttribute('class', kept.join(' '));
     } else {
       element.removeAttribute('class');
     }
-  });
+  };
 }
 
 /** schemas を合成した registry で閉じた sanitizer を返す */
 export function createSanitizer(schemas: readonly SanitizeSchema[]): (html: string) => string {
   const registry = buildRegistry(schemas);
-  installHook();
+  const hook = createClassAllowlistHook(registry);
   const config = {
     // GFM 出力は HTML のみ (SVG / MathML は不要ゆえ落とす)
     USE_PROFILES: { html: true },
@@ -99,11 +98,11 @@ export function createSanitizer(schemas: readonly SanitizeSchema[]): (html: stri
     },
   };
   return (html: string): string => {
-    activeRegistry = registry;
+    DOMPurify.addHook('afterSanitizeAttributes', hook);
     try {
       return DOMPurify.sanitize(html, config);
     } finally {
-      activeRegistry = null;
+      DOMPurify.removeHook('afterSanitizeAttributes', hook);
     }
   };
 }

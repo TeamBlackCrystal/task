@@ -76,6 +76,18 @@ describe('renderDescription (GitHub alerts 境界)', () => {
     expect(html).not.toContain('kfm-alert');
   });
 
+  it('マーカー行末のスペース 2 つ (hard break) でも callout 化する', async () => {
+    // GitHub は `> [!WARNING]␣␣` (行末スペース 2 つ = hard break) も alert にする。
+    // hard break は mdast で独立した break ノードになるため、text 内改行とも
+    // 同一行後続テキストとも別扱いが要る (対: 下の同一行後続テキスト 2 試験)。
+    const html = await renderDescription('> [!WARNING]  \n> 注意');
+    expect(html).toContain('kfm-alert--warning');
+    expect(html).toContain('注意');
+    expect(html).not.toContain('<blockquote>');
+    // マーカー由来の hard break が本文先頭へ漏れて <br> にならないこと
+    expect(html).not.toContain('<br');
+  });
+
   it('マーカーと同一行に後続テキストがあれば通常 blockquote のまま', async () => {
     const html = await renderDescription('> [!NOTE] 同じ行の続き\n> 次の行');
     expect(html).toContain('<blockquote>');

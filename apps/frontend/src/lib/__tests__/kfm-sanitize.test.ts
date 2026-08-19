@@ -1,3 +1,4 @@
+import DOMPurify from 'isomorphic-dompurify';
 import { describe, expect, it } from 'vitest';
 import { createSanitizer } from '../markup-renderer/_sanitize';
 import { gfmSanitizeSchema } from '../remark-gfm';
@@ -67,6 +68,29 @@ describe('createSanitizer (XSS 基本)', () => {
     const html = sanitize('<a href="javascript:alert(1)">リンク</a>');
     expect(html).not.toContain('javascript:');
     expect(html).toContain('リンク');
+  });
+});
+
+describe('createSanitizer (フックの有効範囲は sanitizer 内に閉じる)', () => {
+  it('sanitizer 構築後も素の DOMPurify.sanitize は class を保持する (グローバル汚染なし)', () => {
+    // 本番構成 sanitizer (module top の createSanitizer) が構築済みの状態で、レンダラを
+    // 経由しない素の DOMPurify 利用者が影響を受けないこと。常駐フックが残っていると
+    // registry 不在の fail-closed で無関係な HTML の class が全消去され、ここが落ちる。
+    const html = DOMPurify.sanitize('<div class="card">x</div>');
+    expect(html).toContain('class="card"');
+    expect(html).toContain('x');
+  });
+
+  it('sanitizer 実行後もフックは残留しない (素の DOMPurify.sanitize は class を保持)', () => {
+    sanitize('<p class="kfm-alert">本文</p>'); // フックの据え付け→撤去を一巡させる
+    const html = DOMPurify.sanitize('<div class="card">y</div>');
+    expect(html).toContain('class="card"');
+  });
+
+  it('sanitizer 経由では class allowlist が依然効く (スコープ化で検査が弱まらない陽性対照)', () => {
+    const html = sanitize('<div class="card kfm-alert">x</div>');
+    expect(html).not.toContain('card');
+    expect(html).toContain('kfm-alert');
   });
 });
 

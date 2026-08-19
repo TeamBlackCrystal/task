@@ -8,7 +8,9 @@
 .kfm-alert {
   margin: 0.5rem 0 1rem;
   padding: 0.25rem 1rem;
-  border-left: 0.25rem solid #d1d9e0;
+  /* 既定 border はアプリのテーマトークン (tailwind.css の --border) に追従させる。
+     種別クラス (.kfm-alert--*) が必ず上書きするため、これはフォールバック色 */
+  border-left: 0.25rem solid var(--border);
 }
 
 .kfm-alert > :last-child {
@@ -77,4 +79,47 @@
   color: #cf222e;
   /* 八角形 ! */
   --kfm-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.3 1.5h5.4l3.8 3.8v5.4l-3.8 3.8H5.3l-3.8-3.8V5.3l3.8-3.8z' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'/%3E%3Crect x='7.25' y='4.5' width='1.5' height='4' rx='0.75'/%3E%3Ccircle cx='8' cy='10.75' r='1'/%3E%3C/svg%3E");
+}
+
+/*
+ * ダークテーマ (.dark) 上書き。
+ * 方針は tailwind.css の CSS custom property から引くことを優先し、既定 border は上の
+ * var(--border) でテーマ追従済み。しかし種別アクセント (青/緑/紫/黄/赤) に対応する意味
+ * トークンが tailwind.css には存在しない (無彩色系トークンと --destructive のみ) ため、
+ * 種別色に限り GitHub ダークパレット実色を .dark で直接上書きする。
+ * アイコンは currentColor 塗り (mask) ゆえ title の color 上書きだけで追従する。
+ */
+.dark .kfm-alert--note {
+  border-left-color: #4493f8;
+}
+.dark .kfm-alert--note .kfm-alert__title {
+  color: #4493f8;
+}
+
+.dark .kfm-alert--tip {
+  border-left-color: #3fb950;
+}
+.dark .kfm-alert--tip .kfm-alert__title {
+  color: #3fb950;
+}
+
+.dark .kfm-alert--important {
+  border-left-color: #ab7df8;
+}
+.dark .kfm-alert--important .kfm-alert__title {
+  color: #ab7df8;
+}
+
+.dark .kfm-alert--warning {
+  border-left-color: #d29922;
+}
+.dark .kfm-alert--warning .kfm-alert__title {
+  color: #d29922;
+}
+
+.dark .kfm-alert--caution {
+  border-left-color: #f85149;
+}
+.dark .kfm-alert--caution .kfm-alert__title {
+  color: #f85149;
 }
