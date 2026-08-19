@@ -48,8 +48,10 @@ const T_IMPORT: &str = "2026-08-01T00:00:00Z";
 const T_EVENT: &str = "2026-08-02T00:00:00Z";
 /// 書き戻し（PATCH）で GitHub 側の updated_at が進む先。T_EVENT より後。
 const T_PUSH: &str = "2026-08-03T00:00:00Z";
-/// 書き戻した内容が webhook で返ってくる時刻。T_PUSH より後にして、
-/// 時刻ではなくハッシュ一致でループが止まることを確かめる。
+/// 書き戻した後に、書き戻したのと同じ内容のイベントが届く時刻。T_PUSH より後にして、
+/// 時刻のガードではなくハッシュ一致でループが止まることを確かめる
+/// （自分の PATCH の跳ね返りそのものは updated_at が T_PUSH ちょうどで届くため、
+/// ハッシュ比較の前に時刻のガードで捨てられる）。
 const T_ECHO: &str = "2026-08-04T00:00:00Z";
 const T_STALE: &str = "2026-07-01T00:00:00Z";
 
@@ -439,9 +441,22 @@ async fn github_issue_sync_suite() {
             updated_before,
             "自分が書き戻した内容の跳ね返りではタスクを更新しない"
         );
+        let after_echo = link_for_number(&app, tp.project_id, 1).await;
+        assert_eq!(after_echo.synced_hash, synced_before);
+        // 時刻のガードで捨てられたのではなく、ハッシュ一致の経路を通ったことを確かめる
+        // （捨てられていれば T_PUSH のまま止まる）。
         assert_eq!(
-            link_for_number(&app, tp.project_id, 1).await.synced_hash,
-            synced_before
+            after_echo.github_updated_at.with_timezone(&chrono::Utc),
+            T_ECHO
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .expect("parse T_ECHO"),
+            "内容が同じイベントでも、より新しい時刻ならウォーターマークは進む"
+        );
+        // ここで版を進めないと、書き戻し中に同じ内容のイベントが入ったとき
+        // push_task の条件付き更新が空振りせず、ウォーターマークを後退させる。
+        assert!(
+            after_echo.updated_at > link.updated_at,
+            "ウォーターマークだけ進めるときも版を進める"
         );
 
         app.cleanup_user(owner.id).await;

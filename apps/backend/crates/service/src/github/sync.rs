@@ -144,6 +144,10 @@ pub async fn apply_issue(
         if link.synced_hash == hash {
             let mut link_active: github_issue_links::ActiveModel = link.into();
             link_active.github_updated_at = Set(issue.updated_at.into());
+            // 内容は変わっていなくても版は進める。ここを据え置くと、書き戻し中の
+            // push_task が「自分が読んだときのまま」と判断して条件付き更新を通し、
+            // ここで進めた github_updated_at を PATCH 時点の時刻へ後退させてしまう。
+            link_active.updated_at = Set(chrono::Utc::now().into());
             link_active.update(&txn).await?;
             txn.commit().await?;
             return Ok(());
@@ -397,12 +401,15 @@ pub async fn push_task(
     // github_updated_at も PATCH 後の時刻へ進める。ここを据え置くと、書き戻し前に
     // GitHub 側で起きた編集の webhook が遅れて届いたときに「新しいイベント」として
     // 受理され、いま書き戻した内容がその古い内容へ巻き戻る。
+    // PATCH のレスポンスが読めなかったときだけ、読み取り時の値のまま据え置く。
     github_issue_links::Entity::update_many()
         .col_expr(github_issue_links::Column::SyncedHash, Expr::value(hash))
         .col_expr(github_issue_links::Column::PendingPush, Expr::value(false))
         .col_expr(
             github_issue_links::Column::GithubUpdatedAt,
-            Expr::value(github_updated_at),
+            Expr::value(
+                github_updated_at.unwrap_or(link.github_updated_at.with_timezone(&chrono::Utc)),
+            ),
         )
         .col_expr(
             github_issue_links::Column::UpdatedAt,
