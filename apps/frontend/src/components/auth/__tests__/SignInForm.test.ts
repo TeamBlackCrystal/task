@@ -91,7 +91,12 @@ describe('SignInForm', () => {
     // 入力途中でボタンを無効化しない（無効なボタンは押しても blur せず、行き止まりになる）
     expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeUndefined();
 
-    await wrapper.find('form').trigger('submit');
+    // form に novalidate がないと、type="email" のネイティブ制約検証が submit を
+    // 先に止めて handleSubmit が呼ばれず、下のエラーが出なくなる。
+    // happy-dom は制約検証をしないので、この属性の検査が唯一の回帰ガードになる
+    expect(wrapper.find('form').attributes('novalidate')).toBeDefined();
+
+    await wrapper.find('button[type="submit"]').trigger('click');
     await flushPromises();
 
     expect(document.body.textContent).toContain('メールアドレスの形式が正しくありません');

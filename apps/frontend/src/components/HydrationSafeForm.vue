@@ -24,7 +24,13 @@ function preventPrehydrationEnter(event: KeyboardEvent) {
 </script>
 
 <template>
+  <!--
+    novalidate: ネイティブの制約検証（type="email" など）が submit を先に止めると
+    @submit ハンドラーが呼ばれず、フォーム側が出したいエラー表示に到達できない。
+    検証はどのフォームも TanStack Form 側に一本化している
+  -->
   <form
+    novalidate
     :data-hydrated="isHydrated ? 'true' : 'false'"
     :onsubmit.attr="isHydrated ? null : 'return false;'"
     @submit.prevent="handleSubmit"
