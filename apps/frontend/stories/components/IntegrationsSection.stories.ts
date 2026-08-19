@@ -40,6 +40,9 @@ function mockFetch(options: MockOptions = {}) {
       const url = typeof req === 'string' ? req : req.url;
       const method = typeof req === 'string' ? 'GET' : req.method;
       const pathname = new URL(url, 'http://localhost').pathname;
+      if (method === 'POST' && pathname.endsWith('/github/import')) {
+        return new Response(null, { status: 202 });
+      }
       if (pathname.endsWith('/github/integration')) {
         if (method === 'DELETE') {
           connected = false;
@@ -148,6 +151,26 @@ export const DisconnectFlow: Story = {
     });
     // 再取得後は未連携カードに戻る
     await expect(canvas.findByRole('button', { name: '連携する' })).resolves.toBeInTheDocument();
+  },
+};
+
+export const ImportIssues: Story = {
+  name: 'Issue 取り込み（POST /github/import → 開始メッセージ）',
+  beforeEach: mockFetch({ connected: true }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+
+    await user.click(await canvas.findByRole('button', { name: 'Issue を取り込む' }));
+
+    await waitFor(async () => {
+      const post = (fetchSpy!.mock.calls as [Request | string][])
+        .map(([req]) => req)
+        .filter((req): req is Request => typeof req !== 'string')
+        .find((req) => req.url.includes('/github/import'));
+      await expect(post).toBeTruthy();
+    });
+    await expect(canvas.findByText(/Issue の取り込みを開始しました/)).resolves.toBeInTheDocument();
   },
 };
 

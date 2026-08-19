@@ -17,6 +17,8 @@ type MockState = {
   deleteStatus?: number;
   /** true にすると DELETE /github/integration が解決せず、mutation が pending のままになる */
   hangDelete?: boolean;
+  /** 400 以上を設定すると POST /github/import が失敗する */
+  importStatus?: number;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -48,6 +50,10 @@ function stubFetch(state: MockState) {
             }
           : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
       );
+    }
+    if (method === 'POST' && pathname.endsWith('/github/import')) {
+      if (state.importStatus) return jsonResponse({ message: 'error' }, state.importStatus);
+      return new Response(null, { status: 202 });
     }
     if (method === 'DELETE' && pathname.endsWith('/github/integration')) {
       if (state.hangDelete) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
@@ -110,6 +116,45 @@ describe('IntegrationsSection', () => {
     expect(document.body.textContent).toContain('を連携中');
     expect(bodyButton('連携を解除')).toBeTruthy();
     expect(bodyButton('連携する')).toBeUndefined();
+  });
+
+  it('連携済みなら「Issue を取り込む」で POST /github/import を呼び、開始を伝える', async () => {
+    const fetchMock = stubFetch({ connected: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    const importCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/import'));
+    expect(importCall).toBeTruthy();
+    expect(importCall!.method).toBe('POST');
+    expect(importCall!.url).toContain(`/tenants/${TENANT_UUID}/projects/${PROJECT_UUID}/`);
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+  });
+
+  it('取り込みの開始に失敗したらエラーを表示し、再度押せる', async () => {
+    stubFetch({ connected: true, importStatus: 403 });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('未連携なら「Issue を取り込む」を表示しない', async () => {
+    stubFetch({ connected: false });
+    mountSection();
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeUndefined();
   });
 
   it('「連携する」でインストール URL を取得して GitHub へ遷移する', async () => {

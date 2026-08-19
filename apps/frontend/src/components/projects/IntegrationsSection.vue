@@ -16,6 +16,7 @@ import { apiClient, fetchClient } from '@/lib/api-vue-query';
 const GITHUB_INTEGRATION_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/github/integration' as const;
 const GITHUB_INSTALL_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/install' as const;
+const GITHUB_IMPORT_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/import' as const;
 
 const props = defineProps<{
   tenantId: string;
@@ -27,12 +28,15 @@ const isDisconnectOpen = ref(false);
 const disconnectError = ref<string | null>(null);
 const installError = ref<string | null>(null);
 const installPending = ref(false);
+const importError = ref<string | null>(null);
+const importStarted = ref(false);
 
 const integrationQuery = apiClient.useQuery('get', GITHUB_INTEGRATION_PATH, {
   params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
 });
 
 const disconnectMutation = apiClient.useMutation('delete', GITHUB_INTEGRATION_PATH);
+const importMutation = apiClient.useMutation('post', GITHUB_IMPORT_PATH);
 
 const integration = computed(() => integrationQuery.data.value);
 
@@ -65,6 +69,20 @@ async function startInstall() {
   } catch {
     installError.value = 'GitHub のインストール URL を取得できませんでした';
     installPending.value = false;
+  }
+}
+
+async function startImport() {
+  importError.value = null;
+  importStarted.value = false;
+  try {
+    await importMutation.mutateAsync({
+      params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
+    });
+    // 取り込みはジョブなので、完了は待たずに開始だけを伝える
+    importStarted.value = true;
+  } catch {
+    importError.value = 'Issue の取り込みを開始できませんでした';
   }
 }
 
@@ -125,16 +143,20 @@ async function confirmDisconnect() {
             <template v-else>コミットや Pull Request をタスクに紐付けます。</template>
           </p>
         </div>
-        <Button
-          v-if="integration?.connected"
-          type="button"
-          variant="outline"
-          size="sm"
-          class="shrink-0"
-          @click="onDisconnectOpenChange(true)"
-        >
-          連携を解除
-        </Button>
+        <div v-if="integration?.connected" class="flex shrink-0 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="importMutation.isPending.value"
+            @click="startImport"
+          >
+            {{ importMutation.isPending.value ? '開始中…' : 'Issue を取り込む' }}
+          </Button>
+          <Button type="button" variant="outline" size="sm" @click="onDisconnectOpenChange(true)">
+            連携を解除
+          </Button>
+        </div>
         <Button
           v-else
           type="button"
@@ -147,6 +169,10 @@ async function confirmDisconnect() {
         </Button>
       </div>
       <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
+      <p v-if="importStarted" role="status" class="text-sm text-muted-foreground">
+        Issue の取り込みを開始しました。タスクに反映されるまで少し時間がかかります。
+      </p>
+      <p v-if="importError" role="alert" class="text-sm text-destructive">{{ importError }}</p>
     </div>
 
     <Dialog v-if="isDisconnectOpen" :open="true" @update:open="onDisconnectOpenChange">
