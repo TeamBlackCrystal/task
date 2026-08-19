@@ -15,6 +15,7 @@ import）は本 PR には含めず、別 PR で行う。現時点で `renderDesc
 apps/frontend/src/lib/
   remark-gfm/                  GFM 層の薄いラッパ ＋ GFM 由来 class の sanitize スキーマ
     index.ts
+    style.css                  サイドカー CSS（リスト/blockquote/リンク。preflight 対策）
   remark-koyori-alerts/        KFM 拡張第一号: GitHub alerts (> [!NOTE] 等) → callout
     index.ts                   自前 transformer（GitHub alerts の境界規則）
     style.css                  サイドカー CSS（アイコンは名前空間クラス・inline style 不使用）
@@ -134,8 +135,9 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 import { renderDescription } from '@/lib/markup-renderer';
 const descriptionHtml = await renderDescription(task.description); // 既定 profile = github
 
-// 消費側レイアウトで alert CSS を明示 import
+// 消費側レイアウトで alert / GFM CSS を明示 import
 import '@/lib/remark-koyori-alerts/style.css';
+import '@/lib/remark-gfm/style.css';
 ```
 
 ## 拡張の口（seam）
@@ -154,12 +156,23 @@ import '@/lib/remark-koyori-alerts/style.css';
 
 ## テスト
 
-`src/lib/__tests__/kfm-*.test.ts` の 4 ファイル（件数は追加で変わるため書かない）:
+`src/lib/__tests__/kfm-*.test.ts` の 5 ファイル（件数は追加で変わるため書かない）:
 
 - `kfm-renderer.test.ts` — GFM 基本・alerts 境界・安全 core・決定性・profile fail-closed
 - `kfm-sanitize.test.ts` — FORBID style・class 完全一致・XSS 基本・カスタム要素 registry
 - `kfm-cache.test.ts` — djb2 衝突ペアの実衝突証明つき full-text キー検証・fingerprint 分離
 - `kfm-client-registry.test.ts` — SSR ガード（customElements 不在で no-op）・二重 define 安全
+- `kfm-story-fixtures.test.ts` — story fixture の drift 検査・孤立 rendered/*.html の検出
 
 セキュリティ上の要点（inline style 禁止・full-text キー・client ガード）はいずれも
 「その規約を破る変更を入れるとテストが落ちる」形で書かれている。
+
+## story fixture
+
+KFM の Storybook story (`stories/kfm/*`) は本番と同じ「サーバ生成 HTML を v-html するだけ」
+の同期描画で VRT baseline を決定的にする。fixture の運用は次の四点:
+
+- 入力の単一ソースは `src/lib/kfm-story-fixtures/inputs.ts`（キー 1 つ = fixture 1 枚 = story 1 つが基本）
+- `rendered/*.html` は `renderDescription` の事前生成物で、手で書き換えない
+- 再生成は `pnpm test:unit --update`（`kfm-story-fixtures.test.ts` の `toMatchFileSnapshot` が drift を CI で強制）
+- `vite.config.ts` の `fmt.ignorePatterns` から `rendered/**` を外すと drift 検査が偽陽性で落ちる（生成 HTML の整形差分を formatter が触るため）

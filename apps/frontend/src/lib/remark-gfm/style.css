@@ -1,0 +1,58 @@
+/*
+ * remark-gfm サイドカー CSS。
+ * Tailwind preflight が list-style / blockquote 縦線 / リンク装飾を消すため、
+ * GFM 出力 (ul/ol/blockquote/a/del) に当てる。消費側 (+Layout.vue 等) で明示 import
+ * する (SSR 副作用回避のためライブラリ側では import しない)。
+ */
+
+.kfm-story ul,
+.kfm-story ol {
+  margin: 0.5rem 0;
+  padding-left: 2em;
+}
+
+.kfm-story ul {
+  list-style-type: disc;
+}
+
+.kfm-story ol {
+  list-style-type: decimal;
+}
+
+.kfm-story ul ul {
+  list-style-type: circle;
+}
+
+.kfm-story ul ul ul {
+  list-style-type: square;
+}
+
+/* タスクリストは checkbox がマーカー役のため bullet を消す */
+.kfm-story ul.contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.kfm-story .task-list-item {
+  list-style: none;
+}
+
+.kfm-story blockquote {
+  margin: 0.5rem 0;
+  padding: 0 1em;
+  border-left: 0.25rem solid var(--border, #d0d7de);
+  color: inherit;
+}
+
+.kfm-story a {
+  color: #0969da;
+  text-decoration: underline;
+}
+
+.kfm-story del {
+  text-decoration: line-through;
+}
+
+.dark .kfm-story a {
+  color: #4493f8;
+}

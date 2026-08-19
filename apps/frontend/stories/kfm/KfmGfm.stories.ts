@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
+import { expect } from 'storybook/test';
 import codeFenceHtml from '@/lib/kfm-story-fixtures/rendered/gfm-code-fence.html?raw';
 import deepQuoteHtml from '@/lib/kfm-story-fixtures/rendered/gfm-deep-quote.html?raw';
 import nestedListsHtml from '@/lib/kfm-story-fixtures/rendered/gfm-nested-lists.html?raw';
@@ -6,6 +7,8 @@ import strikeAutolinkHtml from '@/lib/kfm-story-fixtures/rendered/gfm-strike-aut
 import tableAlignmentHtml from '@/lib/kfm-story-fixtures/rendered/gfm-table-alignment.html?raw';
 import tableOverflowHtml from '@/lib/kfm-story-fixtures/rendered/gfm-table-overflow.html?raw';
 import taskListHtml from '@/lib/kfm-story-fixtures/rendered/gfm-task-list.html?raw';
+// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
+import '@/lib/remark-gfm/style.css';
 
 /*
  * KFM (md レンダリング) の GFM story 群。
@@ -69,9 +72,14 @@ export const TaskList: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: checkbox 化が解けて素の [x] テキストに戻る、または contains-task-list / task-list-item class が剥がれてインデントが崩れると絵が変わる。',
+          '壊れたら: checkbox 化が解けて素の [x] テキストに戻る、または contains-task-list / task-list-item class が剥がれて DOM が変わる。CSS サイドカーが無いと bullet が復活し絵も変わる (play で class と checkbox 数を固定)。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('.contains-task-list')).not.toBeNull();
+    await expect(canvasElement.querySelectorAll('.task-list-item')).toHaveLength(5);
+    await expect(canvasElement.querySelectorAll('input[type="checkbox"]')).toHaveLength(5);
   },
 };
 
@@ -82,9 +90,17 @@ export const StrikeAutolink: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: ~~文~~ が del にならず素のチルダが見える、または裸 URL が a にならずリンク色/下線が消えると絵が変わる。',
+          '壊れたら: ~~文~~ が del にならず素のチルダが見える (play で del を固定)、または裸 URL が a にならずリンク色/下線が消えると絵が変わる (CSS サイドカー欠落でも VRT が拾う)。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('del')).not.toBeNull();
+    const link = canvasElement.querySelector('a[href^="https://example.com"]');
+    await expect(link).not.toBeNull();
+    const style = link ? getComputedStyle(link) : null;
+    await expect(style?.textDecoration).toContain('underline');
+    await expect(style?.color).not.toBe('');
   },
 };
 
@@ -95,9 +111,14 @@ export const NestedLists: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: 番号付き/記号リストの 4 段の入れ子でインデント幅やマーカー種別が変わると絵が変わる (parse かリストスタイルの変化)。',
+          '壊れたら: 番号付き/記号リストの 4 段入れ子 (ol > ol > ul > ul) が 1 段に潰れると play の DOM 構造が変わる。CSS サイドカーが無いとマーカー/インデントが消え絵も変わる。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelectorAll('ol ol ul ul')).toHaveLength(1);
+    const outerOl = canvasElement.querySelector('ol');
+    await expect(outerOl?.querySelectorAll(':scope > li')).toHaveLength(2);
   },
 };
 
@@ -107,9 +128,14 @@ export const DeepQuote: Story = {
   parameters: {
     docs: {
       description: {
-        story: '壊れたら: 三段の blockquote の縦線が 3 本未満になったら引用の入れ子が壊れている。',
+        story:
+          '壊れたら: 三段の blockquote の入れ子 (blockquote > blockquote > blockquote) が壊れると play が落ちる。CSS サイドカーが無いと縦線が 0 本になり絵も変わる。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('blockquote blockquote blockquote')).not.toBeNull();
+    await expect(canvasElement.querySelectorAll('blockquote')).toHaveLength(3);
   },
 };
 

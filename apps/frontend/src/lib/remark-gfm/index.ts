@@ -2,6 +2,8 @@
  * KFM の GFM 層 — remark-gfm の薄いラッパ。
  * 消費側は remark-gfm を直接 import せず本モジュールを経由する
  * (将来 @koyori-app/remark-gfm へ切り出すときの seam)。
+ * リスト/blockquote/リンクの見た目は `style.css` のサイドカー CSS で当てる
+ * (消費側で明示 import。レンダラは CSS を import しない契約)。
  */
 export { default as remarkGfm } from 'remark-gfm';
 

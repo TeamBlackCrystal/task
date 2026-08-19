@@ -15,7 +15,8 @@
  *   決定的なのは同一入力→同一 HTML (L1 キャッシュ・SSR/CSR 同一性) を保つため。
  * - クライアントは再パース・再サニタイズしない (DOMPurify はサーバで一度だけ)。
  * - alert の見た目は消費側で `@/lib/remark-koyori-alerts/style.css` を明示 import する
- *   (サイドカー方式)。
+ *   (サイドカー方式)。GFM 要素 (リスト/blockquote/リンク) は
+ *   `@/lib/remark-gfm/style.css` を同様に明示 import する (Tailwind preflight 対策)。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全
  * リクエスト・全 tenant) で共有される。L1 キャッシュが full-text キーであることが
