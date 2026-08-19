@@ -1,7 +1,9 @@
 import { LRUCache } from 'lru-cache';
+import type { PluggableList } from 'unified';
 import { describe, expect, it } from 'vitest';
 import { buildCacheKey } from '../markup-renderer/_cache';
 import { createRenderer } from '../markup-renderer/_renderer';
+import { rehypeStarryNight } from '../rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '../remark-koyori-alerts';
 
@@ -118,5 +120,50 @@ describe('pipeline fingerprint (設定変更で旧エントリを拾わない)',
     await make({ defaultProfile: 'github' })('同一本文');
     await make({ defaultProfile: 'github', maxDecorations: 8 })('同一本文');
     expect(shared.size).toBe(2);
+  });
+
+  it('rehypePlugins だけが違う renderer は同一本文でも別キャッシュエントリになる', async () => {
+    // fingerprint が rehype 層を見ていないと、着色ありの renderer が着色なしの旧 HTML を
+    // (またはその逆を) キャッシュから返す。ここはその回帰ガード。
+    const shared = new LRUCache<string, string>({ max: 100 });
+    const make = (rehypePlugins?: PluggableList) =>
+      createRenderer({
+        profiles: {
+          github: {
+            remarkPlugins: [remarkGfm, remarkKoyoriAlerts],
+            ...(rehypePlugins === undefined ? {} : { rehypePlugins }),
+          },
+        },
+        sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+        cache: shared,
+      });
+    // コードフェンスを含まない入力 = 両 renderer の出力 HTML は同一。それでもエントリが
+    // 分かれることが「キー差は fingerprint 由来であって出力差ではない」ことの証明になる。
+    const input = 'rehype 層 fingerprint の確認 (フェンスなし)';
+    const withoutRehype = await make()(input);
+    const withRehype = await make([rehypeStarryNight])(input);
+    expect(withoutRehype).toBe(withRehype);
+    expect(shared.size).toBe(2);
+  });
+
+  it('rehypePlugins が同一構成なら同一エントリを共有する (上の試験の陽性対照)', async () => {
+    // 独立 renderer 同士でも構成が同じならキーが一致する = 上の試験の size 2 が
+    // 「インスタンス差」でなく「rehype 層の構成差」から来ていることを固定する。
+    const shared = new LRUCache<string, string>({ max: 100 });
+    const make = () =>
+      createRenderer({
+        profiles: {
+          github: {
+            remarkPlugins: [remarkGfm, remarkKoyoriAlerts],
+            rehypePlugins: [rehypeStarryNight],
+          },
+        },
+        sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+        cache: shared,
+      });
+    const input = 'rehype 層 fingerprint の確認 (フェンスなし)';
+    await make()(input);
+    await make()(input);
+    expect(shared.size).toBe(1);
   });
 });

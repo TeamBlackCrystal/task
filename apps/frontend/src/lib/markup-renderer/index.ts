@@ -1,6 +1,7 @@
 /**
  * markup-renderer — KFM (Koyori Flavored Markdown) コア。
- * Phase 1 実体は github profile (= 複製レンダラ): GFM ＋ GitHub alerts ＋ 安全 core。
+ * Phase 1 実体は github profile (= 複製レンダラ):
+ * GFM ＋ GitHub alerts ＋ コードブロック着色 (starry-night) ＋ 安全 core。
  *
  * SSR / Hydration 契約:
  * - サーバ生成 HTML を唯一の入力とする。ページの +data.ts で
@@ -21,6 +22,8 @@
  *   class="kfm-content" (@/lib/remark-gfm/content-class.ts) を付ける (Tailwind
  *   preflight 対策)。GFM 出力は素の ul/blockquote/a で掴む class が無いため、
  *   器 scope が無いと GFM CSS は一行も当たらない。
+ * - コードブロック着色の見た目も同方式: 消費側で `@/lib/rehype-starry-night/style.css` を
+ *   明示 import する (実体は @wooorm/starry-night の light/dark 両対応シート)。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全
  * リクエスト・全 tenant) で共有される。L1 キャッシュが full-text キーであることが
@@ -29,6 +32,7 @@
  * 本ファイルは composition root であり、プラグイン (remark 層 ＋ sanitize スキーマ) を
  * コアへ注入する。コア実装 (_renderer / _sanitize / _cache) はプラグインを import しない。
  */
+import { rehypeStarryNight, starryNightSanitizeSchema } from '@/lib/rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '@/lib/remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
 import { resolveContentConfig } from './_config';
@@ -57,11 +61,15 @@ const contentConfig = resolveContentConfig();
 
 export const renderDescription = createRenderer({
   profiles: {
-    // github profile = 共有 core そのもの (GFM ＋ alerts ＋ sanitize ＋ cache ＋ SSR 契約)
-    github: { remarkPlugins: [remarkGfm, remarkKoyoriAlerts] },
-    // Phase 2 seam: kfm profile はここへ remark 層を足す (コアは不変)。
+    // github profile = 共有 core そのもの (GFM ＋ alerts ＋ 着色 ＋ sanitize ＋ cache ＋ SSR 契約)
+    github: {
+      remarkPlugins: [remarkGfm, remarkKoyoriAlerts],
+      // GitHub 同様のコードブロック着色。rehype 層 (remark-rehype の後段) に挿す。
+      rehypePlugins: [rehypeStarryNight],
+    },
+    // Phase 2 seam: kfm profile はここへ remark / rehype 層を足す (コアは不変)。
   },
-  sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+  sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema, starryNightSanitizeSchema],
   contentConfig,
   // config の既定 profile を描画既定へ実際に接続する (contentConfig はキャッシュキー用の
   // 不透明値でしかないため、ここで渡さない限り defaultProfile は描画に効かない)

@@ -1,11 +1,11 @@
 /**
  * _renderer.ts — controlled pipeline のコア (createRenderer)。
  *
- * pipeline: remark-parse → (profile 別 remark 層) → remark-rehype → rehype-stringify
- *           → DOMPurify (構造専任) → HTML 文字列。
+ * pipeline: remark-parse → (profile 別 remark 層) → remark-rehype → (profile 別 rehype 層)
+ *           → rehype-stringify → DOMPurify (構造専任) → HTML 文字列。
  * - allowDangerousHtml は使わない。mdast の生 html ノードは remark-rehype 既定で黙って
  *   消えるため、プラグインは data.hName / hProperties の型付き emit のみ行う契約。
- * - コアはプラグインを import しない。profile ごとの remark 層と sanitize スキーマは
+ * - コアはプラグインを import しない。profile ごとの remark / rehype 層と sanitize スキーマは
  *   composition root (index.ts) が注入する。
  * - processor は profile ごとに 1 回だけ build して memoize する (N 重初期化回避)。
  */
@@ -27,6 +27,13 @@ export type KfmProfile = 'github';
 export type ProfileDefinition = {
   /** 共有 core (remark-parse → remark-rehype → rehype-stringify) に挿す remark 層 */
   readonly remarkPlugins: PluggableList;
+  /**
+   * remark-rehype と rehype-stringify の間に挿す rehype 層 (省略 = なし)。
+   * async transformer を持つプラグイン (rehype-starry-night 等) も可 — process() が
+   * await する。プラグイン factory 自体は同期である前提 (unified の use() 契約どおり)
+   * のため、processor 構築 (getProcessor) は同期のまま。
+   */
+  readonly rehypePlugins?: PluggableList;
 };
 
 export type CreateRendererOptions = {
@@ -82,6 +89,7 @@ function buildProcessor(definition: ProfileDefinition, clobberPrefix: string) {
     .use(remarkParse)
     .use(definition.remarkPlugins)
     .use(remarkRehype, { clobberPrefix })
+    .use(definition.rehypePlugins ?? [])
     .use(rehypeStringify)
     .freeze();
 }
@@ -94,18 +102,27 @@ type BuiltProcessor = ReturnType<typeof buildProcessor>;
  * プロセス内 (L1) 専用 —— 関数名は minify で変わり得るため、永続 L2 を導入する際は
  * ビルドを跨いで安定な名前へ置き換えること。
  */
+function describePluggableList(plugins: PluggableList): string[] {
+  return plugins.map((plugin) => {
+    if (Array.isArray(plugin)) {
+      const [fn, ...settings] = plugin;
+      const name = typeof fn === 'function' ? fn.name : JSON.stringify(fn);
+      return `${name}(${JSON.stringify(settings)})`;
+    }
+    return typeof plugin === 'function' ? plugin.name : JSON.stringify(plugin);
+  });
+}
+
 function buildPipelineFingerprint(options: CreateRendererOptions): string {
+  // remark 層と rehype 層を別キーで焼き込む。rehype 層を見ないと、rehypePlugins だけが
+  // 違う renderer が同一キーを作り、旧規則で通った HTML を返す (kfm-cache テストで固定)。
   const pluginNames = Object.fromEntries(
     Object.entries(options.profiles).map(([profile, definition]) => [
       profile,
-      definition.remarkPlugins.map((plugin) => {
-        if (Array.isArray(plugin)) {
-          const [fn, ...settings] = plugin;
-          const name = typeof fn === 'function' ? fn.name : JSON.stringify(fn);
-          return `${name}(${JSON.stringify(settings)})`;
-        }
-        return typeof plugin === 'function' ? plugin.name : JSON.stringify(plugin);
-      }),
+      {
+        remark: describePluggableList(definition.remarkPlugins),
+        rehype: describePluggableList(definition.rehypePlugins ?? []),
+      },
     ]),
   );
   const sanitizeShape = options.sanitizeSchemas.map((schema) => ({
@@ -178,7 +195,25 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     const key = buildCacheKey(fingerprint, profile, scope ?? '', contentConfigJson, normalized);
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const html = sanitize(String(await getProcessor(profile, clobberPrefix).process(normalized)));
+    const processor = getProcessor(profile, clobberPrefix);
+    let rendered: string;
+    try {
+      rendered = String(await processor.process(normalized));
+    } catch (error) {
+      // 非同期初期化の失敗は「捨てて再試行」: rehype-starry-night は createStarryNight
+      // (async) の Promise をプラグインインスタンス内に保持し、初期化に一度失敗すると
+      // その processor は以後の全 render で reject し続ける (poisoned promise)。
+      // renderDescription はプロセス全体で共有される singleton のため、poisoned のまま
+      // 永久保持するとプロセス再起動まで復旧不能になる。process() 失敗時は memoize を
+      // 破棄し、次回 render に processor ごと再構築させる (再構築は失敗時のみ発生し、
+      // 成功するまで cache.set に到達しないので誤った HTML が残ることはない)。
+      // instance guard は、遅れて reject した旧 processor が別 render の据えた新しい
+      // memoize を巻き添えで破棄するのを防ぐ。scope 付き描画の processor は
+      // memoize されないので、この guard は自然に空振りする (削除対象がない)。
+      if (processorCache.get(profile) === processor) processorCache.delete(profile);
+      throw error;
+    }
+    const html = sanitize(rendered);
     cache.set(key, html);
     return html;
   };

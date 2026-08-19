@@ -1,0 +1,8 @@
+/*
+ * KFM コードブロック着色のサイドカー CSS (alerts と同じ方式)。
+ * renderer は CSS を import しない — 消費側 (SSR HTML を v-html で受けるページ) が
+ * 本ファイルを明示 import する。実体は @wooorm/starry-night 同梱の light/dark 両対応
+ * シート (prefers-color-scheme 切替)。specifier は exports map ("./style/*" →
+ * "./style/*.css") に合わせて拡張子なしで書く。
+ */
+@import '@wooorm/starry-night/style/both';
