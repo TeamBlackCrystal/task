@@ -44,9 +44,20 @@ export const TableAlignment: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: th/td の align 属性が剥がれる (sanitize / remark-rehype の変化) と 3 列の文字寄せが全て左に揃い、絵が変わる。',
+          '壊れたら: th/td の align 属性が剥がれる (sanitize / remark-rehype の変化) と 3 列の文字寄せが全て左に揃い、絵が変わる (play で computed textAlign を固定)。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    // align 属性はブラウザが text-align へ写して初めて絵になる。属性剥がれを
+    // DOM でなく computed で見ることで「属性はあるが効いていない」も一緒に固定する。
+    // Chromium は属性由来の値を -webkit-left 等で返すため接頭辞を剥いで比較する
+    const cells = canvasElement.querySelectorAll('tbody tr:first-child td');
+    await expect(cells).toHaveLength(3);
+    const aligns = Array.from(cells).map((cell) =>
+      getComputedStyle(cell).textAlign.replace('-webkit-', ''),
+    );
+    await expect(aligns).toEqual(['left', 'center', 'right']);
   },
 };
 
@@ -62,9 +73,23 @@ export const TableOverflow: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: 幅広の表が狭い親をどうはみ出すか (潰れ方・突き抜け方) が変わったら、テーブルレイアウトか消費側 overflow 方針の変化。',
+          '壊れたら: 幅広の表が狭い親をどうはみ出すか (潰れ方・突き抜け方) が変わったら、テーブルレイアウトか消費側 overflow 方針の変化 (play で幅制限の実効と表/親の幅関係を固定)。',
       },
     },
+  },
+  play: async ({ canvasElement }) => {
+    const container = canvasElement.querySelector('.max-w-md');
+    const table = canvasElement.querySelector('table');
+    await expect(container).not.toBeNull();
+    await expect(table).not.toBeNull();
+    // 幅制限の実効 (Tailwind max-w-md = 28rem)。utility が当たらなければ「狭い親」の前提が崩れる
+    await expect(container ? getComputedStyle(container).maxWidth : '').toBe('448px');
+    // 表は親の幅制限に収まる (auto layout が列を圧縮する潰れ方の絵)。
+    // はみ出す絵に変わったらテーブルレイアウトか overflow 方針の変化
+    const containerWidth = container?.getBoundingClientRect().width ?? 0;
+    const tableWidth = table?.getBoundingClientRect().width ?? 0;
+    await expect(containerWidth).toBeGreaterThan(0);
+    await expect(tableWidth).toBeLessThanOrEqual(containerWidth);
   },
 };
 
@@ -75,7 +100,7 @@ export const TaskList: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: checkbox 化が解けて素の [x] テキストに戻る、または contains-task-list / task-list-item class が剥がれて DOM が変わる。CSS サイドカーが無いと bullet が復活し絵も変わる (play で class と checkbox 数を固定)。',
+          '壊れたら: checkbox 化が解けて素の [x] テキストに戻る、または contains-task-list / task-list-item class が剥がれて DOM が変わる。CSS サイドカーが無いと bullet が復活し、入れ子の字下げが消えると親子タスクが同じ横位置に潰れて絵が変わる (play で DOM と computed の両方を固定)。',
       },
     },
   },
@@ -83,6 +108,18 @@ export const TaskList: Story = {
     await expect(canvasElement.querySelector('.contains-task-list')).not.toBeNull();
     await expect(canvasElement.querySelectorAll('.task-list-item')).toHaveLength(5);
     await expect(canvasElement.querySelectorAll('input[type="checkbox"]')).toHaveLength(5);
+    // DOM 構造だけでは CSS 剥がれの平坦表示が「正常」として VRT baseline に焼き付く
+    // (task PR#583)。CSS サイドカーの実効を computed で固定する:
+    // 最上位は bullet 無し・字下げ 0 (checkbox がマーカー役)、入れ子は字下げ > 0
+    const topList = canvasElement.querySelector(`.${KFM_CONTENT_CLASS} > ul.contains-task-list`);
+    const nestedList = canvasElement.querySelector('.task-list-item > ul.contains-task-list');
+    await expect(topList).not.toBeNull();
+    await expect(nestedList).not.toBeNull();
+    const topStyle = topList ? getComputedStyle(topList) : null;
+    const nestedStyle = nestedList ? getComputedStyle(nestedList) : null;
+    await expect(topStyle?.listStyleType).toBe('none');
+    await expect(topStyle?.paddingLeft).toBe('0px');
+    await expect(Number.parseFloat(nestedStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
   },
 };
 
@@ -98,12 +135,17 @@ export const StrikeAutolink: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelector('del')).not.toBeNull();
+    const del = canvasElement.querySelector('del');
+    await expect(del).not.toBeNull();
+    // 打ち消し線の実効 (.kfm-content del)。del 要素があっても線が消えれば絵が変わる
+    await expect(del ? getComputedStyle(del).textDecorationLine : '').toContain('line-through');
     const link = canvasElement.querySelector('a[href^="https://example.com"]');
     await expect(link).not.toBeNull();
     const style = link ? getComputedStyle(link) : null;
     await expect(style?.textDecoration).toContain('underline');
-    await expect(style?.color).not.toBe('');
+    // リンク色の実効 (#0969da)。旧検査 not.toBe('') は computed color が常に非空文字列の
+    // ため何も検証していなかった (空振り)
+    await expect(style?.color).toBe('rgb(9, 105, 218)');
   },
 };
 
@@ -122,6 +164,16 @@ export const NestedLists: Story = {
     await expect(canvasElement.querySelectorAll('ol ol ul ul')).toHaveLength(1);
     const outerOl = canvasElement.querySelector('ol');
     await expect(outerOl?.querySelectorAll(':scope > li')).toHaveLength(2);
+    // マーカーとインデントの実効。CSS サイドカーが無いと preflight が両方消し、
+    // DOM が入れ子のままでも絵は一段の平文に潰れる
+    const outerStyle = outerOl ? getComputedStyle(outerOl) : null;
+    await expect(outerStyle?.listStyleType).toBe('decimal');
+    await expect(Number.parseFloat(outerStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
+    const deepUl = canvasElement.querySelector('ol ol ul ul');
+    const deepStyle = deepUl ? getComputedStyle(deepUl) : null;
+    // 四段目 ul は「ul の中の ul」なので .kfm-content ul ul の circle が当たる
+    await expect(deepStyle?.listStyleType).toBe('circle');
+    await expect(Number.parseFloat(deepStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
   },
 };
 
@@ -138,7 +190,15 @@ export const DeepQuote: Story = {
   },
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector('blockquote blockquote blockquote')).not.toBeNull();
-    await expect(canvasElement.querySelectorAll('blockquote')).toHaveLength(3);
+    const quotes = canvasElement.querySelectorAll('blockquote');
+    await expect(quotes).toHaveLength(3);
+    // 縦線 3 本の実効 (.kfm-content blockquote の border-left 0.25rem solid)。
+    // 色はテーマトークン (--border) 追従のため幅と線種のみ固定する
+    for (const quote of Array.from(quotes)) {
+      const style = getComputedStyle(quote);
+      await expect(style.borderLeftWidth).toBe('4px');
+      await expect(style.borderLeftStyle).toBe('solid');
+    }
   },
 };
 

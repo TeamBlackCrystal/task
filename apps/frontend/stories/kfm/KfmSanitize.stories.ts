@@ -3,8 +3,11 @@ import { expect } from 'storybook/test';
 import classSpoofHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-class-spoof.html?raw';
 import inlineStyleHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-inline-style.html?raw';
 import scriptHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-script.html?raw';
-// class-spoof story は正規 alert を含むため、消費側として CSS サイドカーを明示 import
+// class-spoof story は正規 alert を含むため、消費側として CSS サイドカーを明示 import。
+// 本番消費側は alerts / GFM の両サイドカーを import するため story も両方揃える
+// (現 fixture に GFM 対象要素は無いが、器の CSS 条件は本番と常に一致させる)
 import '@/lib/remark-koyori-alerts/style.css';
+import '@/lib/remark-gfm/style.css';
 // 器は本番と同じ .kfm-content (単一ソース = content-class.ts)
 import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 

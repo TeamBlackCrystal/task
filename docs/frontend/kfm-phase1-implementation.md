@@ -159,7 +159,8 @@ scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同
 
 ## テスト
 
-`src/lib/__tests__/kfm-*.test.ts` の 6 ファイル（件数は追加で変わるため書かない）:
+`src/lib/__tests__/kfm-*.test.ts`（ファイル数・テスト数は増え続けるため書かない。
+現在値は `pnpm test:unit` の出力を正とする）:
 
 - `kfm-renderer.test.ts` — GFM 基本・alerts 境界・安全 core・決定性・profile fail-closed
 - `kfm-sanitize.test.ts` — FORBID style・class 完全一致・XSS 基本・カスタム要素 registry
