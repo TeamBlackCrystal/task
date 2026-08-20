@@ -163,6 +163,16 @@ describe('task description +data', () => {
     timeoutSpy.mockRestore();
   });
 
+  it('本文長上限: 65536 文字ちょうどは描画し、超過は null (プレーン表示) へ倒す', async () => {
+    stubBackend({ description: 'a'.repeat(65_536) });
+    const atLimit = await data(pageContext());
+    expect(atLimit.descriptionHtml).not.toBeNull();
+    expect(atLimit.descriptionSource).toHaveLength(65_536);
+
+    stubBackend({ description: 'a'.repeat(65_537) });
+    expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
+  });
+
   it('tenant / project が見つからない場合は null', async () => {
     stubBackend();
     const missingTenant = {

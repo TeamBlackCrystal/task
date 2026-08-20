@@ -16,7 +16,8 @@ type TaskDetail = components['schemas']['TaskDetailResponse'];
 
 export type Data = {
   /**
-   * renderDescription (サーバ) の出力。説明が無い・取得に失敗した場合は null で、
+   * renderDescription (サーバ) の出力。説明が無い・取得に失敗した・本文が
+   * MAX_DESCRIPTION_LENGTH を超える場合は null で、
    * 表示側はプレーンテキスト表示へフォールバックする (v-html には入らない)。
    */
   descriptionHtml: string | null;
@@ -31,6 +32,12 @@ export type Data = {
 };
 
 const EMPTY: Data = { descriptionHtml: null, descriptionSource: null };
+
+// 本文長の上限: 超過分は KFM 描画せず EMPTY (プレーンテキスト表示) へ倒す。
+// renderDescription の CPU も L1 キャッシュ (full-text キー) のメモリも本文長に
+// 比例するため、SSR に非有界の入力を入れない。値は GitHub issue 本文の上限
+// 65536 文字に合わせる (KFM Phase 1 = github profile の複製レンダラ)。
+const MAX_DESCRIPTION_LENGTH = 65_536;
 
 // 遅い backend で SSR 全体を止めない: 各 GET は 3 秒で打ち切り、打ち切りは
 // 取得失敗と同じ扱いで null (プレーンテキスト表示フォールバック) へ倒す。
@@ -86,6 +93,7 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
       cookie,
     );
     if (!task?.description) return EMPTY;
+    if (task.description.length > MAX_DESCRIPTION_LENGTH) return EMPTY;
 
     // scope はタスク UUID で決定的 (同一入力 → 同一 HTML)。URL の seq key (例 "ENG-42")
     // ではなく UUID を使うのは、scope の文字集合制約 [A-Za-z0-9_-]+ を常に満たすため。

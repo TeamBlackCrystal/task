@@ -11,6 +11,8 @@ UI 接続まで**。本番の呼び出し元はタスク詳細の `+data.ts`（�
 `TaskDetailHub.vue` へ渡し、最新の `task.description` と厳密一致するときだけ `v-html`
 する（不一致はプレーンテキスト表示へフォールバック）。サイドカー CSS 4 本も
 `TaskDetailHub.vue` が import 済み。後述の「利用方法」はこの接続実体の要約である。
+接続済みの消費側はこのタスク詳細ページ一つだけで、他の本文表示箇所
+（タスク一覧の分割ビューのペイン・コメント本文など）は未接続の残件である。
 
 ## 構成
 
@@ -167,8 +169,13 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 ## SSR / Hydration 契約
 
 - サーバ生成 HTML を唯一の入力とする。ページの `+data.ts` で
-  `descriptionHtml: await renderDescription(text)` を実行して `pageContext.data` に載せ、
-  コンポーネントは `v-html` で受けるだけにする
+  `descriptionHtml: await renderDescription(text)` を実行し、描画元テキスト
+  `descriptionSource`（renderDescription へ渡した入力そのもの）と**対で**
+  `pageContext.data` に載せる。消費側は descriptionSource がクライアントの持つ
+  最新の生テキスト（task.description）と厳密一致するときだけ descriptionHtml を
+  `v-html` へ流し、不一致（保存直後・reload 失敗・他者更新で HTML が古い）は
+  プレーンテキスト表示へフォールバックする。descriptionHtml を単独で受けて
+  無条件に `v-html` する消費側を作ってはならない
 - 同一ページに複数の KFM 断片（タスク本文＋コメント等）を並べる場合は、断片ごとに
   **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
   ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
@@ -190,9 +197,11 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 ## 利用方法
 
 ```ts
-// +data.ts（サーバ側）— 実体は tasks/@taskId/+data.ts。scope はタスク UUID で決定的
+// +data.ts（サーバ側）— 実体は tasks/@taskId/+data.ts。scope はタスク UUID で決定的。
+// HTML は描画元テキストと必ず対で返す（消費側の stale 照合キー）
 import { renderDescription } from '@/lib/markup-renderer';
 const descriptionHtml = await renderDescription(task.description, { scope: `task-${task.id}` });
+return { descriptionHtml, descriptionSource: task.description };
 
 // 消費側レイアウトで alert / GFM / 着色 CSS を明示 import
 import '@/lib/remark-koyori-alerts/style.css';
@@ -202,8 +211,15 @@ import '@/lib/remark-kfm-mermaid/style.css';
 ```
 
 ```html
-<!-- 消費側コンポーネント: v-html する器に kfm-content を付ける（GFM CSS の scope） -->
-<div class="kfm-content" v-html="descriptionHtml" />
+<!-- 消費側コンポーネント: 描画元が最新の生テキストと厳密一致するときだけ v-html する。
+     器に kfm-content を付ける（GFM CSS の scope） -->
+<div
+  v-if="descriptionHtml && descriptionSource === task.description"
+  class="kfm-content"
+  v-html="descriptionHtml"
+/>
+<!-- 不一致・HTML なしはプレーンテキスト表示へフォールバック -->
+<p v-else>{{ task.description }}</p>
 ```
 
 四つのサイドカー CSS は消費契約の前提が異なる:

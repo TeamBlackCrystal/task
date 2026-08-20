@@ -5,6 +5,9 @@ import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import TaskDetailPage from '@/pages/@tenant/projects/@projectKey/tasks/@taskId/+Page.vue';
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
+// vike-vue の useData は inject('vike-vue:useData') の素通し。+data.ts の戻り値と
+// 同形のオブジェクトを provide すると +Page.vue の SSR データ枝 (KFM 表示) が通る。
+const DATA_KEY = 'vike-vue:useData';
 
 const mockContext = {
   urlPathname: '/tenant-123/projects/ENG/tasks/ENG-1',
@@ -246,6 +249,7 @@ function mockFetch() {
 
 function storyDecorator(
   context: { urlPathname: string; routeParams: Record<string, string> } = mockContext,
+  pageData?: { descriptionHtml: string | null; descriptionSource: string | null },
 ) {
   return () => ({
     setup() {
@@ -257,6 +261,7 @@ function storyDecorator(
       });
       provide(VUE_QUERY_CLIENT, queryClient);
       provide(PAGE_CONTEXT_KEY, context);
+      if (pageData) provide(DATA_KEY, pageData);
     },
     template: '<story />',
   });
@@ -305,6 +310,32 @@ export const Default: Story = {
     // 担当者はアバター（頭文字）のみ表示し、名前テキストは出さない（詳細では hideNames）
     await expect(canvas.findByText('田')).resolves.toBeInTheDocument();
     await expect(canvas.queryByText('田中太郎')).not.toBeInTheDocument();
+  },
+};
+
+// KFM 表示 story の入力対。本番では +data.ts (サーバ) の renderDescription 出力だが、
+// story は同期描画のため sanitize 済み出力と同形の静的 HTML を使う。
+// descriptionSource は task.description と厳密一致させる (照合が成立する条件)。
+const KFM_DESCRIPTION = '**強調** と `code` を含む説明';
+const KFM_DESCRIPTION_HTML = '<p><strong>強調</strong> と <code>code</code> を含む説明</p>';
+
+export const DescriptionKfmRendered: Story = {
+  name: '説明 KFM 描画（useData 接続）',
+  decorators: [
+    storyDecorator(mockContext, {
+      descriptionHtml: KFM_DESCRIPTION_HTML,
+      descriptionSource: KFM_DESCRIPTION,
+    }),
+  ],
+  beforeEach: () =>
+    createMockFetch({ task: { ...sampleTaskDetail, description: KFM_DESCRIPTION } }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // 照合成立 (descriptionSource === task.description) → KFM 枝が v-html 描画される
+    const strong = await canvas.findByText('強調');
+    expect(strong.tagName).toBe('STRONG');
+    // プレーン枝 (生テキストのマーカー記法そのまま) が出ていない
+    expect(canvas.queryByText(KFM_DESCRIPTION)).toBeNull();
   },
 };
 
