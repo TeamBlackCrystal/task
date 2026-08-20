@@ -64,7 +64,11 @@ cargo test --workspace --lib
   - `DATABASE_URL` / `REDIS_URL` が環境か `.env` に設定済みならそれを優先する（CI と同じ経路。CI はこの経路のためワークフロー変更不要）
   - SMTP・シークレット系の env はハーネスが CI と同じテスト用の値で補完する。GitHub App 系も設定不要（`load_github_test_env()` が自前注入）。SMTP は実サーバー不要
 - API 表面を変えたら: `cd apps/frontend && pnpm openapi && node_modules/.bin/vp fmt`
-  - CLI 型も再生成: `cd apps/cli && pnpm openapi:generate`
+  - CLI 型も再生成: `cd apps/cli && pnpm openapi:generate`。**忘れると `cli-test` の
+    「Check generated CLI OpenAPI type drift」で落ちる**（#595 で実発生）。frontend だけ直して
+    終わりにしない
+  - `pnpm openapi` は **`pnpm install` 済みの作業ツリーで実行する**。未インストールだと
+    `vp fmt` が無く、整形前の `openapi.json`（インデント差分だけで数千行）をコミットしかける
   - 整形は **`vp fmt`**（prettier は入っていない）。`api.d.ts` は gitignore 済み
   - API を変えていない PR では `openapi.json` の差分ゼロが検証項目になる
 
@@ -82,6 +86,7 @@ cargo test --workspace --lib
 
 - バグ修正 PR には**修正前の main で fail する回帰テスト**を付ける（バグの証明として機能させる）
 - 統合テストは `tests/common` の `TestApp` を使う。拒否系（403/404）と対照の成功系（200/201、過剰拒否でないこと）をセットで書く
+- 外部 API のモックが返す件数は、その API の境界（GitHub のページサイズ既定 30 件など）を**越えた値**にする。境界ちょうどにすると、ページングの欠落のような「境界で切れるバグ」をテストが隠す（#595 で実発生。30 件のモックが 31 件目以降の欠落を隠していた）
 - エラーは握り潰さず `?` で伝播する（`unwrap_or(false)` / `let _ =` でのもみ消しが実バグを隠した前例あり）
 - コミットは Conventional Commits + 日本語（例: `fix(backend): …` / `refactor(workspace): …`）。1 関心 = 1 PR
 - PR 本文も日本語。「概要 / 変更内容 / 挙動の変化 / テスト」の構成
