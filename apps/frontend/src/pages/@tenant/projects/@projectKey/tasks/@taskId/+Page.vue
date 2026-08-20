@@ -12,7 +12,10 @@ import type { Data } from './+data';
 const pageContext = usePageContext();
 // サーバ (+data.ts) が renderDescription した説明 HTML。クライアントは受けて v-html
 // するだけで、再パースしない (SSR 契約: @/lib/markup-renderer/index.ts)。
-const data = useData<Data>();
+// Storybook は +Page.vue を直接マウントし data を provide しないため undefined になる。
+// 型で undefined を認め、参照側で null へ倒す（descriptionHtml は元々 null 許容で、
+// null ならプレーンテキスト表示へフォールバックする）。
+const data = useData<Data>() as Data | undefined;
 
 // 削除後遷移の seam。既定は SPA 遷移だが、テスト等が差し替えられるよう inject 経由にする。
 const navigateAfterDelete = inject<(href: string) => void>('navigateAfterDelete', (href) => {
@@ -88,7 +91,7 @@ function onDeleteDialogCancel(event: Event) {
 <template>
   <TaskDetailHub
     :task="displayTask"
-    :description-html="data.descriptionHtml"
+    :description-html="data?.descriptionHtml ?? null"
     :project-key="projectKey"
     :statuses="statuses"
     :project-labels="projectLabels"
