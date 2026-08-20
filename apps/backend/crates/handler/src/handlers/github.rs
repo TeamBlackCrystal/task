@@ -133,40 +133,11 @@ pub async fn start_github_install(
     require_tenant_owner(&state, tenant_id, auth.user_id).await?;
     require_project_in_tenant(&state, tenant_id, project_id).await?;
 
-    let existing_installation_id = match github_integrations::Entity::find()
+    let existing_installation_id = github_integrations::Entity::find()
         .filter(github_integrations::Column::ProjectId.eq(project_id))
         .one(&state.db)
         .await?
-    {
-        Some(row) => Some(row.installation_id),
-        // 選択を放棄したインストールへ戻る経路。これが無いと「インストール済みだが
-        // 連携レコードが無い」状態から抜け出せない（新規扱いの鮮度チェックで落ちる）。
-        None => {
-            let pending = install_state::peek_pending_installation(&state.redis_client, project_id)
-                .await
-                .map_err(AppError::Internal)?;
-            // 既に消えているインストールに束縛すると、入れ直した installation を
-            // 逆に弾いてしまう。GitHub 側に残っているものだけを使う。
-            match pending {
-                Some(id)
-                    if github_app(&state.http_client, github)
-                        .fetch_installation(id)
-                        .await
-                        .is_err() =>
-                {
-                    tracing::info!(
-                        installation_id = id,
-                        "pending github installation is gone; treating as new install"
-                    );
-                    install_state::delete_pending_installation(&state.redis_client, project_id)
-                        .await
-                        .map_err(AppError::Internal)?;
-                    None
-                }
-                other => other,
-            }
-        }
-    };
+        .map(|row| row.installation_id);
 
     let state_token = install_state::new_state_token();
     install_state::store_state(
@@ -231,10 +202,22 @@ pub async fn github_callback(
     let app = github_app(&state.http_client, github);
     // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
     // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
+    //
+    // リポジトリ選択を放棄したインストールは、DB に行が無いまま古くなるため鮮度チェックに
+    // 落ちる。そのプロジェクトの選択待ちとして控えてある ID と一致する場合だけ、束縛済みと
+    // 同じ扱いにして通す。一致しなければ通常の新規インストール判定に戻すので、別の
+    // インストールへ乗り換える動線を塞がない。
+    let expected_installation_id = match payload.installation_id {
+        Some(bound) => Some(bound),
+        None => install_state::peek_pending_installation(&state.redis_client, payload.project_id)
+            .await
+            .map_err(AppError::Internal)?
+            .filter(|pending| *pending == query.installation_id),
+    };
     let installation = app
         .verify_installation(
             query.installation_id,
-            payload.installation_id,
+            expected_installation_id,
             chrono::Duration::seconds(TTL_SECS as i64),
         )
         .await
@@ -252,10 +235,13 @@ pub async fn github_callback(
         .await
         .map_err(AppError::Internal)?;
 
+    let redirect_to =
+        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+
     // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
-    // 選択トークンを渡しても選べない画面になるだけなので、ここで弾く。
+    // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
     if repositories.is_empty() {
-        // 戻ってきたときに新規扱いの鮮度チェックで弾かれないよう、控えておく。
+        // リポジトリを足して戻ってきたとき、鮮度チェックで弾かれないよう控えておく。
         install_state::store_pending_installation(
             &state.redis_client,
             payload.project_id,
@@ -267,11 +253,11 @@ pub async fn github_callback(
             installation_id = query.installation_id,
             "github callback: installation has no accessible repositories"
         );
-        return Err(AppError::BadRequest);
+        return Ok(
+            Redirect::temporary(&format!("{redirect_to}&github_error=no_repositories"))
+                .into_response(),
+        );
     }
-
-    let redirect_to =
-        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
 
     // 複数見えるときは連携せず、選択トークンを発行して設定ページへ戻す。
     // installation_id はトークン側（Redis）に束縛し、リクエストでは受け取らない。

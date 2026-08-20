@@ -35,6 +35,12 @@ const selectToken = ref<string | null>(
     ?.search?.github_select ?? null,
 );
 const repositories = ref<{ owner: string; name: string }[]>([]);
+const callbackError = ref<string | null>(
+  (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
+    ?.search?.github_error === 'no_repositories'
+    ? 'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。'
+    : null,
+);
 const selectError = ref<string | null>(null);
 const selectPending = ref(selectToken.value !== null);
 const isDisconnectOpen = ref(false);
@@ -219,6 +225,7 @@ async function confirmDisconnect() {
         </Button>
       </div>
       <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
+      <p v-if="callbackError" role="alert" class="text-sm text-destructive">{{ callbackError }}</p>
 
       <!-- インストールに複数リポジトリが含まれるとき、連携先を 1 件選ばせる -->
       <div v-if="selectToken" class="rounded-[10px] border p-4">

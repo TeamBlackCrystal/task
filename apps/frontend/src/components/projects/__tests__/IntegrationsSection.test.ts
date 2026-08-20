@@ -80,7 +80,7 @@ function stubFetch(state: MockState) {
   return fetchMock;
 }
 
-function mountSection(options: { selectToken?: string } = {}) {
+function mountSection(options: { selectToken?: string; callbackError?: string } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -89,10 +89,19 @@ function mountSection(options: { selectToken?: string } = {}) {
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
       provide:
-        options.selectToken !== undefined
+        options.selectToken !== undefined || options.callbackError !== undefined
           ? {
               'vike-vue:usePageContext': {
-                urlParsed: { search: { github_select: options.selectToken } },
+                urlParsed: {
+                  search: {
+                    ...(options.selectToken !== undefined
+                      ? { github_select: options.selectToken }
+                      : {}),
+                    ...(options.callbackError !== undefined
+                      ? { github_error: options.callbackError }
+                      : {}),
+                  },
+                },
               },
             }
           : {},
@@ -340,5 +349,14 @@ describe('IntegrationsSection', () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain('koyori-app/docs');
+  });
+
+  it('リポジトリ 0 件で戻された場合は理由を表示する', async () => {
+    stubFetch({ connected: false });
+    mountSection({ callbackError: 'no_repositories' });
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('リポジトリが 1 件も含まれていません');
+    expect(bodyButton('連携する')).toBeTruthy();
   });
 });

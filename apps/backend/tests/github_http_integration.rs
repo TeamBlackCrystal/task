@@ -16,7 +16,9 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .and(path_regex(r"^/app/installations/\d+/access_tokens$"))
         .respond_with(|req: &wiremock::Request| {
             let id = installation_id_from_url(&req.url);
-            let token = if id >= NO_REPO_ID_BASE {
+            let token = if id >= OLD_ID_BASE {
+                "ghs_multi_repo_token"
+            } else if id >= NO_REPO_ID_BASE {
                 "ghs_no_repo_token"
             } else if id >= MULTI_REPO_ID_BASE {
                 "ghs_multi_repo_token"
@@ -35,10 +37,15 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .and(path_regex(r"^/app/installations/\d+$"))
         .respond_with(|req: &wiremock::Request| {
             let installation_id = installation_id_from_url(&req.url);
+            let created_at = if installation_id >= OLD_ID_BASE {
+                chrono::Utc::now() - chrono::Duration::hours(1)
+            } else {
+                chrono::Utc::now()
+            };
             ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": installation_id,
                 "account": { "login": "acme" },
-                "created_at": chrono::Utc::now().to_rfc3339(),
+                "created_at": created_at.to_rfc3339(),
             }))
         })
         .mount(server)
@@ -97,6 +104,9 @@ async fn mount_github_api_mocks(server: &MockServer) {
 const MULTI_REPO_ID_BASE: i64 = 1_500_000_000_000;
 /// この値以上は「1 件も見えないインストール」。
 const NO_REPO_ID_BASE: i64 = 2_500_000_000_000;
+/// この値以上は「作成から時間が経った、複数リポジトリのインストール」。
+/// 新規インストール扱いの鮮度チェック（state の TTL 内に作成されたもののみ）に落ちる。
+const OLD_ID_BASE: i64 = 3_500_000_000_000;
 
 fn installation_id_from_url(url: &url::Url) -> i64 {
     url.path_segments()
@@ -114,6 +124,10 @@ fn unique_multi_repo_installation_id() -> i64 {
 
 fn unique_no_repo_installation_id() -> i64 {
     NO_REPO_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
+}
+
+fn unique_old_installation_id() -> i64 {
+    OLD_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
 }
 
 fn repositories_path(tp: &TestTenantProject, select_token: &str) -> String {
@@ -497,7 +511,7 @@ async fn github_http_integration_suite() {
         app.reset_session_client();
     }
 
-    // 8. 1 件も見えないインストールは選択画面に入れず 400（#594 レビュー指摘）
+    // 8. 1 件も見えないインストールは選択画面に入れず、理由付きで設定画面へ戻す（#594 レビュー指摘）
     {
         let user = app.insert_user(false, false).await;
         let tp = app.insert_tenant_project(user.id).await;
@@ -510,7 +524,21 @@ async fn github_http_integration_suite() {
                 unique_no_repo_installation_id(),
             ))
             .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response.status() == StatusCode::FOUND
+                || response.status() == StatusCode::TEMPORARY_REDIRECT
+        );
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .expect("location header");
+        assert!(
+            location.contains("github_error=no_repositories"),
+            "unexpected redirect location: {location}"
+        );
+        assert!(!location.contains("github_select="));
 
         let row = github_integrations::Entity::find()
             .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
@@ -539,6 +567,21 @@ async fn github_http_integration_suite() {
             abandoned.status() == StatusCode::FOUND
                 || abandoned.status() == StatusCode::TEMPORARY_REDIRECT
         );
+
+        // 選択を放棄したあとでも、別のインストールへ乗り換えられる
+        // （選択待ちの束縛が排他ロックになっていないこと）
+        let switch_state = get_install_state(&app, &tp).await;
+        let switched = app
+            .get_with_session(&callback_path(&switch_state, unique_installation_id()))
+            .await;
+        assert!(
+            switched.status() == StatusCode::FOUND
+                || switched.status() == StatusCode::TEMPORARY_REDIRECT,
+            "switching to another installation should be accepted, got {}",
+            switched.status()
+        );
+        let delete_switched = app.delete_with_session(&integration_path(&tp)).await;
+        assert_eq!(delete_switched.status(), StatusCode::NO_CONTENT);
 
         // 再訪: 同じインストールで戻ってこられる（新規扱いの鮮度チェックで弾かれない）
         let retry_state = get_install_state(&app, &tp).await;
@@ -584,6 +627,44 @@ async fn github_http_integration_suite() {
             "reinstall with a new installation should be accepted, got {}",
             reinstalled.status()
         );
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 10. 古い installation は、そのプロジェクトの選択待ちとして控えてあるものだけ通す
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        let pending_id = unique_old_installation_id();
+        github_oauth_state::store_pending_installation(
+            &app.state.redis_client,
+            tp.project_id,
+            pending_id,
+        )
+        .await
+        .expect("store pending installation");
+
+        // 控えてある ID と一致 → 鮮度チェックを免除して選択画面へ
+        let state_token = get_install_state(&app, &tp).await;
+        let accepted = app
+            .get_with_session(&callback_path(&state_token, pending_id))
+            .await;
+        assert!(
+            accepted.status() == StatusCode::FOUND
+                || accepted.status() == StatusCode::TEMPORARY_REDIRECT,
+            "pending installation should skip the freshness check, got {}",
+            accepted.status()
+        );
+
+        // 一致しない古い ID は通常どおり拒否（古い installation_id の差し込み防止）
+        let other_state = get_install_state(&app, &tp).await;
+        let rejected = app
+            .get_with_session(&callback_path(&other_state, unique_old_installation_id()))
+            .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
