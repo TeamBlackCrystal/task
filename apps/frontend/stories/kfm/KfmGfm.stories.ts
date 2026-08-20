@@ -28,6 +28,14 @@ const kfmRender = (args: KfmStoryArgs) => ({
   template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
+// アプリ本体と同じ .dark ancestor class 方式 (tailwind.css の @custom-variant dark)。
+// 背景/文字色もアプリのテーマトークンで塗って実際のダーク画面と同じ地の上で撮る
+// (KfmAlerts.stories.ts の kfmDarkRender と同じ形)。
+const kfmDarkRender = (args: KfmStoryArgs) => ({
+  setup: () => ({ args }),
+  template: `<div class="dark bg-background text-foreground p-4"><div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div>`,
+});
+
 const meta = {
   title: 'KFM/GFM',
   tags: ['autodocs'],
@@ -44,7 +52,7 @@ export const TableAlignment: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: th/td の align 属性が剥がれる (sanitize / remark-rehype の変化) と 3 列の文字寄せが全て左に揃い、絵が変わる (play で computed textAlign を固定)。',
+          '壊れたら: th/td の align 属性が剥がれる (sanitize / remark-rehype の変化) と 3 列の文字寄せが全て左に揃い、絵が変わる (play で computed textAlign を固定)。なお表の罫線 (セル border) は未実装で、線の無い絵が現状の仕様。',
       },
     },
   },
@@ -73,7 +81,7 @@ export const TableOverflow: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: 幅広の表が狭い親をどうはみ出すか (潰れ方・突き抜け方) が変わったら、テーブルレイアウトか消費側 overflow 方針の変化 (play で幅制限の実効と表/親の幅関係を固定)。',
+          '壊れたら: 幅広の表が狭い親をどうはみ出すか (潰れ方・突き抜け方) が変わったら、テーブルレイアウトか消費側 overflow 方針の変化 (play で幅制限の実効と表/親の幅関係を固定)。なお表の罫線 (セル border) は未実装で、線の無い絵が現状の仕様。',
       },
     },
   },
@@ -146,6 +154,33 @@ export const StrikeAutolink: Story = {
     // リンク色の実効 (#0969da)。旧検査 not.toBe('') は computed color が常に非空文字列の
     // ため何も検証していなかった (空振り)
     await expect(style?.color).toBe('rgb(9, 105, 218)');
+  },
+};
+
+export const StrikeAutolinkDark: Story = {
+  name: '打ち消し線・自動リンク（ダークテーマ）',
+  render: kfmDarkRender,
+  args: { html: strikeAutolinkHtml },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          '壊れたら: .dark 上書き (style.css の .dark .kfm-content a = #4493f8) が失われるとライト用の濃い青リンクがダーク地に沈み、絵が変わる。GFM サイドカーのダーク専用ルールはこの 1 本のみで、監視はこの story が担う。',
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    // ダーク切替の実体 (.dark ancestor) が絵の前提として存在していること
+    await expect(canvasElement.querySelector(`.dark .${KFM_CONTENT_CLASS}`)).not.toBeNull();
+    const del = canvasElement.querySelector('del');
+    await expect(del).not.toBeNull();
+    await expect(del ? getComputedStyle(del).textDecorationLine : '').toContain('line-through');
+    const link = canvasElement.querySelector('a[href^="https://example.com"]');
+    await expect(link).not.toBeNull();
+    const style = link ? getComputedStyle(link) : null;
+    await expect(style?.textDecoration).toContain('underline');
+    // ダークリンク色の実効 (#4493f8)。ライト色 rgb(9, 105, 218) のままなら .dark 上書きの喪失
+    await expect(style?.color).toBe('rgb(68, 147, 248)');
   },
 };
 
