@@ -1,5 +1,7 @@
 //! GitHub App インストールフロー用 CSRF state（Redis）。
 
+use std::sync::LazyLock;
+
 use anyhow::Context;
 use auth_core::state::StateStore;
 use base64::Engine;
@@ -100,20 +102,89 @@ pub async fn peek_select_token(
     ))
 }
 
-/// 選択確定用。取得と削除を原子的に行う（再利用防止）。
-pub async fn consume_select_token(
+/// 選択トークンを原子的に取り出して消す（GET + PTTL + DEL）。
+///
+/// 残り TTL も一緒に返すのは、この後の DB 更新に失敗したときに
+/// [`restore_select_token`] で有効期限を延ばさずに戻すため。
+static CLAIM_SELECT_SCRIPT: LazyLock<redis::Script> = LazyLock::new(|| {
+    redis::Script::new(
+        r#"
+        local value = redis.call('GET', KEYS[1])
+        if not value then
+            return nil
+        end
+        local pttl = redis.call('PTTL', KEYS[1])
+        redis.call('DEL', KEYS[1])
+        return { value, tostring(pttl) }
+        "#,
+    )
+});
+
+/// 連携を確定させる 1 リクエストだけを通す。
+///
+/// [`peek_select_token`] は消さずに読むので、同じトークンでの POST が同時に走ると
+/// どちらも検証を通り抜けて別々のリポジトリを書き込める。DB を触る直前にこれで
+/// 権利を取り、取れなかった側は弾く。
+///
+/// 戻り値は payload と、取り上げた時点の残り TTL（ミリ秒）。
+pub async fn claim_select_token(
     redis: &RedisConnection,
     token: &str,
-) -> Result<Option<RepoSelectPayload>, anyhow::Error> {
-    let Some(raw) = RedisStateStore::new(redis)
-        .consume(&format!("{SELECT_KEY_PREFIX}{token}"))
-        .await?
-    else {
+) -> Result<Option<(RepoSelectPayload, i64)>, anyhow::Error> {
+    let mut conn = redis
+        .conn
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
+    let claimed: Option<(String, String)> = CLAIM_SELECT_SCRIPT
+        .key(format!("{SELECT_KEY_PREFIX}{token}"))
+        .invoke_async(&mut conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("redis claim repo select: {e}"))?;
+    let Some((raw, pttl)) = claimed else {
         return Ok(None);
     };
-    Ok(Some(
-        serde_json::from_str(&raw).context("deserialize repo select payload")?,
-    ))
+    let payload: RepoSelectPayload =
+        serde_json::from_str(&raw).context("deserialize repo select payload")?;
+    let pttl = pttl.parse::<i64>().context("parse repo select pttl")?;
+    Ok(Some((payload, pttl)))
+}
+
+/// 取り上げたトークンを、残り TTL のまま戻す。
+///
+/// 権利を取った後の DB 更新が落ちたときに使う。ここで [`store_select_token`] を
+/// 呼ぶと有効期限が延びてしまうので、預かった残り TTL をそのまま書き戻す。
+/// TTL が残っていなければ何もしない（放っておいても切れる）。
+pub async fn restore_select_token(
+    redis: &RedisConnection,
+    token: &str,
+    payload: &RepoSelectPayload,
+    ttl_millis: i64,
+) -> Result<(), anyhow::Error> {
+    if ttl_millis < 0 {
+        // PTTL が負を返すのは「キーはあるが期限が無い」ときで、この経路の書き方では起きない。
+        // 起きたら戻せていないので痕跡を残す（0 は普通に期限切れなので黙って返す）。
+        tracing::warn!(ttl_millis, "repo select token has no ttl; not restored");
+        return Ok(());
+    }
+    if ttl_millis == 0 {
+        return Ok(());
+    }
+    let value = serde_json::to_string(payload).context("serialize repo select payload")?;
+    let mut conn = redis
+        .conn
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
+    let _: () = redis::cmd("SET")
+        .arg(format!("{SELECT_KEY_PREFIX}{token}"))
+        .arg(value)
+        .arg("PX")
+        .arg(ttl_millis)
+        .query_async(&mut conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("redis restore repo select: {e}"))?;
+    Ok(())
 }
 
 const PENDING_KEY_PREFIX: &str = "github_pending_install:";
@@ -149,14 +220,34 @@ pub async fn delete_pending_installation_if(
     project_id: Uuid,
     installation_id: i64,
 ) -> Result<(), anyhow::Error> {
-    if peek_pending_installation(redis, project_id).await? != Some(installation_id) {
-        return Ok(());
-    }
-    RedisStateStore::new(redis)
-        .consume(&format!("{PENDING_KEY_PREFIX}{project_id}"))
+    let mut conn = redis
+        .conn
+        .acquire()
         .await
-        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
+    let _: () = DELETE_PENDING_IF_SCRIPT
+        .key(format!("{PENDING_KEY_PREFIX}{project_id}"))
+        .arg(installation_id.to_string())
+        .invoke_async(&mut conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("redis delete pending installation: {e}"))?;
+    Ok(())
 }
+
+/// 控えている installation が指定のものと一致するときだけ消す（比較と削除を原子的に）。
+///
+/// 読んでから消すまでの間に別のフローが新しい installation を控えると、
+/// 古い処理が新しい控えを消してしまう。
+static DELETE_PENDING_IF_SCRIPT: LazyLock<redis::Script> = LazyLock::new(|| {
+    redis::Script::new(
+        r#"
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+            redis.call('DEL', KEYS[1])
+        end
+        return 1
+        "#,
+    )
+});
 
 pub async fn peek_pending_installation(
     redis: &RedisConnection,

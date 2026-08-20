@@ -81,12 +81,19 @@ function stubFetch(state: MockState) {
 }
 
 function mountSection(options: { selectToken?: string; callbackError?: string } = {}) {
-  // callback からの戻りは URL クエリで表現される
+  // callback からの戻りは URL で表現される。選択トークンだけはフラグメント
+  // （クエリだとアクセスログ・Referer に残るため）。
   const search = new URLSearchParams();
-  if (options.selectToken !== undefined) search.set('github_select', options.selectToken);
   if (options.callbackError !== undefined) search.set('github_error', options.callbackError);
+  const hash = new URLSearchParams();
+  if (options.selectToken !== undefined) hash.set('github_select', options.selectToken);
   const query = search.toString();
-  window.history.replaceState({}, '', query ? `/settings?${query}` : '/settings');
+  const fragment = hash.toString();
+  window.history.replaceState(
+    {},
+    '',
+    `/settings${query ? `?${query}` : ''}${fragment ? `#${fragment}` : ''}`,
+  );
 
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -394,7 +401,7 @@ describe('IntegrationsSection', () => {
     first.unmount();
 
     // 再マウント（セクション切り替え相当）。URL からトークンは落ちている
-    expect(window.location.search).not.toContain('github_select');
+    expect(window.location.hash).not.toContain('github_select');
     fetchMock.mockClear();
     mountSection();
     await flushPromises();

@@ -39,8 +39,10 @@ const CALLBACK_ERRORS: Record<string, string> = {
  * URL から落とした選択トークンはタブ内に退避しておく（TTL は 10 分）。 */
 const SELECT_TOKEN_STORAGE_KEY = 'github-select-token';
 
-// callback が付けたクエリは、読んだらすぐ URL から落とす（下の clearCallbackQuery）。
-// pageContext は replaceState を反映しないため、消えたことが分かる window.location から読む。
+// callback が付けた値は、読んだらすぐ URL から落とす（下の clearCallbackQuery）。
+// 選択トークンはフラグメントで渡ってくる（クエリだと frontend / CDN のアクセスログと
+// Referer に残るため）。pageContext は replaceState もフラグメントも反映しないので、
+// window.location から読む。
 const selectToken = ref<string | null>(null);
 const repositories = ref<{ owner: string; name: string }[]>([]);
 const callbackError = ref<string | null>(null);
@@ -80,12 +82,19 @@ function isSelectTokenDead(status: number) {
   return status === 400 || status === 403;
 }
 
-/** callback が付けたクエリを URL から落とす（トークンを履歴・Referer に残さない、
+/** callback が付けた値を URL から落とす（トークンを履歴に残さない、
  * リロードでエラーが蘇らない） */
 function clearCallbackQuery() {
   const url = new URL(window.location.href);
-  url.searchParams.delete('github_select');
   url.searchParams.delete('github_error');
+  // backend はトークンを単独のフラグメント（`#github_select=...`）で返すので、
+  // それが載っているときだけ触る（他の断片との同居は考慮していない）。
+  const hash = new URLSearchParams(url.hash.slice(1));
+  if (hash.has('github_select')) {
+    hash.delete('github_select');
+    const rest = hash.toString();
+    url.hash = rest ? `#${rest}` : '';
+  }
   window.history.replaceState(window.history.state, '', url);
 }
 
@@ -134,7 +143,7 @@ function forgetSelectToken() {
 
 onMounted(() => {
   const search = new URLSearchParams(window.location.search);
-  const fromUrl = search.get('github_select');
+  const fromUrl = new URLSearchParams(window.location.hash.slice(1)).get('github_select');
   selectToken.value = fromUrl ?? window.sessionStorage.getItem(stashKey());
   if (fromUrl) window.sessionStorage.setItem(stashKey(), fromUrl);
   callbackError.value = CALLBACK_ERRORS[search.get('github_error') ?? ''] ?? null;

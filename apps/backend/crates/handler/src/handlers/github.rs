@@ -335,8 +335,12 @@ pub async fn github_callback(
         )
         .await
         .map_err(AppError::Internal)?;
+        // トークンはクエリではなくフラグメントに載せる。
+        // フラグメントは次の HTTP リクエストに乗らないので、
+        // frontend / CDN のアクセスログにトークンが残らない
+        // （ブラウザ履歴には一時的に残るが、frontend が読んだ直後に URL から落とす）。
         return Ok(
-            Redirect::temporary(&format!("{redirect_to}&github_select={select_token}"))
+            Redirect::temporary(&format!("{redirect_to}#github_select={select_token}"))
                 .into_response(),
         );
     };
@@ -602,34 +606,53 @@ pub async fn connect_github_repository(
         return Err(AppError::BadRequest);
     }
 
-    upsert_integration(
+    // 検証を通った 1 リクエストだけを DB 更新へ通す（再利用防止）。
+    // ここまで消さないので、検証で弾かれたユーザーは選び直せる。
+    // 同じトークンでの POST が同時に来ても、取れなかった側はここで止まる。
+    let Some((claimed, select_token_ttl)) =
+        install_state::claim_select_token(&state.redis_client, &body.select_token)
+            .await
+            .map_err(AppError::Internal)?
+    else {
+        return Err(AppError::BadRequest);
+    };
+
+    if let Err(e) = upsert_integration(
         &state,
         github,
         project_id,
         auth.user_id,
-        payload.installation_id,
+        claimed.installation_id,
         &body.repo_owner,
         &body.repo_name,
         &access,
     )
-    .await?;
+    .await
+    {
+        // 連携できていないので、選び直せるようにトークンを戻す（有効期限は延ばさない）。
+        if let Err(restore_err) = install_state::restore_select_token(
+            &state.redis_client,
+            &body.select_token,
+            &claimed,
+            select_token_ttl,
+        )
+        .await
+        {
+            tracing::warn!(error = %restore_err, "restore github repo select token failed");
+        }
+        return Err(e);
+    }
 
-    // 連携できたときだけトークンを捨てる（再利用防止）。
-    // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
-    // 連携自体は成功しているので、後片付けの失敗ではエラーを返さない（どちらも TTL で切れる）。
+    // 連携できたので控えを捨てる。
+    // 連携自体は成功しているので、後片付けの失敗ではエラーを返さない（TTL で切れる）。
     if let Err(e) = install_state::delete_pending_installation_if(
         &state.redis_client,
         project_id,
-        payload.installation_id,
+        claimed.installation_id,
     )
     .await
     {
         tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
-    }
-    if let Err(e) =
-        install_state::consume_select_token(&state.redis_client, &body.select_token).await
-    {
-        tracing::warn!(error = %e, "discard github repo select token failed; TTL will expire it");
     }
 
     Ok(StatusCode::NO_CONTENT)

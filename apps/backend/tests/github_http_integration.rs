@@ -163,13 +163,17 @@ fn connect_path(tp: &TestTenantProject) -> String {
     )
 }
 
+/// 選択トークンはクエリではなくフラグメントで返る（アクセスログ・Referer に残さないため）。
 fn select_token_from_location(location: &str) -> String {
-    url::Url::parse(location)
+    let fragment = url::Url::parse(location)
         .expect("redirect location")
-        .query_pairs()
+        .fragment()
+        .expect("redirect fragment")
+        .to_owned();
+    url::form_urlencoded::parse(fragment.as_bytes())
         .find(|(key, _)| key == "github_select")
         .map(|(_, value)| value.into_owned())
-        .expect("github_select query param")
+        .expect("github_select fragment param")
 }
 
 fn install_path(tp: &TestTenantProject) -> String {
@@ -921,6 +925,197 @@ async fn github_http_integration_suite() {
         // 最後の 1 件の解除では GitHub 側も消す
         let delete_second = app.delete_with_session(&integration_path(&second)).await;
         assert_eq!(delete_second.status(), StatusCode::NO_CONTENT);
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // N. 選択トークンとインストール控えの Redis 操作が原子的であること
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+
+        app.login_session(&user.email, &user.password).await;
+
+        // 同じ選択トークンで POST /connect が同時に来ても、連携が成立するのは 1 本だけ。
+        // 検証を通してから DB を更新するまでの間にトークンが残っていると、両方が別の
+        // リポジトリを書き込めてしまい、連携先が後勝ちで入れ替わる。
+        let racing_installation_id = unique_multi_repo_installation_id();
+        github_oauth_state::store_pending_installation(
+            &app.state.redis_client,
+            tp.project_id,
+            racing_installation_id,
+        )
+        .await
+        .expect("store pending installation");
+        let racing_state = get_install_state(&app, &tp).await;
+        let racing_callback = app
+            .get_with_session(&callback_path(&racing_state, racing_installation_id))
+            .await;
+        let racing_token = select_token_from_location(
+            racing_callback
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .expect("location header"),
+        );
+        let racing_connect_path = connect_path(&tp);
+        let (racing_a, racing_b) = tokio::join!(
+            app.post_json_with_session(
+                &racing_connect_path,
+                serde_json::json!({
+                    "select_token": racing_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            ),
+            app.post_json_with_session(
+                &racing_connect_path,
+                serde_json::json!({
+                    "select_token": racing_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-2"
+                }),
+            ),
+        );
+        let racing_statuses = [racing_a.status(), racing_b.status()];
+        assert_eq!(
+            racing_statuses
+                .iter()
+                .filter(|s| **s == StatusCode::NO_CONTENT)
+                .count(),
+            1,
+            "連携が成立するのは 1 本だけ: {racing_statuses:?}"
+        );
+        assert_eq!(
+            racing_statuses
+                .iter()
+                .filter(|s| **s == StatusCode::BAD_REQUEST)
+                .count(),
+            1,
+            "トークンを取れなかった側は弾く: {racing_statuses:?}"
+        );
+        let racing_row = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("integration row");
+        let winner = if racing_statuses[0] == StatusCode::NO_CONTENT {
+            "repo-1"
+        } else {
+            "repo-2"
+        };
+        assert_eq!(
+            racing_row.repo_name, winner,
+            "成立した側のリポジトリが残る（後勝ちで入れ替わらない）"
+        );
+        let disconnect = app.delete_with_session(&integration_path(&tp)).await;
+        assert_eq!(disconnect.status(), StatusCode::NO_CONTENT);
+
+        // 同じトークンへ同時に権利取得を掛けても、通るのは 1 本だけ。
+        // 読んでから消すまでに間があると、複数の POST /connect が別々のリポジトリを
+        // 書き込めてしまう（連携先が後勝ちで入れ替わる）。
+        let token = github_oauth_state::new_state_token();
+        let payload = github_oauth_state::RepoSelectPayload {
+            tenant_id: tp.tenant_id,
+            project_id: tp.project_id,
+            user_id: user.id,
+            installation_id: unique_multi_repo_installation_id(),
+        };
+        github_oauth_state::store_select_token(&app.state.redis_client, &token, &payload)
+            .await
+            .expect("store select token");
+
+        let (a, b, c, d) = tokio::join!(
+            github_oauth_state::claim_select_token(&app.state.redis_client, &token),
+            github_oauth_state::claim_select_token(&app.state.redis_client, &token),
+            github_oauth_state::claim_select_token(&app.state.redis_client, &token),
+            github_oauth_state::claim_select_token(&app.state.redis_client, &token),
+        );
+        let claimed = [a, b, c, d]
+            .into_iter()
+            .filter_map(|r| r.expect("claim select token"))
+            .collect::<Vec<_>>();
+        assert_eq!(claimed.len(), 1, "権利を取れるのは 1 本だけ");
+        let (claimed_payload, remaining_ttl) = claimed.into_iter().next().expect("claimed");
+        assert_eq!(claimed_payload.project_id, tp.project_id);
+        // 単位はミリ秒（PTTL）。秒（TTL）に取り違えると戻したトークンが即座に切れるので、
+        // 秒単位なら必ず落ちる値で押さえる（10 分 = 600_000 ミリ秒 / 600 秒）。
+        assert!(
+            remaining_ttl > 500_000,
+            "残り TTL をミリ秒で返す: {remaining_ttl}"
+        );
+
+        // 戻したトークンは有効期限が延びない（DB 更新に失敗して選び直させるとき用）。
+        // 渡す TTL は元の 10 分から充分離しておく。残り TTL ちょうどで比べると、
+        // 「引数を無視して store_select_token に戻す」退行を数ミリ秒差で見逃す。
+        const RESTORED_TTL_MILLIS: i64 = 5_000;
+        github_oauth_state::restore_select_token(
+            &app.state.redis_client,
+            &token,
+            &claimed_payload,
+            RESTORED_TTL_MILLIS,
+        )
+        .await
+        .expect("restore select token");
+        let (_, ttl_after_restore) =
+            github_oauth_state::claim_select_token(&app.state.redis_client, &token)
+                .await
+                .expect("claim restored token")
+                .expect("restored token is usable again");
+        assert!(
+            ttl_after_restore <= RESTORED_TTL_MILLIS,
+            "戻したトークンで TTL が延びない: {ttl_after_restore} <= {RESTORED_TTL_MILLIS}"
+        );
+
+        // インストール控えは、控えている当人のときだけ消える。
+        // ここで見るのは条件そのもの（他人の控えを消さない）。比較と削除を 1 操作に
+        // まとめてある点は Redis 側の実装で担保しており、逐次のテストでは再現できない。
+        let first_installation = unique_multi_repo_installation_id();
+        let second_installation = unique_multi_repo_installation_id();
+        github_oauth_state::store_pending_installation(
+            &app.state.redis_client,
+            tp.project_id,
+            first_installation,
+        )
+        .await
+        .expect("store pending installation");
+        github_oauth_state::store_pending_installation(
+            &app.state.redis_client,
+            tp.project_id,
+            second_installation,
+        )
+        .await
+        .expect("overwrite pending installation");
+        github_oauth_state::delete_pending_installation_if(
+            &app.state.redis_client,
+            tp.project_id,
+            first_installation,
+        )
+        .await
+        .expect("delete pending installation");
+        assert_eq!(
+            github_oauth_state::peek_pending_installation(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("peek pending installation"),
+            Some(second_installation),
+            "他のインストールの控えを消さない"
+        );
+        github_oauth_state::delete_pending_installation_if(
+            &app.state.redis_client,
+            tp.project_id,
+            second_installation,
+        )
+        .await
+        .expect("delete pending installation");
+        assert_eq!(
+            github_oauth_state::peek_pending_installation(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("peek pending installation"),
+            None,
+            "控えている当人なら消える"
+        );
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
