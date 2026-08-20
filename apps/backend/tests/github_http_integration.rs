@@ -15,7 +15,10 @@ async fn mount_github_api_mocks(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path_regex(r"^/app/installations/\d+/access_tokens$"))
         .respond_with(|req: &wiremock::Request| {
-            let token = if installation_id_from_url(&req.url) >= MULTI_REPO_ID_BASE {
+            let id = installation_id_from_url(&req.url);
+            let token = if id >= NO_REPO_ID_BASE {
+                "ghs_no_repo_token"
+            } else if id >= MULTI_REPO_ID_BASE {
                 "ghs_multi_repo_token"
             } else {
                 "ghs_test_installation_token"
@@ -66,6 +69,15 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .collect();
     Mock::given(method("GET"))
         .and(path("/installation/repositories"))
+        .and(header("authorization", "Bearer ghs_no_repo_token"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "repositories": [] })),
+        )
+        .mount(server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/installation/repositories"))
         .and(header("authorization", "Bearer ghs_multi_repo_token"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(serde_json::json!({ "repositories": many })),
@@ -83,6 +95,8 @@ async fn mount_github_api_mocks(server: &MockServer) {
 
 /// この値以上の installation id は「複数リポジトリが見えるインストール」として扱う。
 const MULTI_REPO_ID_BASE: i64 = 1_500_000_000_000;
+/// この値以上は「1 件も見えないインストール」。
+const NO_REPO_ID_BASE: i64 = 2_500_000_000_000;
 
 fn installation_id_from_url(url: &url::Url) -> i64 {
     url.path_segments()
@@ -96,6 +110,10 @@ fn unique_installation_id() -> i64 {
 
 fn unique_multi_repo_installation_id() -> i64 {
     MULTI_REPO_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
+}
+
+fn unique_no_repo_installation_id() -> i64 {
+    NO_REPO_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
 }
 
 fn repositories_path(tp: &TestTenantProject, select_token: &str) -> String {
@@ -474,6 +492,32 @@ async fn github_http_integration_suite() {
             )
             .await;
         assert_eq!(reused.status(), StatusCode::BAD_REQUEST);
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 8. 1 件も見えないインストールは選択画面に入れず 400（#594 レビュー指摘）
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        let state_token = get_install_state(&app, &tp).await;
+        let response = app
+            .get_with_session(&callback_path(
+                &state_token,
+                unique_no_repo_installation_id(),
+            ))
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let row = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration");
+        assert!(row.is_none());
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();

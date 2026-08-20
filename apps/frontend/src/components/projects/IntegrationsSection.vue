@@ -36,7 +36,7 @@ const selectToken = ref<string | null>(
 );
 const repositories = ref<{ owner: string; name: string }[]>([]);
 const selectError = ref<string | null>(null);
-const selectPending = ref(false);
+const selectPending = ref(selectToken.value !== null);
 const isDisconnectOpen = ref(false);
 const disconnectError = ref<string | null>(null);
 const installError = ref<string | null>(null);
@@ -71,6 +71,10 @@ async function loadRepositories() {
   const token = selectToken.value;
   if (!token) return;
   selectPending.value = true;
+  // 10 分有効な選択トークンを履歴・Referer に残さない（取得の成否に関わらず落とす）
+  const url = new URL(window.location.href);
+  url.searchParams.delete('github_select');
+  window.history.replaceState(window.history.state, '', url);
   try {
     const { data, error } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
       params: {
@@ -80,10 +84,6 @@ async function loadRepositories() {
     });
     if (error || !data) throw new Error('repositories-unavailable');
     repositories.value = data.repositories;
-    // 10 分有効な選択トークンを履歴・Referer に残さない
-    const url = new URL(window.location.href);
-    url.searchParams.delete('github_select');
-    window.history.replaceState(window.history.state, '', url);
   } catch {
     selectToken.value = null;
     repositories.value = [];

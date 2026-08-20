@@ -115,3 +115,44 @@ pub async fn consume_select_token(
         serde_json::from_str(&raw).context("deserialize repo select payload")?,
     ))
 }
+
+const PENDING_KEY_PREFIX: &str = "github_pending_install:";
+/// 選択を放棄しても翌日までは同じインストールへ戻れるようにする。
+pub const PENDING_TTL_SECS: u64 = 60 * 60 * 24;
+
+/// 選択待ちのインストールをプロジェクト単位で覚えておく。
+///
+/// 連携レコードがまだ無いため、これが無いと再訪時の `verify_installation` が
+/// 「新規インストールは state の TTL 内に作られたものだけ」判定で落ち、
+/// GitHub から App を消すまで連携できなくなる。
+pub async fn store_pending_installation(
+    redis: &RedisConnection,
+    project_id: Uuid,
+    installation_id: i64,
+) -> Result<(), anyhow::Error> {
+    RedisStateStore::new(redis)
+        .store(
+            &format!("{PENDING_KEY_PREFIX}{project_id}"),
+            &installation_id.to_string(),
+            PENDING_TTL_SECS,
+        )
+        .await
+}
+
+pub async fn peek_pending_installation(
+    redis: &RedisConnection,
+    project_id: Uuid,
+) -> Result<Option<i64>, anyhow::Error> {
+    let mut conn = redis
+        .conn
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
+    let raw: Option<String> = redis::cmd("GET")
+        .arg(format!("{PENDING_KEY_PREFIX}{project_id}"))
+        .query_async(&mut conn)
+        .await
+        .map_err(|e| anyhow::anyhow!("redis GET pending installation: {e}"))?;
+    raw.map(|v| v.parse::<i64>().context("parse pending installation id"))
+        .transpose()
+}

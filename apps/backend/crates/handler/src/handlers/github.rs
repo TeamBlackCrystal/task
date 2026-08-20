@@ -133,11 +133,18 @@ pub async fn start_github_install(
     require_tenant_owner(&state, tenant_id, auth.user_id).await?;
     require_project_in_tenant(&state, tenant_id, project_id).await?;
 
-    let existing_installation_id = github_integrations::Entity::find()
+    let existing_installation_id = match github_integrations::Entity::find()
         .filter(github_integrations::Column::ProjectId.eq(project_id))
         .one(&state.db)
         .await?
-        .map(|row| row.installation_id);
+    {
+        Some(row) => Some(row.installation_id),
+        // 選択を放棄したインストールへ戻る経路。これが無いと「インストール済みだが
+        // 連携レコードが無い」状態から抜け出せない（新規扱いの鮮度チェックで落ちる）。
+        None => install_state::peek_pending_installation(&state.redis_client, project_id)
+            .await
+            .map_err(AppError::Internal)?,
+    };
 
     let state_token = install_state::new_state_token();
     install_state::store_state(
@@ -249,6 +256,13 @@ pub async fn github_callback(
                 user_id: auth.user_id,
                 installation_id: query.installation_id,
             },
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
         )
         .await
         .map_err(AppError::Internal)?;
@@ -463,9 +477,12 @@ pub async fn connect_github_repository(
 
     // 連携できたときだけトークンを捨てる（再利用防止）。
     // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
-    install_state::consume_select_token(&state.redis_client, &body.select_token)
-        .await
-        .map_err(AppError::Internal)?;
+    // 連携自体は成功しているので、破棄の失敗ではエラーを返さない（TTL で切れる）。
+    if let Err(e) =
+        install_state::consume_select_token(&state.redis_client, &body.select_token).await
+    {
+        tracing::warn!(error = %e, "discard github repo select token failed; TTL will expire it");
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
