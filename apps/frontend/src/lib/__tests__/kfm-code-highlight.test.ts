@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderDescription } from '../markup-renderer';
+import { starryNightSanitizeSchema } from '../rehype-starry-night';
+import { gfmSanitizeSchema } from '../remark-gfm';
 
 /**
  * style「属性」検出器。属性位置 (タグ開き内) の style= のみに反応する。
@@ -58,10 +60,15 @@ describe('renderDescription (コードブロック着色)', () => {
     const html = await renderDescription('```rust\nfn main() {}\n```');
     expect(html).toContain('language-rust');
     expect(html).toContain('class="pl-');
-    // starry-night 由来以外の class が紛れ込んでいない (許可パターン外は sanitize が剥がす)
+    // 許可パターンは実装スキーマを単一ソースにする。テスト側で字種を複製すると、
+    // language-c++ 等を足した際に実装でなく狭いテストの方が落ちるため。
+    const classPatterns = [
+      ...(gfmSanitizeSchema.classPatterns ?? []),
+      ...(starryNightSanitizeSchema.classPatterns ?? []),
+    ];
     for (const m of html.matchAll(/class="([^"]*)"/g)) {
       for (const token of m[1]!.split(/\s+/).filter(Boolean)) {
-        expect(token).toMatch(/^(pl-[a-z0-9]+|language-[a-z0-9-]+)$/);
+        expect(classPatterns.some((pattern) => pattern.test(token))).toBe(true);
       }
     }
   });

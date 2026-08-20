@@ -24,6 +24,7 @@
  * - 見た目はサイドカー style.css を消費側が明示 import する (alerts と同じ方式)。
  */
 import upstreamRehypeStarryNight from 'rehype-starry-night';
+import type { Options as RehypeStarryNightOptions } from 'rehype-starry-night';
 
 type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
 
@@ -35,8 +36,10 @@ type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
  * 構築する (_renderer.ts getProcessor) が、高いのは processor ではなく createStarryNight
  * (WASM ＋ 文法登録) — 共有しないとコメント N 件のページ 1 リクエストで N 回初期化が走る。
  * 着色は profile / clobberPrefix と無関係なので、transformer が抱える starry-night
- * Promise を全 processor で共有しても出力は変わらない (upstream transformer は
- * options と tree 以外の状態を持たない: rehype-starry-night@2.2.0 lib/index.js 実物確認)。
+ * Promise を全 processor で共有しても出力は変わらない。upstream closure の可変状態
+ * `checked` も共有されるため missingScopes 警告は renderer につき初回の 1 度だけになるが、
+ * renderDescription は vfile message を返さないので描画結果への影響はない
+ * (rehype-starry-night@2.2.0 lib/index.js 実物確認)。
  *
  * 共有はモジュールレベルではなく renderer スコープ (factory closure) に置く。プロセス
  * 共有にすると renderer を作り直しても実体が残り、テスト間の隔離と寿命の所有権
@@ -44,16 +47,20 @@ type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
  *
  * 失敗回収: createStarryNight が一度失敗すると upstream transformer は poisoned promise
  * を抱えて以後の全描画で reject し続ける。共有はこれを単一障害点に昇格させるため、
- * transform 失敗時は共有実体を捨てて次の描画で作り直す (実体の解決を attach 時ではなく
- * transform 時に行うのはこのため — memoize 済み processor が旧実体を掴んだままに
- * ならない)。instance guard は、遅れて reject した旧実体が別描画の据えた新実体を
- * 巻き添えで破棄するのを防ぐ (_renderer.ts の processorCache guard と同型)。
+ * transformer の reject 時は共有実体を捨てて次の描画で作り直す。これは初期化 reject
+ * だけを識別する口が upstream に無いため、入力依存の transform 例外も破棄対象になる
+ * (未知言語は例外でなく vfile message)。実体の解決を attach 時ではなく transform 時に
+ * 行うことで、memoize 済み processor も次回に新実体を掴む。instance guard は、遅れて
+ * reject した旧実体が別描画の据えた新実体を巻き添えで破棄するのを防ぐ
+ * (_renderer.ts の processorCache guard と同型)。
  */
-export function createRehypeStarryNight(): () => UpstreamTransformer {
+export function createRehypeStarryNight(
+  options?: Readonly<RehypeStarryNightOptions> | null,
+): () => UpstreamTransformer {
   let shared: UpstreamTransformer | undefined;
   return function rehypeStarryNightShared(): UpstreamTransformer {
     return async function transform(...args: Parameters<UpstreamTransformer>) {
-      const instance = (shared ??= upstreamRehypeStarryNight());
+      const instance = (shared ??= upstreamRehypeStarryNight(options));
       try {
         return await instance(...args);
       } catch (error) {

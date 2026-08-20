@@ -207,12 +207,12 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     try {
       rendered = String(await processor.process(normalized));
     } catch (error) {
-      // 非同期初期化の失敗は「捨てて再試行」。renderDescription はプロセス全体で共有
-      // される singleton のため、失敗した実体を永久保持するとプロセス再起動まで復旧
-      // 不能になる (poisoned promise)。回収は二層:
-      // (1) 共有される starry-night 実体はプラグイン factory 側が transform 失敗時に
-      //     自分で捨てて作り直す (rehype-starry-night/index.ts — コアはプラグインを
-      //     知らないので、共有実体の回収はプラグイン自身の責務)。
+      // process 失敗は「捨てて再試行」。renderDescription はプロセス全体で共有される
+      // singleton のため、失敗した実体を永久保持するとプロセス再起動まで復旧不能になる。
+      // 回収は二層:
+      // (1) 共有される starry-night 実体はプラグイン factory 側が transformer の reject
+      //     時に自分で捨てて作り直す。初期化 reject だけを識別する upstream の口が無く、
+      //     transform 例外も対象になる点は同モジュールの契約コメントを参照。
       // (2) コア側は失敗した processor の memoize を破棄し、次回 render に再構築させる
       //     (再構築は失敗時のみ発生し、成功するまで cache.set に到達しないので誤った
       //     HTML が残ることはない)。

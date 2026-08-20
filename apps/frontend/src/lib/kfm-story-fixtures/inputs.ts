@@ -70,6 +70,51 @@ export const KFM_STORY_INPUTS = {
     '```',
   ].join('\n'),
 
+  // コード着色 story。クラスの出方が違う言語を三種と、非着色境界・横溢れを固定する。
+  'code-highlight-typescript': [
+    '```ts',
+    'const total: number = items.length; // コメント',
+    'function greet(name: string): string {',
+    '  return `hello ${name}`;',
+    '}',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-rust': [
+    '```rust',
+    'fn main() {',
+    '    let x: u32 = 1;',
+    '    println!("{} 件", x); // マクロ',
+    '}',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-python': [
+    '```python',
+    'def total(items):',
+    '    """docstring"""',
+    '    return f"{len(items)} 件"  # コメント',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-no-language': [
+    '```',
+    'plain fence: const x = 1; <b>タグも素通しではなくテキスト</b>',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-unknown-language': [
+    '```definitelynotalang',
+    '<b>&amp; エスケープされたまま</b>',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-long-line': [
+    '```ts',
+    'const result = veryLongFunctionName(firstArgument, secondArgument, thirdArgument).then((response) => transformResponsePayload(response, { includeMetadata: true, normalizeWhitespace: true })).catch(handleUnexpectedRenderingFailure);',
+    '```',
+  ].join('\n'),
+
   'alerts-all-five': [
     '> [!NOTE]',
     '> 補足情報の callout。',

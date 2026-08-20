@@ -6,21 +6,22 @@ import pythonHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-python.
 import rustHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-rust.html?raw';
 import typescriptHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-typescript.html?raw';
 import unknownLanguageHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-unknown-language.html?raw';
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 // CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
 import '@/lib/rehype-starry-night/style.css';
 
 /*
  * KFM コードブロック着色 (starry-night) の story 群。cmd_670 の fixture+v-html 方式:
  * fixture は renderDescription の事前生成 HTML (単一ソース =
- * src/lib/kfm-story-fixtures/inputs-code-highlight.ts、drift 検査 =
- * kfm-code-highlight-fixtures.test.ts)。v-html のみの同期描画で VRT が決定的になる。
+ * src/lib/kfm-story-fixtures/inputs.ts、drift 検査 = kfm-story-fixtures.test.ts)。
+ * v-html のみの同期描画で VRT が決定的になる。
  */
 
 type KfmStoryArgs = { html: string };
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template: '<div class="kfm-story" v-html="args.html" />',
+  template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
 const meta = {
@@ -133,7 +134,7 @@ export const LongLine: Story = {
   // 横溢れを絵にするため、狭い親 (max-w-md) に閉じ込めて描画する (cmd_670 の表と同形)
   render: (args: KfmStoryArgs) => ({
     setup: () => ({ args }),
-    template: '<div class="max-w-md"><div class="kfm-story" v-html="args.html" /></div>',
+    template: `<div class="max-w-md"><div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div>`,
   }),
   parameters: {
     docs: {
@@ -157,8 +158,8 @@ export const DarkTheme: Story = {
     setup: () => ({ args }),
     template:
       '<div class="grid gap-4">' +
-      '<div class="p-4"><div class="kfm-story kfm-story-light" v-html="args.html" /></div>' +
-      '<div class="dark bg-background text-foreground p-4"><div class="kfm-story kfm-story-dark" v-html="args.html" /></div>' +
+      `<div class="p-4"><div class="${KFM_CONTENT_CLASS} kfm-story-light" v-html="args.html" /></div>` +
+      `<div class="dark bg-background text-foreground p-4"><div class="${KFM_CONTENT_CLASS} kfm-story-dark" v-html="args.html" /></div>` +
       '</div>',
   }),
   parameters: {
