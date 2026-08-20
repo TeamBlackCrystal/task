@@ -23,7 +23,8 @@
  *   preflight 対策)。GFM 出力は素の ul/blockquote/a で掴む class が無いため、
  *   器 scope が無いと GFM CSS は一行も当たらない。
  * - コードブロック着色の見た目も同方式: 消費側で `@/lib/rehype-starry-night/style.css` を
- *   明示 import する (実体は @wooorm/starry-night の light/dark 両対応シート)。
+ *   明示 import する (実体は @wooorm/starry-night の light シート固定 ＋ .dark ブリッジ。
+ *   選定理由は同 CSS のコメントを参照)。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全
  * リクエスト・全 tenant) で共有される。L1 キャッシュが full-text キーであることが
@@ -32,7 +33,7 @@
  * 本ファイルは composition root であり、プラグイン (remark 層 ＋ sanitize スキーマ) を
  * コアへ注入する。コア実装 (_renderer / _sanitize / _cache) はプラグインを import しない。
  */
-import { rehypeStarryNight, starryNightSanitizeSchema } from '@/lib/rehype-starry-night';
+import { createRehypeStarryNight, starryNightSanitizeSchema } from '@/lib/rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '@/lib/remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
 import { resolveContentConfig } from './_config';
@@ -58,6 +59,11 @@ export type { SanitizeSchema } from './_sanitize';
 
 /** Phase 1: system 層の上書きなし = コード既定 (github profile) */
 const contentConfig = resolveContentConfig();
+
+// starry-night 実体 (WASM＋文法一式) を renderer スコープで一つ共有するプラグイン。
+// renderer 1 つにつき factory を 1 回呼ぶ — scope 付き描画が processor を都度構築しても
+// 文法初期化は走り直さない (共有と失敗回収の詳細は rehype-starry-night/index.ts)。
+const rehypeStarryNight = createRehypeStarryNight();
 
 export const renderDescription = createRenderer({
   profiles: {

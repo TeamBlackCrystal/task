@@ -7,16 +7,62 @@
  *
  * rehype-starry-night@2.2.0 実物確認に基づく契約:
  * - 文法は既定の common (GitHub 頻出言語)。all は bundle が桁で膨れるため使わない。
- * - プラグイン factory は同期で、createStarryNight (async) の Promise を内部保持し
- *   transformer が await する。よって processor 構築は同期のままでよい (_renderer.ts)。
- *   初期化失敗時の扱いは _renderer.ts の renderDescription を参照 (捨てて再試行)。
+ * - upstream factory (attacher) は呼ばれた時点で createStarryNight (async: onig.wasm ＋
+ *   common 文法一式の登録) を開始し、その Promise を返す transformer の closure に保持する。
+ *   よって factory 呼び出し回数 = 文法初期化回数であり、これが着色の費用の本体
+ *   (実測: 初回 46.7ms・以降 15〜17ms/回)。processor 構築 (unified の use/freeze) 自体は
+ *   同期・軽量のまま。共有と失敗回収は下の createRehypeStarryNight を参照。
+ * - onig.wasm は node 条件では vscode-oniguruma 同梱物の fs 読み、browser 条件では
+ *   https://esm.sh/vscode-oniguruma@2 への fetch (#get-oniguruma の条件分岐)。SSR 専用の
+ *   現状で外部 fetch は発生しないが、client で初期化する変更はこの外部依存を踏む。
  * - 変換は `<code class="language-*">` の子を `pl-*` クラスの span 群へ置換するのみ。
  *   inline style・新規タグ・wrapper 要素は一切出さない (FORBID_ATTR: ['style'] 契約と一枚岩)。
  * - 未知言語フェンスは変換されず素のコードブロックのまま (中身はエスケープ済みテキスト
  *   維持・vfile message が付くだけでエラーにはならない)。
+ * - 巨大フェンスに行数上限は設けていない (実測 2000 行 ≈ 112ms/回。再描画は L1 キャッシュが
+ *   吸収する。上限を切る場合はここではなく入力側の文書サイズ制限で行う)。
  * - 見た目はサイドカー style.css を消費側が明示 import する (alerts と同じ方式)。
  */
-export { default as rehypeStarryNight } from 'rehype-starry-night';
+import upstreamRehypeStarryNight from 'rehype-starry-night';
+
+type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
+
+/**
+ * starry-night 実体を renderer スコープで一つに共有するプラグイン factory。
+ *
+ * composition root が renderer 1 つにつき本 factory を 1 回呼び、戻り値のプラグインを
+ * rehypePlugins へ渡す。scope 付き描画は clobberPrefix が異なるため processor を都度
+ * 構築する (_renderer.ts getProcessor) が、高いのは processor ではなく createStarryNight
+ * (WASM ＋ 文法登録) — 共有しないとコメント N 件のページ 1 リクエストで N 回初期化が走る。
+ * 着色は profile / clobberPrefix と無関係なので、transformer が抱える starry-night
+ * Promise を全 processor で共有しても出力は変わらない (upstream transformer は
+ * options と tree 以外の状態を持たない: rehype-starry-night@2.2.0 lib/index.js 実物確認)。
+ *
+ * 共有はモジュールレベルではなく renderer スコープ (factory closure) に置く。プロセス
+ * 共有にすると renderer を作り直しても実体が残り、テスト間の隔離と寿命の所有権
+ * (renderer と共に捨てられること) が崩れるため。
+ *
+ * 失敗回収: createStarryNight が一度失敗すると upstream transformer は poisoned promise
+ * を抱えて以後の全描画で reject し続ける。共有はこれを単一障害点に昇格させるため、
+ * transform 失敗時は共有実体を捨てて次の描画で作り直す (実体の解決を attach 時ではなく
+ * transform 時に行うのはこのため — memoize 済み processor が旧実体を掴んだままに
+ * ならない)。instance guard は、遅れて reject した旧実体が別描画の据えた新実体を
+ * 巻き添えで破棄するのを防ぐ (_renderer.ts の processorCache guard と同型)。
+ */
+export function createRehypeStarryNight(): () => UpstreamTransformer {
+  let shared: UpstreamTransformer | undefined;
+  return function rehypeStarryNightShared(): UpstreamTransformer {
+    return async function transform(...args: Parameters<UpstreamTransformer>) {
+      const instance = (shared ??= upstreamRehypeStarryNight());
+      try {
+        return await instance(...args);
+      } catch (error) {
+        if (shared === instance) shared = undefined;
+        throw error;
+      }
+    };
+  };
+}
 
 /**
  * starry-night が emit する class の許可パターン (完全一致 allowlist の classPatterns 側)。
@@ -24,7 +70,7 @@ export { default as rehypeStarryNight } from 'rehype-starry-night';
  * - 20 言語サンプルの実出力から 14 class を観測 (pl-c / pl-c1 / pl-k / pl-s / pl-smi 等)
  * - @wooorm/starry-night/lib/theme.js の scope→class 対応表の全値域 34 class が
  *   すべて /^pl-[a-z0-9]+$/ に一致することを機械検証 (観測 14 class ⊆ 全値域 34 class)
- * - style/both.css のセレクタ列挙 33 class も同パターン内
+ * - style/light.css のセレクタ列挙 33 class も同パターン内 (both.css と同一集合を機械照合済)
  * 小文字英数のみ・アンカー付きのため、アプリ側 class の騙りには転用できない。
  * コードフェンス自体の `language-*` は gfmSanitizeSchema 側の既存パターンが受け持つ。
  */

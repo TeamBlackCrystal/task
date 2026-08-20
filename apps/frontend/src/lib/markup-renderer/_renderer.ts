@@ -32,6 +32,10 @@ export type ProfileDefinition = {
    * async transformer を持つプラグイン (rehype-starry-night 等) も可 — process() が
    * await する。プラグイン factory 自体は同期である前提 (unified の use() 契約どおり)
    * のため、processor 構築 (getProcessor) は同期のまま。
+   * 注意: scope 付き描画は processor を都度構築する (getProcessor 参照) ため、attach の
+   * たびに高い初期化を始めるプラグインをそのまま渡すと初期化が描画回数ぶん走る。
+   * 重い async 初期化は factory 側で共有・自己回収すること
+   * (実例: rehype-starry-night/index.ts の createRehypeStarryNight)。
    */
   readonly rehypePlugins?: PluggableList;
 };
@@ -156,8 +160,11 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
   function getProcessor(profile: KfmProfile, clobberPrefix: string): BuiltProcessor {
     // memoize は既定 prefix のみ。scope の値空間は非有界 (comment id 等) で、singleton
     // の SSR プロセスに scope ごとの processor を溜めるとメモリが漏れる。scope 付きは
-    // 都度構築する — 構築はプラグイン合成のみで、cache miss 時に必ず走る
-    // parse＋sanitize に比べ無視できる。
+    // 都度構築する — この「構築 = プラグイン合成のみで軽い」が成り立つのは、rehype 層の
+    // 高い初期化 (starry-night の WASM＋文法登録) がプラグイン factory 側で renderer
+    // スコープ共有されている前提 (rehype-starry-night/index.ts)。attach ごとに初期化を
+    // 始めるプラグインを直接渡すとこの前提が崩れる (ProfileDefinition.rehypePlugins の
+    // 注意書きを参照)。
     if (clobberPrefix !== DEFAULT_CLOBBER_PREFIX) {
       return buildProcessor(getDefinition(profile), clobberPrefix);
     }
@@ -200,13 +207,15 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     try {
       rendered = String(await processor.process(normalized));
     } catch (error) {
-      // 非同期初期化の失敗は「捨てて再試行」: rehype-starry-night は createStarryNight
-      // (async) の Promise をプラグインインスタンス内に保持し、初期化に一度失敗すると
-      // その processor は以後の全 render で reject し続ける (poisoned promise)。
-      // renderDescription はプロセス全体で共有される singleton のため、poisoned のまま
-      // 永久保持するとプロセス再起動まで復旧不能になる。process() 失敗時は memoize を
-      // 破棄し、次回 render に processor ごと再構築させる (再構築は失敗時のみ発生し、
-      // 成功するまで cache.set に到達しないので誤った HTML が残ることはない)。
+      // 非同期初期化の失敗は「捨てて再試行」。renderDescription はプロセス全体で共有
+      // される singleton のため、失敗した実体を永久保持するとプロセス再起動まで復旧
+      // 不能になる (poisoned promise)。回収は二層:
+      // (1) 共有される starry-night 実体はプラグイン factory 側が transform 失敗時に
+      //     自分で捨てて作り直す (rehype-starry-night/index.ts — コアはプラグインを
+      //     知らないので、共有実体の回収はプラグイン自身の責務)。
+      // (2) コア側は失敗した processor の memoize を破棄し、次回 render に再構築させる
+      //     (再構築は失敗時のみ発生し、成功するまで cache.set に到達しないので誤った
+      //     HTML が残ることはない)。
       // instance guard は、遅れて reject した旧 processor が別 render の据えた新しい
       // memoize を巻き添えで破棄するのを防ぐ。scope 付き描画の processor は
       // memoize されないので、この guard は自然に空振りする (削除対象がない)。

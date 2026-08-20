@@ -3,7 +3,7 @@ import type { PluggableList } from 'unified';
 import { describe, expect, it } from 'vitest';
 import { buildCacheKey } from '../markup-renderer/_cache';
 import { createRenderer } from '../markup-renderer/_renderer';
-import { rehypeStarryNight } from '../rehype-starry-night';
+import { createRehypeStarryNight } from '../rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '../remark-koyori-alerts';
 
@@ -141,7 +141,7 @@ describe('pipeline fingerprint (設定変更で旧エントリを拾わない)',
     // 分かれることが「キー差は fingerprint 由来であって出力差ではない」ことの証明になる。
     const input = 'rehype 層 fingerprint の確認 (フェンスなし)';
     const withoutRehype = await make()(input);
-    const withRehype = await make([rehypeStarryNight])(input);
+    const withRehype = await make([createRehypeStarryNight()])(input);
     expect(withoutRehype).toBe(withRehype);
     expect(shared.size).toBe(2);
   });
@@ -155,7 +155,8 @@ describe('pipeline fingerprint (設定変更で旧エントリを拾わない)',
         profiles: {
           github: {
             remarkPlugins: [remarkGfm, remarkKoyoriAlerts],
-            rehypePlugins: [rehypeStarryNight],
+            // renderer ごとに factory を呼んでも attacher 名は同じ = fingerprint が一致する
+            rehypePlugins: [createRehypeStarryNight()],
           },
         },
         sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
