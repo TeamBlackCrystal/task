@@ -4,8 +4,10 @@ import { navigate } from 'vike/client/router';
 import { useData } from 'vike-vue/useData';
 import { usePageContext } from 'vike-vue/usePageContext';
 
+import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useTaskComments } from '@/composables/useTaskComments';
 import { useTaskDetail } from '@/composables/useTaskDetail';
 import type { Data } from './+data';
 import { refreshTaskDescription } from './task-description-navigation';
@@ -34,6 +36,8 @@ function closeDeleteDialog() {
 }
 
 const {
+  tenantId,
+  projectId,
   displayTask,
   statuses,
   projectLabels,
@@ -84,6 +88,23 @@ const {
     }
   },
 });
+
+// コメントは client 取得（SSR 一回契約の対象外）。読み込み失敗はコメント節の中で
+// 倒し、タスク詳細本体には影響させない
+const {
+  threads,
+  commentsLoading,
+  commentsError,
+  submitPending,
+  submitError,
+  updatingCommentId,
+  updateError,
+  deletingCommentId,
+  deleteError: commentDeleteError,
+  submitComment,
+  updateComment,
+  deleteComment,
+} = useTaskComments({ tenantId, projectId, taskId });
 
 function openDeleteDialog() {
   deleteError.value = null;
@@ -162,6 +183,22 @@ function onDeleteDialogCancel(event: Event) {
           </Button>
         </div>
       </dialog>
+    </template>
+    <template #main>
+      <TaskComments
+        :threads="threads"
+        :loading="commentsLoading"
+        :list-error="commentsError"
+        :submit-pending="submitPending"
+        :submit-error="submitError"
+        :updating-comment-id="updatingCommentId"
+        :update-error="updateError"
+        :deleting-comment-id="deletingCommentId"
+        :delete-error="commentDeleteError"
+        :on-submit="submitComment"
+        :on-update="updateComment"
+        :on-delete="deleteComment"
+      />
     </template>
     <template #footer>
       <p class="text-xs text-muted-foreground">

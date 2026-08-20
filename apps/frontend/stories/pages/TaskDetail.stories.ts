@@ -146,6 +146,37 @@ const sampleLabels = [
   },
 ];
 
+type MockComment = {
+  id: string;
+  body: string | null;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+  user: { id: string; name: string };
+  replies: Omit<MockComment, 'replies'>[];
+};
+
+const sampleComments: MockComment[] = [
+  {
+    id: 'comment-1',
+    body: '最初のコメントです。\n改行も保たれます。',
+    is_deleted: false,
+    created_at: '2026-06-10T00:00:00Z',
+    updated_at: '2026-06-10T00:00:00Z',
+    user: { id: mockUsers.alpha.id, name: mockUsers.alpha.username },
+    replies: [
+      {
+        id: 'comment-1-reply-1',
+        body: 'スレッドへの返信です。',
+        is_deleted: false,
+        created_at: '2026-06-11T00:00:00Z',
+        updated_at: '2026-06-11T00:00:00Z',
+        user: { id: mockUsers.beta.id, name: mockUsers.beta.username },
+      },
+    ],
+  },
+];
+
 type MockOptions = {
   task?: typeof sampleTaskDetail | null;
   rejectAll?: boolean;
@@ -156,6 +187,11 @@ type MockOptions = {
   hang?: boolean;
   onPut?: (body: unknown) => void;
   onDelete?: () => void;
+  comments?: MockComment[];
+  /** コメント一覧 GET だけを 500 で落とす（ページ本体は生かす） */
+  rejectCommentsList?: boolean;
+  /** コメント投稿 POST を { message } 付きで拒否する */
+  rejectCommentPost?: { status: number; message: string };
 };
 
 function applyPutBody(
@@ -185,9 +221,14 @@ function applyPutBody(
 }
 
 let mutableTaskDetail = { ...sampleTaskDetail };
+let mutableComments: MockComment[] = [];
 
 function createMockFetch(overrides: MockOptions = {}) {
   mutableTaskDetail = { ...(overrides.task ?? sampleTaskDetail) };
+  mutableComments = (overrides.comments ?? []).map((thread) => ({
+    ...thread,
+    replies: thread.replies.map((reply) => ({ ...reply })),
+  }));
   const original = globalThis.fetch;
   globalThis.fetch = fn().mockImplementation(async (req: Request) => {
     const url = typeof req === 'string' ? req : req.url;
@@ -204,8 +245,75 @@ function createMockFetch(overrides: MockOptions = {}) {
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
     }
-    if (url.includes('/labels')) {
-      return jsonResponse(sampleLabels);
+    // /tasks/{id}/comments は /tasks/ の分岐より先に受ける
+    if (url.includes('/comments')) {
+      if (method === 'GET') {
+        if (overrides.rejectCommentsList) {
+          return jsonResponse({ message: 'server error' }, 500);
+        }
+        return jsonResponse({ comments: mutableComments });
+      }
+      if (method === 'POST') {
+        if (overrides.rejectCommentPost) {
+          return jsonResponse(
+            { message: overrides.rejectCommentPost.message },
+            overrides.rejectCommentPost.status,
+          );
+        }
+        const body = (await req.json()) as { body: string; parent_comment_id?: string | null };
+        const posted = {
+          id: `comment-new-${mutableComments.length + 1}`,
+          body: body.body,
+          is_deleted: false,
+          created_at: '2026-06-15T00:00:00Z',
+          updated_at: '2026-06-15T00:00:00Z',
+          user: { id: mockUsers.alpha.id, name: mockUsers.alpha.username },
+        };
+        if (body.parent_comment_id) {
+          const parent = mutableComments.find((thread) => thread.id === body.parent_comment_id);
+          parent?.replies.push(posted);
+        } else {
+          mutableComments.push({ ...posted, replies: [] });
+        }
+        return jsonResponse(
+          {
+            id: posted.id,
+            task_id: mutableTaskDetail.id,
+            user_id: posted.user.id,
+            body: posted.body,
+            parent_comment_id: body.parent_comment_id ?? null,
+            created_at: posted.created_at,
+            updated_at: posted.updated_at,
+          },
+          201,
+        );
+      }
+      if (method === 'PUT' || method === 'DELETE') {
+        const cid = new URL(url, 'http://localhost').pathname.split('/').pop()!;
+        for (const thread of mutableComments) {
+          for (const comment of [thread, ...thread.replies]) {
+            if (comment.id !== cid) continue;
+            if (method === 'PUT') {
+              const body = (await req.json()) as { body: string };
+              comment.body = body.body;
+              comment.updated_at = '2026-06-16T00:00:00Z';
+              return jsonResponse({
+                id: comment.id,
+                task_id: mutableTaskDetail.id,
+                user_id: comment.user.id,
+                body: comment.body,
+                parent_comment_id: comment.id === thread.id ? null : thread.id,
+                created_at: comment.created_at,
+                updated_at: comment.updated_at,
+              });
+            }
+            comment.is_deleted = true;
+            comment.body = null;
+            return new Response(null, { status: 204 });
+          }
+        }
+        return jsonResponse({ message: 'not-found' }, 404);
+      }
     }
     if (method === 'PUT' && url.includes('/tasks/')) {
       if (overrides.rejectPut) {
@@ -631,6 +739,9 @@ export const DeleteConfirmAndNavigate: Story = {
         const spaNavigateSpy = fn();
         provide(VUE_QUERY_CLIENT, queryClient);
         provide(PAGE_CONTEXT_KEY, mockContext);
+        // KFM の SSR データは無し。プレーンテキスト表示へ倒れる枝を撮る
+        // （KFM 表示そのものは pageData を渡す上の decorator 側で守る）。
+        provide(DATA_KEY, { descriptionHtml: null, descriptionSource: null });
         provide('navigateAfterDelete', (href: string) => {
           spaNavigateSpy(href);
         });
@@ -744,6 +855,69 @@ export const DeleteFailure: Story = {
     await expect(
       within(dialog).findByText('タスクの削除に失敗しました'),
     ).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole('heading', { name: 'OAuth 対応を実装する' })).toBeInTheDocument();
+  },
+};
+
+export const Comments: Story = {
+  name: 'コメント表示',
+  beforeEach: () => createMockFetch({ comments: sampleComments }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // 素テキスト表示: 改行を保ったまま本文が出る（v-html なし）
+    await expect(
+      canvas.findByText(/最初のコメントです。\s*改行も保たれます。/),
+    ).resolves.toBeInTheDocument();
+    await expect(canvas.findByText('スレッドへの返信です。')).resolves.toBeInTheDocument();
+    await expect(canvas.findByText('佐藤花子')).resolves.toBeInTheDocument();
+  },
+};
+
+export const CommentPost: Story = {
+  name: 'コメント投稿',
+  beforeEach: () => createMockFetch({ comments: sampleComments }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const textarea = await canvas.findByRole('textbox', { name: 'コメントを入力' });
+    await user.type(textarea, '新しく投稿するコメント');
+    await user.click(canvas.getByRole('button', { name: 'コメントする' }));
+
+    // invalidate → 一覧再取得で投稿済みコメントが並ぶ
+    await expect(canvas.findByText('新しく投稿するコメント')).resolves.toBeInTheDocument();
+    await expect(textarea).toHaveValue('');
+  },
+};
+
+export const CommentPostRejected: Story = {
+  name: 'コメント投稿拒否（403）',
+  beforeEach: () =>
+    createMockFetch({
+      comments: sampleComments,
+      rejectCommentPost: { status: 403, message: 'forbidden' },
+    }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const textarea = await canvas.findByRole('textbox', { name: 'コメントを入力' });
+    await user.type(textarea, '拒否されるコメント');
+    await user.click(canvas.getByRole('button', { name: 'コメントする' }));
+
+    // 拒否理由（サーバの message）を拒まれた通りに表示し、下書きは残す
+    await expect(
+      canvas.findByText('コメントを投稿できませんでした（forbidden）'),
+    ).resolves.toBeInTheDocument();
+    await expect(textarea).toHaveValue('拒否されるコメント');
+  },
+};
+
+export const CommentsListError: Story = {
+  name: 'コメント一覧エラー（ページ本体は生きる）',
+  beforeEach: () => createMockFetch({ rejectCommentsList: true }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // コメント節の中だけで倒れ、タスク詳細本体は表示され続ける
+    await expect(canvas.findByText('コメントを読み込めませんでした')).resolves.toBeInTheDocument();
     await expect(canvas.getByRole('heading', { name: 'OAuth 対応を実装する' })).toBeInTheDocument();
   },
 };
