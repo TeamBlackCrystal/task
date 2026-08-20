@@ -75,6 +75,11 @@ const connectedAtLabel = computed(() => {
   });
 });
 
+/** 選択トークン自体が無効になったことを示すステータスか（それ以外は一時障害扱い） */
+function isSelectTokenDead(status: number) {
+  return status === 400 || status === 403;
+}
+
 /** callback が付けたクエリを URL から落とす（トークンを履歴・Referer に残さない、
  * リロードでエラーが蘇らない） */
 function clearCallbackQuery() {
@@ -100,7 +105,9 @@ async function loadRepositories() {
     if (error || !data) {
       // 4xx はトークンが無効（期限切れ・使用済み）。それ以外は一時障害なので
       // トークンを捨てず、再試行させる。
-      if (response.status < 500) {
+      // トークンが無効なのは 400 / 403 のときだけ。401（セッション切れ）や
+      // 5xx でトークンを捨てると、まだ使えるのにやり直しになる。
+      if (isSelectTokenDead(response.status)) {
         forgetSelectToken();
         selectError.value = '選択の有効期限が切れました。もう一度「連携する」を押してください。';
         return;
@@ -146,7 +153,7 @@ async function connectRepository(owner: string, name: string) {
       body: { select_token: token, repo_owner: owner, repo_name: name },
     });
     if (error) {
-      if (response.status < 500) {
+      if (isSelectTokenDead(response.status)) {
         // トークン切れか、その間にリポジトリが外れたか。一覧を取り直せばどちらか分かる
         // （トークンが死んでいれば loadRepositories が期限切れとして畳む）。
         await loadRepositories();

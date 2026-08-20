@@ -227,31 +227,48 @@ pub async fn github_callback(
             tracing::warn!(error = %e, "github callback installation verification failed");
             // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
             // 選択を放棄したまま控えが切れたインストールもここに来る（対処は入れ直し）。
+            // 一時障害でアンインストールを促さないよう、拒否と不調は分ける。
+            let reason = if is_installation_rejected(&e) {
+                "installation_rejected"
+            } else {
+                "github_unavailable"
+            };
             let redirect_to =
                 settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id)
                     .await?;
-            return Ok(Redirect::temporary(&format!(
-                "{redirect_to}&github_error=installation_rejected"
-            ))
-            .into_response());
+            return Ok(
+                Redirect::temporary(&format!("{redirect_to}&github_error={reason}"))
+                    .into_response(),
+            );
         }
     };
 
     // 着地点なので、GitHub 側の不調も設定画面へ戻して理由を出す。
     let redirect_to =
         settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
-    let unavailable = |e: anyhow::Error| {
+    // 検証は通っているので、ここで落ちても戻れるように控えておく
+    // （控えが無いと、鮮度が切れたあと入れ直すまで連携できなくなる）。
+    let unavailable = async |e: anyhow::Error| -> Result<Response, AppError> {
         tracing::warn!(error = %e, "github callback: github api unavailable");
-        Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
-            .into_response()
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        Ok(
+            Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
+                .into_response(),
+        )
     };
     let access = match app.installation_access_token(installation.id).await {
         Ok(access) => access,
-        Err(e) => return Ok(unavailable(e)),
+        Err(e) => return unavailable(e).await,
     };
     let repositories = match app.list_repositories(&access.token).await {
         Ok(repositories) => repositories,
-        Err(e) => return Ok(unavailable(e)),
+        Err(e) => return unavailable(e).await,
     };
 
     // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
@@ -395,9 +412,19 @@ async fn upsert_integration(
 /// ponytail: forge-github がステータスをエラー型に持たないため文字列で判定している。
 /// 型で受け取れるようになったら差し替える。
 fn is_installation_gone(error: &anyhow::Error) -> bool {
+    // 403（サスペンド）はレート制限とも区別できないため、ここには含めない。
     let message = error.to_string();
-    // 403 はサスペンド。復帰にはインストールの操作が要るので「使えない」側に入れる。
-    message.contains(" 403 ") || message.contains(" 404 ") || message.contains(" 410 ")
+    message.contains("failed: 404") || message.contains("failed: 410")
+}
+
+/// installation の検証が「拒否」なのか、GitHub 側の不調なのか。
+///
+/// ponytail: forge-github が理由を型で返さないため文字列で判定している。
+fn is_installation_rejected(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("installation id")
+        || message.contains("too old")
+        || is_installation_gone(error)
 }
 
 /// 選択トークンを検証し、束縛された installation のリポジトリ一覧を取得する。

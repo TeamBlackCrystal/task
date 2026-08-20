@@ -423,4 +423,19 @@ describe('IntegrationsSection', () => {
     await flushPromises();
     expect(document.body.textContent).toContain('koyori-app/koyori');
   });
+
+  it('セッション切れ（401）では選択トークンを捨てない', async () => {
+    const state: MockState = { connected: false, repositoriesStatus: 401 };
+    stubFetch(state);
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    expect(document.body.textContent).not.toContain('選択の有効期限が切れました');
+    expect(document.body.textContent).toContain('リポジトリ一覧を取得できませんでした');
+
+    state.repositoriesStatus = undefined;
+    clickBodyButton('再試行');
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/docs');
+  });
 });
