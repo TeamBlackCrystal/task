@@ -360,13 +360,19 @@ describe('renderDescription (脚注 fn-* / fnref-* id の scope)', () => {
     expect(second).not.toContain('user-content-task-1-');
   });
 
-  it('scope 違いでも footnote-label は同一 id になる現状を固定する (#588 で解消予定)', async () => {
+  // この試験は元は「footnote-label は scope が効かず断片間で重複する」という
+  // 当時の現状を固定するものだった。本層 (rehype-scope-footnote-label) がその穴を
+  // 塞いだため、赤くなることで更新を強制する形で働いた。いまは塞がった後を固定する。
+  it('scope 違いなら footnote-label の id と aria-describedby も分かれる', async () => {
     const first = await renderDescription(FOOTNOTE, { scope: 'task-1' });
     const second = await renderDescription(FOOTNOTE, { scope: 'comment-2' });
-    expect(first).toContain('id="footnote-label"');
-    expect(second).toContain('id="footnote-label"');
-    expect(first).toContain('aria-describedby="footnote-label"');
-    expect(second).toContain('aria-describedby="footnote-label"');
+    expect(first).toContain('id="user-content-task-1-footnote-label"');
+    expect(second).toContain('id="user-content-comment-2-footnote-label"');
+    expect(first).toContain('aria-describedby="user-content-task-1-footnote-label"');
+    expect(second).toContain('aria-describedby="user-content-comment-2-footnote-label"');
+    // 素の footnote-label が残っていれば書き換えの取り零しである
+    expect(first).not.toContain('"footnote-label"');
+    expect(second).not.toContain('"footnote-label"');
   });
 
   it('同一 scope は決定的 (独立 renderer 間で同一 HTML = L1 キャッシュ前提を壊さない)', async () => {
