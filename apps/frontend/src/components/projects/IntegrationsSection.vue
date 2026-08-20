@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
-import { usePageContext } from 'vike-vue/usePageContext';
 import { computed, onMounted, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,26 +25,22 @@ const props = defineProps<{
   projectId: string;
 }>();
 
-const pageContext = usePageContext();
 const queryClient = useQueryClient();
 
-// callback が複数リポジトリを見つけたとき、選択トークン付きで戻ってくる（#594）
-const selectToken = ref<string | null>(
-  (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
-    ?.search?.github_select ?? null,
-);
+const CALLBACK_ERRORS: Record<string, string> = {
+  no_repositories:
+    'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。',
+  installation_rejected:
+    'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。',
+};
+
+// callback が付けたクエリは、読んだらすぐ URL から落とす（下の clearCallbackQuery）。
+// pageContext は replaceState を反映しないため、消えたことが分かる window.location から読む。
+const selectToken = ref<string | null>(null);
 const repositories = ref<{ owner: string; name: string }[]>([]);
-const callbackError = ref<string | null>(
-  (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
-    ?.search?.github_error === 'no_repositories'
-    ? 'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。'
-    : (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
-          ?.search?.github_error === 'installation_rejected'
-      ? 'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。'
-      : null,
-);
+const callbackError = ref<string | null>(null);
 const selectError = ref<string | null>(null);
-const selectPending = ref(selectToken.value !== null);
+const selectPending = ref(false);
 const isDisconnectOpen = ref(false);
 const disconnectError = ref<string | null>(null);
 const installError = ref<string | null>(null);
@@ -117,6 +112,9 @@ async function loadRepositories() {
 }
 
 onMounted(() => {
+  const search = new URLSearchParams(window.location.search);
+  selectToken.value = search.get('github_select');
+  callbackError.value = CALLBACK_ERRORS[search.get('github_error') ?? ''] ?? null;
   clearCallbackQuery();
   void loadRepositories();
 });

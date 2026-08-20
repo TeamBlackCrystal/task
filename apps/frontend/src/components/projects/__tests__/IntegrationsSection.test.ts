@@ -81,31 +81,19 @@ function stubFetch(state: MockState) {
 }
 
 function mountSection(options: { selectToken?: string; callbackError?: string } = {}) {
+  // callback からの戻りは URL クエリで表現される
+  const search = new URLSearchParams();
+  if (options.selectToken !== undefined) search.set('github_select', options.selectToken);
+  if (options.callbackError !== undefined) search.set('github_error', options.callbackError);
+  const query = search.toString();
+  window.history.replaceState({}, '', query ? `/settings?${query}` : '/settings');
+
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return mount(IntegrationsSection, {
     props: { tenantId: TENANT_UUID, projectId: PROJECT_UUID },
-    global: {
-      plugins: [[VueQueryPlugin, { queryClient }]],
-      provide:
-        options.selectToken !== undefined || options.callbackError !== undefined
-          ? {
-              'vike-vue:usePageContext': {
-                urlParsed: {
-                  search: {
-                    ...(options.selectToken !== undefined
-                      ? { github_select: options.selectToken }
-                      : {}),
-                    ...(options.callbackError !== undefined
-                      ? { github_error: options.callbackError }
-                      : {}),
-                  },
-                },
-              },
-            }
-          : {},
-    },
+    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
     attachTo: document.body,
   });
 }
@@ -380,5 +368,27 @@ describe('IntegrationsSection', () => {
 
     expect(document.body.textContent).toContain('リポジトリが 1 件も含まれていません');
     expect(bodyButton('連携する')).toBeTruthy();
+  });
+
+  it('連携後にセクションを開き直しても、消費済みトークンで再取得しない', async () => {
+    const fetchMock = stubFetch({ connected: false });
+    const first = mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+    clickSelectButton(0);
+    await flushPromises();
+    first.unmount();
+
+    // 再マウント（セクション切り替え相当）。URL からトークンは落ちている
+    expect(window.location.search).not.toContain('github_select');
+    fetchMock.mockClear();
+    mountSection();
+    await flushPromises();
+
+    const refetched = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .some((req) => req.url.includes('/github/repositories'));
+    expect(refetched).toBe(false);
+    expect(document.body.textContent).not.toContain('選択の有効期限が切れました');
   });
 });

@@ -14,7 +14,7 @@ pub mod sync;
 pub use client::github_app;
 pub use install_state::{
     GithubOAuthStatePayload, RepoSelectPayload, TTL_SECS, consume_select_token, consume_state,
-    delete_pending_installation, new_state_token, peek_pending_installation, peek_select_token,
+    delete_pending_installation_if, new_state_token, peek_pending_installation, peek_select_token,
     store_pending_installation, store_select_token, store_state,
 };
 pub use repositories::{contains_repository, select_primary_repository};

@@ -552,6 +552,40 @@ async fn github_http_integration_suite() {
         assert_eq!(rows.len(), 1, "1 プロジェクト = 1 連携のまま");
         assert_eq!(rows[0].repo_name, "repo-9");
 
+        // 連携済みプロジェクトでは、その installation の選択トークンしか受け付けない
+        // （別タブに残った古いトークンで連携先が巻き戻らない）
+        let foreign_token = github_oauth_state::new_state_token();
+        github_oauth_state::store_select_token(
+            &app.state.redis_client,
+            &foreign_token,
+            &github_oauth_state::RepoSelectPayload {
+                tenant_id: tp.tenant_id,
+                project_id: tp.project_id,
+                user_id: user.id,
+                installation_id: unique_multi_repo_installation_id(),
+            },
+        )
+        .await
+        .expect("store select token");
+        let foreign = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": foreign_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            )
+            .await;
+        assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+        let unchanged = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("integration row");
+        assert_eq!(unchanged.repo_name, "repo-9");
+
         // 確定後のトークンは使い捨て
         let reused = app
             .post_json_with_session(
@@ -715,6 +749,29 @@ async fn github_http_integration_suite() {
                 || accepted.status() == StatusCode::TEMPORARY_REDIRECT,
             "pending installation should skip the freshness check, got {}",
             accepted.status()
+        );
+
+        // 無関係なインストールを連携して解除しても、控えは消えない
+        // （プロジェクトの枠は 1 つしかないので、無条件に消すと戻り道を失う）
+        let unrelated_state = get_install_state(&app, &tp).await;
+        let unrelated = app
+            .get_with_session(&callback_path(&unrelated_state, unique_installation_id()))
+            .await;
+        assert!(
+            unrelated.status() == StatusCode::FOUND
+                || unrelated.status() == StatusCode::TEMPORARY_REDIRECT
+        );
+        let unrelated_delete = app.delete_with_session(&integration_path(&tp)).await;
+        assert_eq!(unrelated_delete.status(), StatusCode::NO_CONTENT);
+
+        let back_state = get_install_state(&app, &tp).await;
+        let back = app
+            .get_with_session(&callback_path(&back_state, pending_id))
+            .await;
+        assert!(
+            back.status() == StatusCode::FOUND || back.status() == StatusCode::TEMPORARY_REDIRECT,
+            "pending installation should survive an unrelated connect/disconnect, got {}",
+            back.status()
         );
 
         // 一致しない古い ID は通常どおり拒否（古い installation_id の差し込み防止）
