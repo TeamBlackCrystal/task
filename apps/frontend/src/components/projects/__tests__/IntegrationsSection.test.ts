@@ -311,12 +311,14 @@ describe('IntegrationsSection', () => {
     expect(document.body.textContent).toContain('koyori-app/koyori');
   });
 
-  it('選択トークンが切れていたら選択 UI を出さず未連携表示に戻る', async () => {
+  it('選択トークンが切れていたら理由を出し、未連携表示に戻る', async () => {
     stubFetch({ connected: false, repositoriesStatus: 400 });
     mountSection({ selectToken: 'expired-token' });
     await flushPromises();
 
-    expect(document.body.textContent).not.toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('選択の有効期限が切れました');
+    // 期限切れに再試行は無意味なのでボタンは出さない
+    expect(bodyButton('再試行')).toBeUndefined();
     expect(bodyButton('連携する')).toBeTruthy();
   });
 

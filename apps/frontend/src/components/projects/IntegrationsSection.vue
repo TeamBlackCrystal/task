@@ -72,16 +72,21 @@ const connectedAtLabel = computed(() => {
   });
 });
 
+/** callback が付けたクエリを URL から落とす（トークンを履歴・Referer に残さない、
+ * リロードでエラーが蘇らない） */
+function clearCallbackQuery() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('github_select');
+  url.searchParams.delete('github_error');
+  window.history.replaceState(window.history.state, '', url);
+}
+
 /** 選択トークンが切れていたら選択 UI を畳んで未連携表示に戻す */
 async function loadRepositories() {
   const token = selectToken.value;
   if (!token) return;
   selectError.value = null;
   selectPending.value = true;
-  // 10 分有効な選択トークンを履歴・Referer に残さない（取得の成否に関わらず落とす）
-  const url = new URL(window.location.href);
-  url.searchParams.delete('github_select');
-  window.history.replaceState(window.history.state, '', url);
   try {
     const { data, error, response } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
       params: {
@@ -95,6 +100,7 @@ async function loadRepositories() {
       if (response.status < 500) {
         selectToken.value = null;
         repositories.value = [];
+        selectError.value = '選択の有効期限が切れました。もう一度「連携する」を押してください。';
         return;
       }
       throw new Error('repositories-unavailable');
@@ -107,7 +113,10 @@ async function loadRepositories() {
   }
 }
 
-onMounted(loadRepositories);
+onMounted(() => {
+  clearCallbackQuery();
+  void loadRepositories();
+});
 
 async function connectRepository(owner: string, name: string) {
   const token = selectToken.value;
@@ -228,13 +237,13 @@ async function confirmDisconnect() {
       <p v-if="callbackError" role="alert" class="text-sm text-destructive">{{ callbackError }}</p>
 
       <!-- インストールに複数リポジトリが含まれるとき、連携先を 1 件選ばせる -->
-      <div v-if="selectToken" class="rounded-[10px] border p-4">
+      <div v-if="selectToken || selectError" class="rounded-[10px] border p-4">
         <p class="text-sm font-medium">連携するリポジトリを選択</p>
         <p class="mt-0.5 text-xs text-muted-foreground">
           このインストールから 1 つのリポジトリをプロジェクトに紐付けます。
         </p>
         <p
-          v-if="!repositories.length"
+          v-if="selectToken && !repositories.length"
           :role="selectPending ? 'status' : 'alert'"
           class="mt-3 text-sm text-muted-foreground"
         >
@@ -264,7 +273,7 @@ async function confirmDisconnect() {
         <div v-if="selectError" class="mt-3 flex items-center gap-3">
           <p role="alert" class="text-sm text-destructive">{{ selectError }}</p>
           <Button
-            v-if="!repositories.length"
+            v-if="selectToken && !repositories.length"
             type="button"
             variant="outline"
             size="sm"

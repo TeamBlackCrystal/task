@@ -497,10 +497,12 @@ pub async fn connect_github_repository(
     // 連携できたときだけトークンを捨てる（再利用防止）。
     // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
     // 連携自体は成功しているので、破棄の失敗ではエラーを返さない（TTL で切れる）。
-    install_state::delete_pending_installation(&state.redis_client, project_id)
-        .await
-        .map_err(AppError::Internal)?;
-
+    // 連携自体は成功しているので、後片付けの失敗ではエラーを返さない（どちらも TTL で切れる）。
+    if let Err(e) =
+        install_state::delete_pending_installation(&state.redis_client, project_id).await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
     if let Err(e) =
         install_state::consume_select_token(&state.redis_client, &body.select_token).await
     {
