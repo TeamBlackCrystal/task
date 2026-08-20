@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { afterEach, describe, expect, it } from 'vitest';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 import type { components } from '@/generated/api';
@@ -241,5 +244,86 @@ describe('TaskDetailHub', () => {
       [['label-bug', 'label-stale', 'label-feature']],
     ]);
     wrapper.unmount();
+  });
+});
+
+describe('TaskDetailHub description KFM 表示', () => {
+  const RENDERED_HTML = '<h1 id="user-content-task-uuid-h">見出し</h1><p><strong>強調</strong></p>';
+
+  it('descriptionHtml があれば kfm-content の器へ v-html でそのまま入る', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: '# 見出し\n\n**強調**' },
+        descriptionHtml: RENDERED_HTML,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    const container = wrapper.get('[data-task-description-html]');
+    expect(container.classes()).toContain('kfm-content');
+    expect(container.element.innerHTML).toBe(RENDERED_HTML);
+    // 生テキスト表示 (プレーン分岐) は出ない
+    expect(wrapper.find('p.whitespace-pre-wrap').exists()).toBe(false);
+  });
+
+  it('descriptionHtml が無ければ生テキストのプレーン表示のまま (クライアント再パースなし)', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: '**強調** <em>raw</em>' },
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    // Markdown 記法が文字のまま見える = クライアントでは一切パースしていない
+    expect(wrapper.get('p.whitespace-pre-wrap').text()).toContain('**強調**');
+    expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
+    expect(wrapper.find('strong').exists()).toBe(false);
+    // 生テキスト中のタグ断片も要素化されない (v-html へ流れていない)
+    expect(wrapper.find('em').exists()).toBe(false);
+  });
+
+  it('KFM 表示中は鉛筆ボタンから編集へ入り、textarea には生テキストが入る', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: '# 見出し' },
+        descriptionHtml: RENDERED_HTML,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    await wrapper.get('button[aria-label="説明を編集"]').trigger('click');
+    const textarea = wrapper.get('textarea[aria-label="説明"]');
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('# 見出し');
+    // 編集中は KFM 表示は消える
+    expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
+  });
+
+  it('説明が空なら descriptionHtml が残っていても stale HTML を出さない', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: null },
+        descriptionHtml: RENDERED_HTML,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('説明はありません');
+  });
+});
+
+describe('TaskDetailHub v-html 経路の source 契約', () => {
+  it('SFC 内の v-html は descriptionHtml へのバインド 1 箇所だけ', () => {
+    const source = readFileSync(path.join(__dirname, '../TaskDetailHub.vue'), 'utf-8');
+    const bindings = source.match(/v-html="[^"]*"/g) ?? [];
+    expect(bindings).toEqual(['v-html="descriptionHtml"']);
   });
 });

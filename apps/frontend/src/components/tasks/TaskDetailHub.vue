@@ -24,6 +24,14 @@ import {
   isoToLocalDateInput,
   taskSeqKey,
 } from '@/lib/task-display';
+// KFM サイドカー CSS の消費契約 (@/lib/markup-renderer/index.ts): v-html する消費側が
+// 明示 import する。GFM は器の kfm-content (KFM_CONTENT_CLASS) が無いと一行も当たらない。
+// content-class.ts は leaf module なので、この import で KFM コアが client へ載ることはない。
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
+import '@/lib/remark-gfm/style.css';
+import '@/lib/remark-koyori-alerts/style.css';
+import '@/lib/rehype-starry-night/style.css';
+import '@/lib/remark-kfm-mermaid/style.css';
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type StatusOption = components['schemas']['ProjectStatusResponse'];
@@ -52,6 +60,14 @@ const props = defineProps<{
    * 'pane' は分割ビューの狭い右ペイン用に常に 1 カラムで縦積みにする。
    */
   layout?: 'page' | 'pane';
+  /**
+   * サーバ (+data.ts) の renderDescription 出力。非 null なら説明を KFM HTML として
+   * v-html 表示する。null / 未指定はプレーンテキスト表示へフォールバックする
+   * (分割ビューのペイン等、サーバ生成 HTML を持たない消費側)。
+   * v-html に入れてよいのはこの prop だけ — task.description (生テキスト) を
+   * v-html へ流す経路を作ってはならない (SSR/sanitize 契約: @/lib/markup-renderer)。
+   */
+  descriptionHtml?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -293,6 +309,18 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               >
                 クリア
               </Button>
+              <Button
+                v-else-if="editingField !== 'description' && descriptionHtml && task.description"
+                type="button"
+                variant="ghost"
+                size="icon"
+                class="size-7"
+                aria-label="説明を編集"
+                :disabled="isFieldUpdating('description')"
+                @click="startEditing('description')"
+              >
+                <Pencil class="size-4" aria-hidden="true" />
+              </Button>
             </div>
 
             <Textarea
@@ -305,6 +333,19 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               aria-label="説明"
               @keydown="onEditKeydown($event, 'description')"
               @blur="commitEditing('description')"
+            />
+            <!--
+              KFM 表示は非対話の div にする: 描画 HTML はリンク等の対話要素を含みうるため、
+              プレーン表示のような button で包むと入れ子の対話要素になる。編集導線は
+              上の鉛筆ボタン。task.description が空のときは stale な HTML を出さない
+              (クリア直後は下のプレーン分岐が「説明はありません」を出す)。
+            -->
+            <div
+              v-else-if="descriptionHtml && task.description"
+              :class="KFM_CONTENT_CLASS"
+              class="text-sm leading-relaxed"
+              data-task-description-html
+              v-html="descriptionHtml"
             />
             <button
               v-else

@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
-import { navigate } from 'vike/client/router';
+import { navigate, reload } from 'vike/client/router';
+import { useData } from 'vike-vue/useData';
 import { usePageContext } from 'vike-vue/usePageContext';
 
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
 import { useTaskDetail } from '@/composables/useTaskDetail';
+import type { Data } from './+data';
 
 const pageContext = usePageContext();
+// サーバ (+data.ts) が renderDescription した説明 HTML。クライアントは受けて v-html
+// するだけで、再パースしない (SSR 契約: @/lib/markup-renderer/index.ts)。
+const data = useData<Data>();
 
 // 削除後遷移の seam。既定は SPA 遷移だが、テスト等が差し替えられるよう inject 経由にする。
 const navigateAfterDelete = inject<(href: string) => void>('navigateAfterDelete', (href) => {
@@ -59,6 +64,13 @@ const {
     closeDeleteDialog();
     navigateAfterDelete(href);
   },
+  // 説明の保存直後、クライアントは生テキストしか持たない。クライアントで KFM を
+  // 描画せず (バンドル退行 +417.5 KB の再来防止)、+data.ts をサーバで再実行して
+  // 描画済み HTML を取り直す。reload は保存確定後にのみ呼ばれるため、backend は
+  // 既に新しい本文を返す。
+  onAfterFieldSaved: (field) => {
+    if (field === 'description') void reload();
+  },
 });
 
 function openDeleteDialog() {
@@ -76,6 +88,7 @@ function onDeleteDialogCancel(event: Event) {
 <template>
   <TaskDetailHub
     :task="displayTask"
+    :description-html="data.descriptionHtml"
     :project-key="projectKey"
     :statuses="statuses"
     :project-labels="projectLabels"
