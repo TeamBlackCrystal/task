@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CSS_PATH = path.join(__dirname, '../remark-gfm/style.css');
+const REMARK_CSS_PATHS = fs.globSync(path.join(__dirname, '../remark-*/style.css'));
+// remark-koyori-alerts は自身が emit する .kfm-alert 名前空間を直接指すため対象外。
+// bare 要素を描画するプラグインだけ、器クラスの scope 契約をここで宣言する。
+const CONTAINER_SCOPED_REMARK_PLUGINS = new Set(['remark-gfm']);
+const CONTAINER_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter((cssPath) =>
+  CONTAINER_SCOPED_REMARK_PLUGINS.has(path.basename(path.dirname(cssPath))),
+);
 
 /**
  * GFM サイドカー CSS の消費契約の機構化。
@@ -37,6 +43,16 @@ const isScoped = (selector: string): boolean => {
 
   const scopeClass = new RegExp(`\\.${KFM_CONTENT_CLASS}(?![\\w-])`, 'g');
   return Array.from(selector.matchAll(scopeClass)).some((match) => {
+    // :has(.kfm-content) / :not(.kfm-content) 内の一致は、その外側を scope しない。
+    // マッチ位置までに閉じていない括弧があれば functional pseudo-class 内とみなす。
+    const prefix = selector.slice(0, match.index ?? 0);
+    const openParentheses = Array.from(prefix).reduce((depth, character) => {
+      if (character === '(') return depth + 1;
+      if (character === ')') return Math.max(0, depth - 1);
+      return depth;
+    }, 0);
+    if (openParentheses > 0) return false;
+
     const suffix = selector.slice((match.index ?? 0) + match[0].length);
     // scope class と同じ compound の残り (.foo / :hover 等) を読み飛ばし、
     // 最初の combinator を検査する。現契約では descendant と child だけを許す。
@@ -64,14 +80,27 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     expect(isScoped(`.${KFM_CONTENT_CLASS}-like ul`)).toBe(false);
     expect(isScoped(`.${KFM_CONTENT_CLASS} + ul`)).toBe(false);
     expect(isScoped(`.${KFM_CONTENT_CLASS} ~ ul`)).toBe(false);
+    expect(isScoped(`body:has(.${KFM_CONTENT_CLASS}) ul`)).toBe(false);
     expect(isScoped(`@media print { .${KFM_CONTENT_CLASS} ul`)).toBe(false);
   });
 
-  it('style.css の全ルールが器クラス子孫限定 (bare 要素への漏れ・片側改名を弾く)', () => {
-    const selectors = extractSelectors(fs.readFileSync(CSS_PATH, 'utf8'));
+  it('器 scope が必要な remark-*/style.css の全ルールが器クラス子孫限定', () => {
+    const discoveredPlugins = REMARK_CSS_PATHS.map((cssPath) =>
+      path.basename(path.dirname(cssPath)),
+    );
+    for (const plugin of CONTAINER_SCOPED_REMARK_PLUGINS) {
+      expect(discoveredPlugins).toContain(plugin);
+    }
+
+    const selectors = CONTAINER_SCOPED_CSS_PATHS.flatMap((cssPath) =>
+      extractSelectors(fs.readFileSync(cssPath, 'utf8')).map((selector) => ({
+        file: path.relative(__dirname, cssPath),
+        selector,
+      })),
+    );
     // 空振りだけを防ぐ。ルール削除を一律に破壊扱いせず、残った全ルールの scope を検査する。
     expect(selectors.length).toBeGreaterThanOrEqual(1);
-    const unscoped = selectors.filter((selector) => !isScoped(selector));
+    const unscoped = selectors.filter(({ selector }) => !isScoped(selector));
     expect(unscoped).toEqual([]);
   });
 });

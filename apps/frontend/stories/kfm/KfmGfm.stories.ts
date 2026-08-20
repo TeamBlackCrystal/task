@@ -121,13 +121,16 @@ export const TaskList: Story = {
     // 最上位は bullet 無し・字下げ 0 (checkbox がマーカー役)、入れ子は字下げ > 0
     const topList = canvasElement.querySelector(`.${KFM_CONTENT_CLASS} > ul.contains-task-list`);
     const nestedList = canvasElement.querySelector('.task-list-item > ul.contains-task-list');
+    const taskItem = canvasElement.querySelector('.task-list-item');
     await expect(topList).not.toBeNull();
     await expect(nestedList).not.toBeNull();
+    await expect(taskItem).not.toBeNull();
     const topStyle = topList ? getComputedStyle(topList) : null;
     const nestedStyle = nestedList ? getComputedStyle(nestedList) : null;
     await expect(topStyle?.listStyleType).toBe('none');
     await expect(topStyle?.paddingLeft).toBe('0px');
     await expect(Number.parseFloat(nestedStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
+    await expect(taskItem ? getComputedStyle(taskItem).listStyleType : '').toBe('none');
   },
 };
 
@@ -204,7 +207,11 @@ export const NestedLists: Story = {
     const outerStyle = outerOl ? getComputedStyle(outerOl) : null;
     await expect(outerStyle?.listStyleType).toBe('decimal');
     await expect(Number.parseFloat(outerStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
+    const discUl = canvasElement.querySelector('ol ol ul');
+    const circleUl = canvasElement.querySelector('ol ol ul ul');
     const deepUl = canvasElement.querySelector('ol ol ul ul ul');
+    await expect(discUl ? getComputedStyle(discUl).listStyleType : '').toBe('disc');
+    await expect(circleUl ? getComputedStyle(circleUl).listStyleType : '').toBe('circle');
     const deepStyle = deepUl ? getComputedStyle(deepUl) : null;
     // 五段目 ul は 3 重の ul なので、残すと決めた .kfm-content ul ul ul を実際に消費する
     await expect(deepStyle?.listStyleType).toBe('square');
