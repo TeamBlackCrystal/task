@@ -58,6 +58,7 @@ async fn mount_github_api_mocks(server: &MockServer) {
             "Bearer ghs_test_installation_token",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "total_count": 1,
             "repositories": [{
                 "full_name": "acme/backend",
                 "owner": { "login": "acme" }
@@ -66,19 +67,12 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .mount(server)
         .await;
 
-    let many: Vec<serde_json::Value> = (0..30)
-        .map(|i| {
-            serde_json::json!({
-                "full_name": format!("acme/repo-{i}"),
-                "owner": { "login": "acme" }
-            })
-        })
-        .collect();
     Mock::given(method("GET"))
         .and(path("/installation/repositories"))
         .and(header("authorization", "Bearer ghs_no_repo_token"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "repositories": [] })),
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "total_count": 0, "repositories": [] })),
         )
         .mount(server)
         .await;
@@ -86,9 +80,31 @@ async fn mount_github_api_mocks(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path("/installation/repositories"))
         .and(header("authorization", "Bearer ghs_multi_repo_token"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "repositories": many })),
-        )
+        // 1 ページ（100 件）に収まらない件数を返し、ページングを踏ませる
+        .respond_with(|req: &wiremock::Request| {
+            let number = |key: &str, fallback: usize| -> usize {
+                req.url
+                    .query_pairs()
+                    .find(|(name, _)| name == key)
+                    .and_then(|(_, value)| value.parse().ok())
+                    .unwrap_or(fallback)
+            };
+            let per_page = number("per_page", 30);
+            let start = (number("page", 1) - 1) * per_page;
+            let repositories: Vec<serde_json::Value> = (start
+                ..MULTI_REPO_COUNT.min(start + per_page))
+                .map(|i| {
+                    serde_json::json!({
+                        "full_name": format!("acme/repo-{i}"),
+                        "owner": { "login": "acme" }
+                    })
+                })
+                .collect();
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": MULTI_REPO_COUNT,
+                "repositories": repositories,
+            }))
+        })
         .mount(server)
         .await;
 
@@ -102,6 +118,9 @@ async fn mount_github_api_mocks(server: &MockServer) {
 
 /// この値以上の installation id は「複数リポジトリが見えるインストール」として扱う。
 const MULTI_REPO_ID_BASE: i64 = 1_500_000_000_000;
+/// 複数リポジトリのインストールが見せる件数。1 ページ（100 件）を超える値にして、
+/// ページングが効いていないと 100 件で切れることを検出できるようにしている。
+const MULTI_REPO_COUNT: usize = 130;
 /// この値以上は「1 件も見えないインストール」。
 const NO_REPO_ID_BASE: i64 = 2_500_000_000_000;
 /// この値以上は「作成から時間が経った、複数リポジトリのインストール」。
@@ -439,7 +458,11 @@ async fn github_http_integration_suite() {
             .await;
         assert_eq!(list.status(), StatusCode::OK);
         let body: serde_json::Value = list.json().await.expect("repositories json");
-        assert_eq!(body["repositories"].as_array().unwrap().len(), 30);
+        assert_eq!(
+            body["repositories"].as_array().unwrap().len(),
+            MULTI_REPO_COUNT,
+            "ページングされていないと 100 件で切れる"
+        );
 
         // 知らない選択トークンは 400（フロントの「期限切れ」判定が 4xx に依存している）
         let unknown = app
