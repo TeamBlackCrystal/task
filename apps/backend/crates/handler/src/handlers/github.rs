@@ -299,9 +299,12 @@ pub async fn github_callback(
         &access,
     )
     .await?;
-    install_state::delete_pending_installation(&state.redis_client, payload.project_id)
-        .await
-        .map_err(AppError::Internal)?;
+    // 連携は済んでいるので、後片付けの失敗で着地点をエラーにしない（TTL で切れる）。
+    if let Err(e) =
+        install_state::delete_pending_installation(&state.redis_client, payload.project_id).await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
 
     Ok(Redirect::temporary(&redirect_to).into_response())
 }
@@ -394,10 +397,20 @@ async fn resolve_select_token(
     }
 
     let app = github_app(&state.http_client, github);
+    // トークンが取れない = そのインストールがもう無い（アンインストール / 停止）。
+    // 一時障害と区別できないと、フロントが成功しない「再試行」を出し続けるので
+    // 選択トークンが無効になったもの（4xx）として返す。
     let access = app
         .installation_access_token(payload.installation_id)
         .await
-        .map_err(AppError::Internal)?;
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                installation_id = payload.installation_id,
+                "github installation access token failed; treating select token as invalid"
+            );
+            AppError::BadRequest
+        })?;
     let repositories = app
         .list_repositories(&access.token)
         .await
@@ -496,7 +509,6 @@ pub async fn connect_github_repository(
 
     // 連携できたときだけトークンを捨てる（再利用防止）。
     // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
-    // 連携自体は成功しているので、破棄の失敗ではエラーを返さない（TTL で切れる）。
     // 連携自体は成功しているので、後片付けの失敗ではエラーを返さない（どちらも TTL で切れる）。
     if let Err(e) =
         install_state::delete_pending_installation(&state.redis_client, project_id).await
@@ -698,9 +710,12 @@ pub async fn delete_github_integration(
     let active: github_integrations::ActiveModel = row.into();
     active.delete(&state.db).await?;
 
-    install_state::delete_pending_installation(&state.redis_client, project_id)
-        .await
-        .map_err(AppError::Internal)?;
+    // 解除は済んでいるので、後片付けの失敗で失敗扱いにしない（TTL で切れる）。
+    if let Err(e) =
+        install_state::delete_pending_installation(&state.redis_client, project_id).await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

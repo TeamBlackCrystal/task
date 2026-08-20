@@ -494,6 +494,37 @@ async fn github_http_integration_suite() {
         assert_eq!(row.repo_owner, "acme");
         assert_eq!(row.repo_name, "repo-7");
 
+        // 連携済みでも選び直せる（既存行の更新ブランチ）
+        let reselect_state = get_install_state(&app, &tp).await;
+        let reselect = app
+            .get_with_session(&callback_path(&reselect_state, installation_id))
+            .await;
+        let reselect_token = select_token_from_location(
+            reselect
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .expect("location header"),
+        );
+        let reconnect = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": reselect_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-9"
+                }),
+            )
+            .await;
+        assert_eq!(reconnect.status(), StatusCode::NO_CONTENT);
+        let rows = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .all(&app.state.db)
+            .await
+            .expect("query integrations");
+        assert_eq!(rows.len(), 1, "1 プロジェクト = 1 連携のまま");
+        assert_eq!(rows[0].repo_name, "repo-9");
+
         // 確定後のトークンは使い捨て
         let reused = app
             .post_json_with_session(

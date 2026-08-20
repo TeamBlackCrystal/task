@@ -345,6 +345,8 @@ describe('IntegrationsSection', () => {
 
     expect(document.body.textContent).toContain('リポジトリ一覧を取得できませんでした');
     expect(document.body.textContent).toContain('連携するリポジトリを選択');
+    // 取得失敗を「0 件」と取り違えさせない
+    expect(document.body.textContent).not.toContain('選択できるリポジトリがありません');
 
     state.repositoriesStatus = undefined;
     clickBodyButton('再試行');

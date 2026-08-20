@@ -243,7 +243,7 @@ async function confirmDisconnect() {
           このインストールから 1 つのリポジトリをプロジェクトに紐付けます。
         </p>
         <p
-          v-if="selectToken && !repositories.length"
+          v-if="selectToken && !selectError && !repositories.length"
           :role="selectPending ? 'status' : 'alert'"
           class="mt-3 text-sm text-muted-foreground"
         >
