@@ -328,7 +328,28 @@ async fn github_http_integration_suite() {
         let response = app
             .get_with_session(&callback_path(&state_token, bound_id + 1))
             .await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response.status() == StatusCode::FOUND
+                || response.status() == StatusCode::TEMPORARY_REDIRECT
+        );
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .expect("location header");
+        assert!(
+            location.contains("github_error=installation_rejected"),
+            "unexpected redirect location: {location}"
+        );
+        assert!(
+            github_integrations::Entity::find()
+                .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+                .one(&app.state.db)
+                .await
+                .expect("query integration")
+                .is_none()
+        );
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
@@ -419,6 +440,12 @@ async fn github_http_integration_suite() {
         assert_eq!(list.status(), StatusCode::OK);
         let body: serde_json::Value = list.json().await.expect("repositories json");
         assert_eq!(body["repositories"].as_array().unwrap().len(), 30);
+
+        // 知らない選択トークンは 400（フロントの「期限切れ」判定が 4xx に依存している）
+        let unknown = app
+            .get_with_session(&repositories_path(&tp, "no-such-select-token"))
+            .await;
+        assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
 
         // 別ユーザーは同じ選択トークンを使えない（403）
         let owner_email = user.email.clone();
@@ -695,7 +722,17 @@ async fn github_http_integration_suite() {
         let rejected = app
             .get_with_session(&callback_path(&other_state, unique_old_installation_id()))
             .await;
-        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        let rejected_location = rejected
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .expect("location header");
+        assert!(
+            rejected_location.contains("github_error=installation_rejected"),
+            "unexpected redirect location: {rejected_location}"
+        );
+        assert!(!rejected_location.contains("github_select="));
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();

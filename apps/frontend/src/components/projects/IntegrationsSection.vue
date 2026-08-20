@@ -39,7 +39,10 @@ const callbackError = ref<string | null>(
   (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
     ?.search?.github_error === 'no_repositories'
     ? 'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。'
-    : null,
+    : (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
+          ?.search?.github_error === 'installation_rejected'
+      ? 'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。'
+      : null,
 );
 const selectError = ref<string | null>(null);
 const selectPending = ref(selectToken.value !== null);
@@ -124,11 +127,20 @@ async function connectRepository(owner: string, name: string) {
   selectError.value = null;
   selectPending.value = true;
   try {
-    const { error } = await fetchClient.POST(GITHUB_CONNECT_PATH, {
+    const { error, response } = await fetchClient.POST(GITHUB_CONNECT_PATH, {
       params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
       body: { select_token: token, repo_owner: owner, repo_name: name },
     });
-    if (error) throw new Error('connect-failed');
+    if (error) {
+      // 一覧を出したまま放置するとトークンが切れる。一時障害と区別して案内する。
+      if (response.status < 500) {
+        selectToken.value = null;
+        repositories.value = [];
+        selectError.value = '選択の有効期限が切れました。もう一度「連携する」を押してください。';
+        return;
+      }
+      throw new Error('connect-failed');
+    }
     selectToken.value = null;
     repositories.value = [];
     await queryClient.invalidateQueries({ queryKey: ['get', GITHUB_INTEGRATION_PATH] });

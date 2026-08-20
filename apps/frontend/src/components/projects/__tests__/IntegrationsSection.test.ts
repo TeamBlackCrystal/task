@@ -114,6 +114,15 @@ function bodyButton(label: string) {
   return [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
 }
 
+function clickSelectButton(index: number) {
+  const buttons = [...document.body.querySelectorAll('button')].filter(
+    (b) => b.textContent?.trim() === '選択',
+  );
+  const button = buttons[index];
+  if (!button) throw new Error(`select button #${index} not found`);
+  button.click();
+}
+
 function clickBodyButton(label: string) {
   const button = bodyButton(label);
   if (!button) throw new Error(`button "${label}" not found`);
@@ -322,19 +331,28 @@ describe('IntegrationsSection', () => {
     expect(bodyButton('連携する')).toBeTruthy();
   });
 
-  it('選択したリポジトリの連携に失敗したらエラーを表示して選択 UI を残す', async () => {
+  it('連携が 4xx（トークン切れ）なら理由を出して選択 UI を畳む', async () => {
     stubFetch({ connected: false, connectStatus: 400 });
     mountSection({ selectToken: 'select-token-1' });
     await flushPromises();
 
-    const button = [...document.body.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === '選択',
-    );
-    button!.click();
+    clickSelectButton(0);
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('選択の有効期限が切れました');
+    expect(bodyButton('連携する')).toBeTruthy();
+  });
+
+  it('連携が 5xx なら選択 UI を残してエラーを表示する', async () => {
+    stubFetch({ connected: false, connectStatus: 500 });
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    clickSelectButton(0);
     await flushPromises();
 
     expect(document.body.textContent).toContain('リポジトリを連携できませんでした');
-    expect(document.body.textContent).toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('koyori-app/koyori');
   });
 
   it('一覧取得が 5xx なら選択 UI を残し、再試行で回復する', async () => {

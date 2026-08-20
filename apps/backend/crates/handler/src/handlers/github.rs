@@ -214,17 +214,28 @@ pub async fn github_callback(
             .map_err(AppError::Internal)?
             .filter(|pending| *pending == query.installation_id),
     };
-    let installation = app
+    let installation = match app
         .verify_installation(
             query.installation_id,
             expected_installation_id,
             chrono::Duration::seconds(TTL_SECS as i64),
         )
         .await
-        .map_err(|e| {
+    {
+        Ok(installation) => installation,
+        Err(e) => {
             tracing::warn!(error = %e, "github callback installation verification failed");
-            AppError::BadRequest
-        })?;
+            // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
+            // 選択を放棄したまま控えが切れたインストールもここに来る（対処は入れ直し）。
+            let redirect_to =
+                settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id)
+                    .await?;
+            return Ok(Redirect::temporary(&format!(
+                "{redirect_to}&github_error=installation_rejected"
+            ))
+            .into_response());
+        }
+    };
 
     let access = app
         .installation_access_token(installation.id)
@@ -370,6 +381,15 @@ async fn upsert_integration(
     Ok(())
 }
 
+/// インストールが GitHub 側から消えているか。
+///
+/// ponytail: forge-github がステータスをエラー型に持たないため文字列で判定している。
+/// 型で受け取れるようになったら差し替える。
+fn is_installation_gone(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains(" 404 ") || message.contains(" 410 ")
+}
+
 /// 選択トークンを検証し、束縛された installation のリポジトリ一覧を取得する。
 async fn resolve_select_token(
     state: &AppState,
@@ -397,9 +417,8 @@ async fn resolve_select_token(
     }
 
     let app = github_app(&state.http_client, github);
-    // トークンが取れない = そのインストールがもう無い（アンインストール / 停止）。
-    // 一時障害と区別できないと、フロントが成功しない「再試行」を出し続けるので
-    // 選択トークンが無効になったもの（4xx）として返す。
+    // インストールがもう無い（アンインストール / 停止）なら選択トークンは死んでいるので
+    // 4xx で返す。一時障害まで 4xx にすると、フロントが有効なトークンを捨ててしまう。
     let access = app
         .installation_access_token(payload.installation_id)
         .await
@@ -407,9 +426,13 @@ async fn resolve_select_token(
             tracing::warn!(
                 error = %e,
                 installation_id = payload.installation_id,
-                "github installation access token failed; treating select token as invalid"
+                "github installation access token failed"
             );
-            AppError::BadRequest
+            if is_installation_gone(&e) {
+                AppError::BadRequest
+            } else {
+                AppError::Internal(e)
+            }
         })?;
     let repositories = app
         .list_repositories(&access.token)
@@ -489,6 +512,17 @@ pub async fn connect_github_repository(
         .map_err(AppError::Internal)?;
     let (payload, repositories, access) =
         resolve_select_token(&state, &auth, tenant_id, project_id, stored).await?;
+
+    // 別タブに残った古い選択トークンで、連携先が黙って巻き戻るのを防ぐ。
+    // 連携済みなら、その installation に対するトークンでなければ受け付けない。
+    if let Some(current) = github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(&state.db)
+        .await?
+        && current.installation_id != payload.installation_id
+    {
+        return Err(AppError::BadRequest);
+    }
 
     // 送られてきたリポジトリが、その installation の可視範囲にあることを必ず確認する。
     if !contains_repository(&repositories, &body.repo_owner, &body.repo_name) {
