@@ -49,11 +49,17 @@ fn test_oauth_state_without_installation_defaults_none() {
 }
 
 #[test]
-fn test_primary_repository_selection_prefers_account_owner() {
-    let repos = vec![
-        Repository::new("other", "app"),
+fn test_primary_repository_selection_auto_selects_only_single_repo() {
+    let single = vec![Repository::new("acme", "backend")];
+    assert_eq!(
+        select_primary_repository(&single).unwrap().to_string(),
+        "acme/backend"
+    );
+
+    // 複数見えるときは自動選択せず、ユーザー選択に回す（#594）。
+    let multiple = vec![
         Repository::new("acme", "backend"),
+        Repository::new("acme", "frontend"),
     ];
-    let chosen = select_primary_repository(&repos, "acme").unwrap();
-    assert_eq!(chosen.to_string(), "acme/backend");
+    assert!(select_primary_repository(&multiple).is_none());
 }

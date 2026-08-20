@@ -24,8 +24,8 @@ use job::github_webhook::{self, GithubWebhookJob};
 use payload::github::*;
 use service::github::{
     github_app,
-    install_state::{self, GithubOAuthStatePayload, TTL_SECS},
-    repositories::fetch_primary_repository,
+    install_state::{self, GithubOAuthStatePayload, RepoSelectPayload, TTL_SECS},
+    repositories::{contains_repository, select_primary_repository},
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -218,18 +218,70 @@ pub async fn github_callback(
         .installation_access_token(installation.id)
         .await
         .map_err(AppError::Internal)?;
-    let account_login = installation.account_login;
-    let (repo_owner, repo_name) = fetch_primary_repository(&app, &access.token, &account_login)
+    let repositories = app
+        .list_repositories(&access.token)
         .await
         .map_err(AppError::Internal)?;
 
+    let redirect_to =
+        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+
+    // 複数見えるときは連携せず、選択トークンを発行して設定ページへ戻す。
+    // installation_id はトークン側（Redis）に束縛し、リクエストでは受け取らない。
+    let Some(repo) = select_primary_repository(&repositories) else {
+        let select_token = install_state::new_state_token();
+        install_state::store_select_token(
+            &state.redis_client,
+            &select_token,
+            &RepoSelectPayload {
+                tenant_id: payload.tenant_id,
+                project_id: payload.project_id,
+                user_id: auth.user_id,
+                installation_id: query.installation_id,
+            },
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        return Ok(
+            Redirect::temporary(&format!("{redirect_to}&github_select={select_token}"))
+                .into_response(),
+        );
+    };
+
+    upsert_integration(
+        &state,
+        github,
+        payload.project_id,
+        auth.user_id,
+        query.installation_id,
+        &repo.owner,
+        &repo.name,
+        &access,
+    )
+    .await?;
+
+    Ok(Redirect::temporary(&redirect_to).into_response())
+}
+
+/// 連携レコードの UPSERT。callback（自動選択）と選択確定 API で共有する。
+#[allow(clippy::too_many_arguments)]
+async fn upsert_integration(
+    state: &AppState,
+    github: &GithubAppSettings,
+    project_id: Uuid,
+    user_id: Uuid,
+    installation_id: i64,
+    repo_owner: &str,
+    repo_name: &str,
+    access: &forge_github::InstallationAccessToken,
+) -> Result<(), AppError> {
     let token_enc =
         auth_core::crypto::encrypt_token(&github.github_token_encryption_key, &access.token)
             .map_err(AppError::Internal)?;
 
     let now = chrono::Utc::now();
     let existing = github_integrations::Entity::find()
-        .filter(github_integrations::Column::ProjectId.eq(payload.project_id))
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
         .one(&state.db)
         .await?;
 
@@ -241,14 +293,14 @@ pub async fn github_callback(
             // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
             // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
             github_issue_links::Entity::delete_many()
-                .filter(github_issue_links::Column::ProjectId.eq(payload.project_id))
+                .filter(github_issue_links::Column::ProjectId.eq(project_id))
                 .exec(&txn)
                 .await?;
         }
         let mut active: github_integrations::ActiveModel = model.into();
-        active.installation_id = Set(query.installation_id);
-        active.repo_owner = Set(repo_owner);
-        active.repo_name = Set(repo_name);
+        active.installation_id = Set(installation_id);
+        active.repo_owner = Set(repo_owner.to_owned());
+        active.repo_name = Set(repo_name.to_owned());
         active.access_token_enc = Set(token_enc);
         active.token_expires_at = Set(access.expires_at);
         active.update(&txn).await?;
@@ -256,22 +308,156 @@ pub async fn github_callback(
     } else {
         github_integrations::ActiveModel {
             id: Set(Uuid::new_v4()),
-            project_id: Set(payload.project_id),
-            installation_id: Set(query.installation_id),
-            repo_owner: Set(repo_owner),
-            repo_name: Set(repo_name),
+            project_id: Set(project_id),
+            installation_id: Set(installation_id),
+            repo_owner: Set(repo_owner.to_owned()),
+            repo_name: Set(repo_name.to_owned()),
             access_token_enc: Set(token_enc),
             token_expires_at: Set(access.expires_at),
-            created_by: Set(auth.user_id),
+            created_by: Set(user_id),
             created_at: Set(now.into()),
         }
         .insert(&state.db)
         .await?;
     }
 
-    let redirect_to =
-        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
-    Ok(Redirect::temporary(&redirect_to).into_response())
+    Ok(())
+}
+
+/// 選択トークンを検証し、束縛された installation のリポジトリ一覧を取得する。
+async fn resolve_select_token(
+    state: &AppState,
+    auth: &AuthUser,
+    tenant_id: Uuid,
+    project_id: Uuid,
+    payload: Option<RepoSelectPayload>,
+) -> Result<
+    (
+        RepoSelectPayload,
+        Vec<forge_core::Repository>,
+        forge_github::InstallationAccessToken,
+    ),
+    AppError,
+> {
+    let github = state.settings.require_github_app()?;
+    let payload = payload.ok_or(AppError::BadRequest)?;
+    // トークンは tenant / project / user / installation に束縛されている。
+    // 経路（パス）とずれていたら他人のインストールを紐付ける試みなので拒否する。
+    if payload.user_id != auth.user_id {
+        return Err(AppError::Forbidden);
+    }
+    if payload.tenant_id != tenant_id || payload.project_id != project_id {
+        return Err(AppError::BadRequest);
+    }
+
+    let app = github_app(&state.http_client, github);
+    let access = app
+        .installation_access_token(payload.installation_id)
+        .await
+        .map_err(AppError::Internal)?;
+    let repositories = app
+        .list_repositories(&access.token)
+        .await
+        .map_err(AppError::Internal)?;
+    Ok((payload, repositories, access))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/repositories",
+    tag = "GitHub",
+    summary = "選択トークンに紐づくリポジトリ一覧",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("project_id" = Uuid, Path),
+        GithubRepositoriesQuery,
+    ),
+    responses((status = 200, body = GithubRepositoriesResponse), CrudErrors)
+)]
+pub async fn list_github_repositories(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<GithubRepositoriesQuery>,
+) -> Result<Json<GithubRepositoriesResponse>, AppError> {
+    state.settings.require_github_app()?;
+    auth.require_session()?;
+    require_tenant_owner(&state, tenant_id, auth.user_id).await?;
+    require_project_in_tenant(&state, tenant_id, project_id).await?;
+
+    // 一覧は何度でも開けるようトークンを消費しない（確定は POST /connect 側）。
+    let stored = install_state::peek_select_token(&state.redis_client, &query.select_token)
+        .await
+        .map_err(AppError::Internal)?;
+    let (_, repositories, _) =
+        resolve_select_token(&state, &auth, tenant_id, project_id, stored).await?;
+
+    Ok(Json(GithubRepositoriesResponse {
+        repositories: repositories
+            .into_iter()
+            .map(|r| GithubRepositoryItem {
+                owner: r.owner,
+                name: r.name,
+            })
+            .collect(),
+    }))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/connect",
+    tag = "GitHub",
+    summary = "選択したリポジトリを連携",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("project_id" = Uuid, Path),
+    ),
+    request_body = GithubConnectRequest,
+    responses((status = 204, description = "連携完了"), CrudErrors)
+)]
+pub async fn connect_github_repository(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<GithubConnectRequest>,
+) -> Result<StatusCode, AppError> {
+    let github = state.settings.require_github_app()?;
+    auth.require_session()?;
+    require_tenant_owner(&state, tenant_id, auth.user_id).await?;
+    require_project_in_tenant(&state, tenant_id, project_id).await?;
+
+    let stored = install_state::peek_select_token(&state.redis_client, &body.select_token)
+        .await
+        .map_err(AppError::Internal)?;
+    let (payload, repositories, access) =
+        resolve_select_token(&state, &auth, tenant_id, project_id, stored).await?;
+
+    // 送られてきたリポジトリが、その installation の可視範囲にあることを必ず確認する。
+    if !contains_repository(&repositories, &body.repo_owner, &body.repo_name) {
+        return Err(AppError::BadRequest);
+    }
+
+    upsert_integration(
+        &state,
+        github,
+        project_id,
+        auth.user_id,
+        payload.installation_id,
+        &body.repo_owner,
+        &body.repo_name,
+        &access,
+    )
+    .await?;
+
+    // 連携できたときだけトークンを捨てる（再利用防止）。
+    // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
+    install_state::consume_select_token(&state.redis_client, &body.select_token)
+        .await
+        .map_err(AppError::Internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]

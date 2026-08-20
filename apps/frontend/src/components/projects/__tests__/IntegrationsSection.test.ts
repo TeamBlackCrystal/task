@@ -17,6 +17,10 @@ type MockState = {
   deleteStatus?: number;
   /** true にすると DELETE /github/integration が解決せず、mutation が pending のままになる */
   hangDelete?: boolean;
+  /** 400 以上を設定すると GET /github/repositories が失敗する（選択トークンの期限切れ相当） */
+  repositoriesStatus?: number;
+  /** 400 以上を設定すると POST /github/connect が失敗する */
+  connectStatus?: number;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -49,6 +53,21 @@ function stubFetch(state: MockState) {
           : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
       );
     }
+    if (method === 'GET' && pathname.endsWith('/github/repositories')) {
+      if (state.repositoriesStatus)
+        return jsonResponse({ message: 'error' }, state.repositoriesStatus);
+      return jsonResponse({
+        repositories: [
+          { owner: 'koyori-app', name: 'koyori' },
+          { owner: 'koyori-app', name: 'docs' },
+        ],
+      });
+    }
+    if (method === 'POST' && pathname.endsWith('/github/connect')) {
+      if (state.connectStatus) return jsonResponse({ message: 'error' }, state.connectStatus);
+      state.connected = true;
+      return new Response(null, { status: 204 });
+    }
     if (method === 'DELETE' && pathname.endsWith('/github/integration')) {
       if (state.hangDelete) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
       if (state.deleteStatus) return jsonResponse({ message: 'error' }, state.deleteStatus);
@@ -61,13 +80,23 @@ function stubFetch(state: MockState) {
   return fetchMock;
 }
 
-function mountSection() {
+function mountSection(options: { selectToken?: string } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return mount(IntegrationsSection, {
     props: { tenantId: TENANT_UUID, projectId: PROJECT_UUID },
-    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+    global: {
+      plugins: [[VueQueryPlugin, { queryClient }]],
+      provide:
+        options.selectToken !== undefined
+          ? {
+              'vike-vue:usePageContext': {
+                urlParsed: { search: { github_select: options.selectToken } },
+              },
+            }
+          : {},
+    },
     attachTo: document.body,
   });
 }
@@ -233,5 +262,67 @@ describe('IntegrationsSection', () => {
 
     expect(document.body.textContent).not.toContain('Slack');
     expect(document.body.textContent).not.toContain('Figma');
+  });
+
+  it('選択トークン付きで戻ってきたらリポジトリ一覧を出し、選んだ 1 件を連携する', async () => {
+    const fetchMock = stubFetch({ connected: false });
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('koyori-app/docs');
+
+    const listCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/repositories'));
+    expect(listCall!.url).toContain('select_token=select-token-1');
+
+    // 2 件目（koyori-app/docs）の「選択」を押す
+    const buttons = [...document.body.querySelectorAll('button')].filter(
+      (b) => b.textContent?.trim() === '選択',
+    );
+    expect(buttons).toHaveLength(2);
+    buttons[1]!.click();
+    await flushPromises();
+
+    const connectCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/connect'));
+    expect(connectCall).toBeTruthy();
+    await expect(connectCall!.clone().json()).resolves.toEqual({
+      select_token: 'select-token-1',
+      repo_owner: 'koyori-app',
+      repo_name: 'docs',
+    });
+
+    await flushPromises();
+    expect(document.body.textContent).not.toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('koyori-app/koyori');
+  });
+
+  it('選択トークンが切れていたら選択 UI を出さず未連携表示に戻る', async () => {
+    stubFetch({ connected: false, repositoriesStatus: 400 });
+    mountSection({ selectToken: 'expired-token' });
+    await flushPromises();
+
+    expect(document.body.textContent).not.toContain('連携するリポジトリを選択');
+    expect(bodyButton('連携する')).toBeTruthy();
+  });
+
+  it('選択したリポジトリの連携に失敗したらエラーを表示して選択 UI を残す', async () => {
+    stubFetch({ connected: false, connectStatus: 400 });
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    const button = [...document.body.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === '選択',
+    );
+    button!.click();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('リポジトリを連携できませんでした');
+    expect(document.body.textContent).toContain('連携するリポジトリを選択');
   });
 });

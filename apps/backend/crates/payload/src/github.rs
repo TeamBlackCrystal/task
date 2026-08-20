@@ -28,3 +28,28 @@ pub struct GithubIntegrationResponse {
 pub struct GithubInstallUrlResponse {
     pub url: String,
 }
+
+/// リポジトリ選択トークン。callback がリダイレクト URL に載せて frontend へ渡す。
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct GithubRepositoriesQuery {
+    pub select_token: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GithubRepositoryItem {
+    pub owner: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GithubRepositoriesResponse {
+    pub repositories: Vec<GithubRepositoryItem>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct GithubConnectRequest {
+    pub select_token: String,
+    pub repo_owner: String,
+    pub repo_name: String,
+}

@@ -2424,6 +2424,7 @@ dependencies = [
  "chrono",
  "common",
  "entity",
+ "forge-core",
  "forge-github",
  "futures",
  "hex",

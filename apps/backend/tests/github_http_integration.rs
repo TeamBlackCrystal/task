@@ -6,28 +6,32 @@ use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, projects, tenants};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{header, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn mount_github_api_mocks(server: &MockServer) {
+    // installation id の帯でトークンを変え、リポジトリ一覧のモックを出し分ける
+    // （単一リポジトリ / 複数リポジトリのインストールを同じ MockServer で共存させるため）。
     Mock::given(method("POST"))
         .and(path_regex(r"^/app/installations/\d+/access_tokens$"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
-            "token": "ghs_test_installation_token",
-            "expires_at": "2030-01-01T00:00:00Z"
-        })))
+        .respond_with(|req: &wiremock::Request| {
+            let token = if installation_id_from_url(&req.url) >= MULTI_REPO_ID_BASE {
+                "ghs_multi_repo_token"
+            } else {
+                "ghs_test_installation_token"
+            };
+            ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "token": token,
+                "expires_at": "2030-01-01T00:00:00Z"
+            }))
+        })
         .mount(server)
         .await;
 
     Mock::given(method("GET"))
         .and(path_regex(r"^/app/installations/\d+$"))
         .respond_with(|req: &wiremock::Request| {
-            let installation_id = req
-                .url
-                .path_segments()
-                .and_then(|mut segments| segments.next_back())
-                .and_then(|id| id.parse::<i64>().ok())
-                .unwrap_or(0);
+            let installation_id = installation_id_from_url(&req.url);
             ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": installation_id,
                 "account": { "login": "acme" },
@@ -39,12 +43,33 @@ async fn mount_github_api_mocks(server: &MockServer) {
 
     Mock::given(method("GET"))
         .and(path("/installation/repositories"))
+        .and(header(
+            "authorization",
+            "Bearer ghs_test_installation_token",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "repositories": [{
                 "full_name": "acme/backend",
                 "owner": { "login": "acme" }
             }]
         })))
+        .mount(server)
+        .await;
+
+    let many: Vec<serde_json::Value> = (0..30)
+        .map(|i| {
+            serde_json::json!({
+                "full_name": format!("acme/repo-{i}"),
+                "owner": { "login": "acme" }
+            })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/installation/repositories"))
+        .and(header("authorization", "Bearer ghs_multi_repo_token"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "repositories": many })),
+        )
         .mount(server)
         .await;
 
@@ -56,8 +81,44 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .await;
 }
 
+/// この値以上の installation id は「複数リポジトリが見えるインストール」として扱う。
+const MULTI_REPO_ID_BASE: i64 = 1_500_000_000_000;
+
+fn installation_id_from_url(url: &url::Url) -> i64 {
+    url.path_segments()
+        .and_then(|mut segments| segments.find_map(|segment| segment.parse::<i64>().ok()))
+        .unwrap_or(0)
+}
+
 fn unique_installation_id() -> i64 {
     300_000_000_000_i64 + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
+}
+
+fn unique_multi_repo_installation_id() -> i64 {
+    MULTI_REPO_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
+}
+
+fn repositories_path(tp: &TestTenantProject, select_token: &str) -> String {
+    format!(
+        "/v1/tenants/{}/projects/{}/github/repositories?select_token={select_token}",
+        tp.tenant_id, tp.project_id
+    )
+}
+
+fn connect_path(tp: &TestTenantProject) -> String {
+    format!(
+        "/v1/tenants/{}/projects/{}/github/connect",
+        tp.tenant_id, tp.project_id
+    )
+}
+
+fn select_token_from_location(location: &str) -> String {
+    url::Url::parse(location)
+        .expect("redirect location")
+        .query_pairs()
+        .find(|(key, _)| key == "github_select")
+        .map(|(_, value)| value.into_owned())
+        .expect("github_select query param")
 }
 
 fn install_path(tp: &TestTenantProject) -> String {
@@ -283,5 +344,99 @@ async fn github_http_integration_suite() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         app.cleanup_user(user.id).await;
+    }
+
+    // 7. 複数リポジトリが見えるインストール — 選択トークン経由で 1 件選んで連携する（#594）
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        let state_token = get_install_state(&app, &tp).await;
+        let installation_id = unique_multi_repo_installation_id();
+        let response = app
+            .get_with_session(&callback_path(&state_token, installation_id))
+            .await;
+        let status = response.status();
+        assert!(
+            status == StatusCode::FOUND || status == StatusCode::TEMPORARY_REDIRECT,
+            "callback should redirect, got {status}"
+        );
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .expect("location header");
+
+        // 修正前は 400（"select one explicitly"）で、ここまで到達しなかった。
+        let select_token = select_token_from_location(&location);
+
+        // 選択が済むまで連携レコードは作らない
+        let pending = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration");
+        assert!(pending.is_none(), "integration must wait for selection");
+
+        // 一覧が取れる（トークンは消費されない）
+        let list = app
+            .get_with_session(&repositories_path(&tp, &select_token))
+            .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let body: serde_json::Value = list.json().await.expect("repositories json");
+        assert_eq!(body["repositories"].as_array().unwrap().len(), 30);
+
+        // installation の可視範囲にないリポジトリは拒否する（このときトークンは残す）
+        let rejected = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "attacker",
+                    "repo_name": "private"
+                }),
+            )
+            .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+        let connect = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-7"
+                }),
+            )
+            .await;
+        assert_eq!(connect.status(), StatusCode::NO_CONTENT);
+
+        let row = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("integration row");
+        assert_eq!(row.installation_id, installation_id);
+        assert_eq!(row.repo_owner, "acme");
+        assert_eq!(row.repo_name, "repo-7");
+
+        // 確定後のトークンは使い捨て
+        let reused = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-8"
+                }),
+            )
+            .await;
+        assert_eq!(reused.status(), StatusCode::BAD_REQUEST);
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
     }
 }

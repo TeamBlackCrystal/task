@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
-import { computed, ref } from 'vue';
+import { usePageContext } from 'vike-vue/usePageContext';
+import { computed, onMounted, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,13 +17,26 @@ import { apiClient, fetchClient } from '@/lib/api-vue-query';
 const GITHUB_INTEGRATION_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/github/integration' as const;
 const GITHUB_INSTALL_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/install' as const;
+const GITHUB_REPOSITORIES_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/github/repositories' as const;
+const GITHUB_CONNECT_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/connect' as const;
 
 const props = defineProps<{
   tenantId: string;
   projectId: string;
 }>();
 
+const pageContext = usePageContext();
 const queryClient = useQueryClient();
+
+// callback が複数リポジトリを見つけたとき、選択トークン付きで戻ってくる（#594）
+const selectToken = ref<string | null>(
+  (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
+    ?.search?.github_select ?? null,
+);
+const repositories = ref<{ owner: string; name: string }[]>([]);
+const selectError = ref<string | null>(null);
+const selectPending = ref(false);
 const isDisconnectOpen = ref(false);
 const disconnectError = ref<string | null>(null);
 const installError = ref<string | null>(null);
@@ -51,6 +65,51 @@ const connectedAtLabel = computed(() => {
     day: 'numeric',
   });
 });
+
+/** 選択トークンが切れていたら選択 UI を畳んで未連携表示に戻す */
+async function loadRepositories() {
+  const token = selectToken.value;
+  if (!token) return;
+  selectPending.value = true;
+  try {
+    const { data, error } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
+      params: {
+        path: { tenant_id: props.tenantId, project_id: props.projectId },
+        query: { select_token: token },
+      },
+    });
+    if (error || !data) throw new Error('repositories-unavailable');
+    repositories.value = data.repositories;
+  } catch {
+    selectToken.value = null;
+    repositories.value = [];
+  } finally {
+    selectPending.value = false;
+  }
+}
+
+onMounted(loadRepositories);
+
+async function connectRepository(owner: string, name: string) {
+  const token = selectToken.value;
+  if (!token) return;
+  selectError.value = null;
+  selectPending.value = true;
+  try {
+    const { error } = await fetchClient.POST(GITHUB_CONNECT_PATH, {
+      params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
+      body: { select_token: token, repo_owner: owner, repo_name: name },
+    });
+    if (error) throw new Error('connect-failed');
+    selectToken.value = null;
+    repositories.value = [];
+    await queryClient.invalidateQueries({ queryKey: ['get', GITHUB_INTEGRATION_PATH] });
+  } catch {
+    selectError.value = 'リポジトリを連携できませんでした';
+  } finally {
+    selectPending.value = false;
+  }
+}
 
 async function startInstall() {
   installError.value = null;
@@ -147,6 +206,41 @@ async function confirmDisconnect() {
         </Button>
       </div>
       <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
+
+      <!-- インストールに複数リポジトリが含まれるとき、連携先を 1 件選ばせる -->
+      <div v-if="selectToken" class="rounded-[10px] border p-4">
+        <p class="text-sm font-medium">連携するリポジトリを選択</p>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          このインストールから 1 つのリポジトリをプロジェクトに紐付けます。
+        </p>
+        <p v-if="!repositories.length" role="status" class="mt-3 text-sm text-muted-foreground">
+          リポジトリを読み込み中…
+        </p>
+        <ul v-else class="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto">
+          <li
+            v-for="repo in repositories"
+            :key="`${repo.owner}/${repo.name}`"
+            class="flex items-center gap-3 rounded-md border p-2.5"
+          >
+            <span class="min-w-0 flex-1 truncate font-mono text-sm"
+              >{{ repo.owner }}/{{ repo.name }}</span
+            >
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              class="shrink-0"
+              :disabled="selectPending"
+              @click="connectRepository(repo.owner, repo.name)"
+            >
+              選択
+            </Button>
+          </li>
+        </ul>
+        <p v-if="selectError" role="alert" class="mt-3 text-sm text-destructive">
+          {{ selectError }}
+        </p>
+      </div>
     </div>
 
     <Dialog v-if="isDisconnectOpen" :open="true" @update:open="onDisconnectOpenChange">
