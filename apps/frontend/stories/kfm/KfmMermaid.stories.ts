@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { expect, waitFor } from 'storybook/test';
 import brokenHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-broken.html?raw';
+import clickHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-click.html?raw';
 import flowchartHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-flowchart.html?raw';
 import noneHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-none.html?raw';
 import sequenceHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-sequence.html?raw';
@@ -85,6 +86,22 @@ export const State: Story = {
     docs: {
       description: {
         story: '壊れたら: [*] 始端/終端や遷移ラベルが消えたら mermaid 更新か描画経路の崩れ。',
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await expectRendered(canvasElement);
+  },
+};
+
+export const ClickLink: Story = {
+  name: 'Click（リンク付き flowchart・正常出力の回帰）',
+  args: { html: clickHtml },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          '壊れたら: click 付き flowchart は mermaid の正常出力であり rendered になるべき。error へ倒れたら、挿入前検査 (element.ts) が sink (shadow への HTML パース) と違う文法で正常出力を偽陽性にしている崩れ——実 mermaid 出力を通すこの story がその回帰アンカー。',
       },
     },
   },

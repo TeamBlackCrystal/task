@@ -9,6 +9,8 @@
  *   モジュール評価が落ちない)。
  * - securityLevel は strict 固定 (緩める変更は禁止)。suppressErrorRendering で
  *   構文エラー時に mermaid が DOM へエラー図を注入するのも止め、失敗は状態値で表す。
+ * - 挿入前の最終防御 (parseSafeSvg) は sink と同じ HTML パースで検査する。
+ *   XML パーサを使わない理由はその関数のコメントを正とする。
  *
  * VRT / E2E 向けの完了シグナル (時間待ち不要の口):
  * - 成功: `data-kfm-mermaid="rendered"` が立ち、shadow DOM に SVG が入る
@@ -41,16 +43,31 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** mermaid の返す SVG を shadow DOM へ入れる直前の最終防御 */
-function assertSafeSvg(svg: string): void {
-  const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
-  if (
-    document.querySelector('parsererror') !== null ||
-    document.documentElement.localName !== 'svg'
-  ) {
+/**
+ * mermaid の返す SVG を shadow DOM へ入れる直前の最終防御。
+ *
+ * 検査は sink (shadow への挿入 = HTML fragment パース) と同じ HTML 文法で行う。
+ * XML パーサ (image/svg+xml) を使わない決め手は二つ:
+ * - mermaid の正常出力は XML 非適格になりうる。実測例: click 付き flowchart は
+ *   ノードを `<a xlink:href=…>` で包むが `xmlns:xlink` 宣言を出力せず、XML では
+ *   未宣言 prefix で parsererror、HTML では有効。XML 検査は sink が受け入れる
+ *   正常出力を偽陽性で error に倒す。
+ * - 逆方向も危険: XML として無害に見えても、HTML 再パースで構造が変わる入力
+ *   (foreign content からの breakout = mXSS) は XML 検査を素通りする。
+ *   検査と挿入の文法が違う限り、この双方向の食い違いは消えない。
+ * ゆえに一度だけ HTML としてパースし、検査を通った「その同一ノード」を返して
+ * 呼び出し側がそのまま挿入する (文字列の再パースをしない = 検査と挿入の乖離を断つ)。
+ */
+function parseSafeSvg(svg: string): DocumentFragment {
+  const template = document.createElement('template');
+  template.innerHTML = svg;
+  const fragment = template.content;
+  // 根が唯一の <svg> でなければ不正出力。HTML パースで要素が <svg> の外へ
+  // 漏れた場合 (breakout) もここで childElementCount が 1 を超えて検出される
+  if (fragment.childElementCount !== 1 || fragment.firstElementChild?.localName !== 'svg') {
     throw new Error('mermaid returned invalid SVG');
   }
-  for (const element of document.querySelectorAll('*')) {
+  for (const element of fragment.querySelectorAll('*')) {
     if (element.localName === 'script') throw new Error('mermaid returned an unsafe SVG element');
     for (const attribute of element.attributes) {
       if (attribute.name.toLowerCase().startsWith('on')) {
@@ -58,6 +75,7 @@ function assertSafeSvg(svg: string): void {
       }
     }
   }
+  return fragment;
 }
 
 export function createKfmMermaidElement(): CustomElementConstructor {
@@ -84,8 +102,23 @@ export function createKfmMermaidElement(): CustomElementConstructor {
       // light DOM はサーバがエスケープしたソーステキストのみ (remark-kfm-mermaid 契約)。
       // textContent で実体参照は復元済みの生ソースが得られる。
       const source = this.textContent ?? '';
+      let mermaid: Awaited<typeof import('mermaid')>['default'];
       try {
-        const { default: mermaid } = await import('mermaid');
+        ({ default: mermaid } = await import('mermaid'));
+      } catch (error) {
+        // chunk ロード失敗は一時的なネットワーク障害でありうる唯一の経路。
+        // #started を戻し、再接続時の再試行だけを許す (構文エラー等の決定的失敗は
+        // 再試行しても同じ結果ゆえ戻さない)。表示状態は rendered/error の二値のまま
+        // (VRT / E2E の待ち口を増やさない)
+        console.error('[kfm-mermaid] render failed', error);
+        if (token !== this.#renderToken) return;
+        this.#started = false;
+        if (this.isConnected) {
+          this.dataset.kfmMermaid = 'error' satisfies KfmMermaidState;
+        }
+        return;
+      }
+      try {
         // import 待ちの間に切断された場合はキューへ不要な仕事を積まず、再接続に委ねる。
         if (token !== this.#renderToken) return;
         if (!this.isConnected) {
@@ -93,7 +126,10 @@ export function createKfmMermaidElement(): CustomElementConstructor {
           return;
         }
         const { svg } = await enqueue(() => {
-          // アプリ本体・story と同じ .dark ancestor 方式でテーマを引く
+          // アプリ本体・story と同じ .dark ancestor 方式でテーマを引く。
+          // テーマは描画時スナップショット: 描画後に .dark が切り替わっても
+          // 再描画・追従はしない (Phase 1 の割り切り。追従させる場合は .dark の
+          // 変化を観測して再描画する口をここではなく consumer 側に足す)
           const dark = this.closest('.dark') !== null;
           mermaid.initialize({
             startOnLoad: false,
@@ -108,10 +144,13 @@ export function createKfmMermaidElement(): CustomElementConstructor {
           this.#started = false;
           return;
         }
-        assertSafeSvg(svg);
+        // 検査を通った同一ノードをそのまま挿入する (文字列を sink で再パースしない)
+        const fragment = parseSafeSvg(svg);
         // shadow は成功時のみ張る: 失敗時に張ると light DOM のフォールバックまで隠れる
         const shadow = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
-        shadow.innerHTML = `<style>:host { display: block; }</style>${svg}`;
+        const style = document.createElement('style');
+        style.textContent = ':host { display: block; }';
+        shadow.replaceChildren(style, fragment);
         this.dataset.kfmMermaid = 'rendered' satisfies KfmMermaidState;
       } catch (error) {
         if (token !== this.#renderToken) return;

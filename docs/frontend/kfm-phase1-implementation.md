@@ -81,6 +81,31 @@ GitHub 完全互換の境界仕様をテストで固定している:
 - 出力: `div.kfm-alert.kfm-alert--{type}` ＋ `p.kfm-alert__title`。inline style は一切出さない
 - アイコン・配色は `style.css` の名前空間クラスで当てる（消費側で明示 import するサイドカー方式）
 
+## mermaid 図（remark-kfm-mermaid）
+
+設計上の決定（変更するときは理由ごと書き換える）:
+
+- **client 専用描画** — SSR は不活性 `<kfm-mermaid>` ＋エスケープ済みソーステキスト
+  だけを出す。mermaid は本質的にブラウザ描画（レイアウト計測に DOM が要る）であり、
+  SVG をサーバで焼く方式は採らない。mermaid 本体（重量）は custom element の
+  connectedCallback 内 dynamic import のみで参照し、図が実在するページでだけ落ちてくる
+- **securityLevel は strict 固定**（緩める変更は禁止）。`suppressErrorRendering` で
+  構文エラー時のエラー図 DOM 注入も止め、失敗は状態値で表す。なお strict でも
+  `click A "https://…"` の URL リンクは `<a>` として出力される（strict が殺すのは
+  callback 実行であってリンクではない）
+- **shadow DOM は成功時のみ張る** — 失敗時に張ると light DOM のソーステキスト
+  （JS 無効時・失敗時のフォールバック表示）まで隠れるため。描画成功の SVG は
+  shadow に入れ、ページ側 CSS から隔離する
+- **完了シグナルは `data-kfm-mermaid` の二値**（`rendered` / `error`。属性なし＝未処理）。
+  VRT / E2E はこの属性の出現を待つ（時間待ち禁止の口）。状態を増やす変更は
+  待ち側（story play・VRT）を全部数えてから
+- **挿入前の最終防御は sink と同じ HTML パース**（`element.ts` の `parseSafeSvg`）。
+  XML パーサでの検査は、mermaid の正常出力（click 付き flowchart の
+  `<a xlink:href>` は `xmlns:xlink` 宣言なし）を偽陽性で落とし、逆に HTML 再パースで
+  構造が変わる mXSS を素通しする。検査を通った同一ノードをそのまま挿入する
+- **テーマは描画時スナップショット** — `.dark` ancestor を描画時に一度だけ見る。
+  描画後のテーマ切替に追従はしない（Phase 1 の割り切り）
+
 ## サニタイズ（_sanitize.ts）
 
 DOMPurify は HTML 構造の allowlist に専念する:

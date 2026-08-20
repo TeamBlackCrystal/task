@@ -157,6 +157,30 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     consoleError.mockRestore();
   });
 
+  it('XML 非適格でも HTML として安全な SVG (xlink prefix 未宣言) は rendered (検査は sink と同じ HTML パース)', async () => {
+    // 実測: click 付き flowchart で mermaid は <a xlink:href=…> を xmlns:xlink 宣言なしで
+    // 出力する。XML パーサはこれを parsererror にするが、sink (shadow への HTML パース)
+    // では有効。検査を XML パースへ戻すとこのテストが落ちる (偽陽性回帰の unit アンカー。
+    // 実 mermaid 出力を通す本物の回帰は stories/kfm/KfmMermaid.stories.ts の Click story)
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg><a xlink:href="https://example.com"><g class="kfm-mermaid-test-probe"></g></a></svg>',
+    });
+    const element = await mount('flowchart TD\n  A --> B\n  click A "https://example.com"');
+    expect(element.dataset.kfmMermaid).toBe('rendered');
+    expect(element.shadowRoot?.querySelector('svg a')).not.toBeNull();
+  });
+
+  it('HTML パースで <svg> 根の外へ要素が漏れる出力は error (単一 svg 根の構造検査)', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg></svg><div>svg の外に漏れた要素</div>',
+    });
+    const element = await mount('flowchart TD\n  A --> B');
+    expect(element.dataset.kfmMermaid).toBe('error');
+    expect(element.shadowRoot).toBeNull();
+    consoleError.mockRestore();
+  });
+
   it('script / on* を含む SVG は shadow DOM へ入れず error へ倒す', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     mermaidMock.render.mockResolvedValueOnce({

@@ -1,6 +1,11 @@
-/* JS 無効時・描画失敗時も mermaid ソースの改行と横スクロールを保つ。 */
+/* JS 無効時・描画失敗時も mermaid ソースの改行と横スクロールを保つ。
+ * rendered 後は表示が shadow DOM の SVG に移るため、ソーステキスト向けの
+ * white-space / overflow は非 rendered 状態 (未処理・error) に絞る。 */
 kfm-mermaid {
   display: block;
+}
+
+kfm-mermaid:not([data-kfm-mermaid='rendered']) {
   white-space: pre;
   overflow-x: auto;
 }

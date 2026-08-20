@@ -39,6 +39,16 @@ export const KFM_MERMAID_STORY_INPUTS = {
     '```',
   ].join('\n'),
 
+  // click 付き flowchart: mermaid の正常出力が XML 非適格になりうる代表例。
+  // 検査 (element.ts) が sink と同じ HTML パースであることの回帰アンカー
+  'mermaid-click': [
+    '```mermaid',
+    'flowchart TD',
+    '  A[リンク付きノード] --> B[通常ノード]',
+    '  click A "https://example.com"',
+    '```',
+  ].join('\n'),
+
   // 記法が壊れている入力: client 描画が error 状態へ倒れ、ソーステキストが残る
   'mermaid-broken': ['```mermaid', 'flowchart TD', '  A[閉じ括弧がない --> B', '```'].join('\n'),
 
