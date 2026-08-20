@@ -139,6 +139,18 @@ pub async fn store_pending_installation(
         .await
 }
 
+/// 連携が確定した／解除されたら消す。残しておくと以降の callback が
+/// 古い installation_id に束縛され、入れ直しても弾かれる。
+pub async fn delete_pending_installation(
+    redis: &RedisConnection,
+    project_id: Uuid,
+) -> Result<(), anyhow::Error> {
+    RedisStateStore::new(redis)
+        .consume(&format!("{PENDING_KEY_PREFIX}{project_id}"))
+        .await
+        .map(|_| ())
+}
+
 pub async fn peek_pending_installation(
     redis: &RedisConnection,
     project_id: Uuid,

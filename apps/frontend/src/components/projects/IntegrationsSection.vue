@@ -70,23 +70,32 @@ const connectedAtLabel = computed(() => {
 async function loadRepositories() {
   const token = selectToken.value;
   if (!token) return;
+  selectError.value = null;
   selectPending.value = true;
   // 10 分有効な選択トークンを履歴・Referer に残さない（取得の成否に関わらず落とす）
   const url = new URL(window.location.href);
   url.searchParams.delete('github_select');
   window.history.replaceState(window.history.state, '', url);
   try {
-    const { data, error } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
+    const { data, error, response } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
       params: {
         path: { tenant_id: props.tenantId, project_id: props.projectId },
         query: { select_token: token },
       },
     });
-    if (error || !data) throw new Error('repositories-unavailable');
+    if (error || !data) {
+      // 4xx はトークンが無効（期限切れ・使用済み）。それ以外は一時障害なので
+      // トークンを捨てず、再試行させる。
+      if (response.status < 500) {
+        selectToken.value = null;
+        repositories.value = [];
+        return;
+      }
+      throw new Error('repositories-unavailable');
+    }
     repositories.value = data.repositories;
   } catch {
-    selectToken.value = null;
-    repositories.value = [];
+    selectError.value = 'リポジトリ一覧を取得できませんでした';
   } finally {
     selectPending.value = false;
   }
@@ -245,9 +254,19 @@ async function confirmDisconnect() {
             </Button>
           </li>
         </ul>
-        <p v-if="selectError" role="alert" class="mt-3 text-sm text-destructive">
-          {{ selectError }}
-        </p>
+        <div v-if="selectError" class="mt-3 flex items-center gap-3">
+          <p role="alert" class="text-sm text-destructive">{{ selectError }}</p>
+          <Button
+            v-if="!repositories.length"
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="selectPending"
+            @click="loadRepositories"
+          >
+            再試行
+          </Button>
+        </div>
       </div>
     </div>
 

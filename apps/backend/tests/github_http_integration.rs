@@ -88,7 +88,7 @@ async fn mount_github_api_mocks(server: &MockServer) {
     Mock::given(method("DELETE"))
         .and(path_regex(r"^/app/installations/\d+$"))
         .respond_with(ResponseTemplate::new(204))
-        .expect(1)
+        .expect(1..)
         .mount(server)
         .await;
 }
@@ -518,6 +518,72 @@ async fn github_http_integration_suite() {
             .await
             .expect("query integration");
         assert!(row.is_none());
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 9. 選択を放棄しても同じインストールへ戻れる／連携解除で束縛が残らない（#594 レビュー指摘）
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        // 選択画面まで進んで放棄する
+        let state_token = get_install_state(&app, &tp).await;
+        let installation_id = unique_multi_repo_installation_id();
+        let abandoned = app
+            .get_with_session(&callback_path(&state_token, installation_id))
+            .await;
+        assert!(
+            abandoned.status() == StatusCode::FOUND
+                || abandoned.status() == StatusCode::TEMPORARY_REDIRECT
+        );
+
+        // 再訪: 同じインストールで戻ってこられる（新規扱いの鮮度チェックで弾かれない）
+        let retry_state = get_install_state(&app, &tp).await;
+        let retry = app
+            .get_with_session(&callback_path(&retry_state, installation_id))
+            .await;
+        assert!(
+            retry.status() == StatusCode::FOUND || retry.status() == StatusCode::TEMPORARY_REDIRECT,
+            "abandoned installation should be reusable, got {}",
+            retry.status()
+        );
+        let select_token = select_token_from_location(
+            retry
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .expect("location header"),
+        );
+
+        let connect = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-3"
+                }),
+            )
+            .await;
+        assert_eq!(connect.status(), StatusCode::NO_CONTENT);
+
+        // 解除したあとは別のインストールで連携し直せる（古い束縛が残っていない）
+        let delete = app.delete_with_session(&integration_path(&tp)).await;
+        assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+
+        let new_state = get_install_state(&app, &tp).await;
+        let reinstalled = app
+            .get_with_session(&callback_path(&new_state, unique_installation_id()))
+            .await;
+        assert!(
+            reinstalled.status() == StatusCode::FOUND
+                || reinstalled.status() == StatusCode::TEMPORARY_REDIRECT,
+            "reinstall with a new installation should be accepted, got {}",
+            reinstalled.status()
+        );
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();

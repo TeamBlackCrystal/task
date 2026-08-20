@@ -325,4 +325,20 @@ describe('IntegrationsSection', () => {
     expect(document.body.textContent).toContain('リポジトリを連携できませんでした');
     expect(document.body.textContent).toContain('連携するリポジトリを選択');
   });
+
+  it('一覧取得が 5xx なら選択 UI を残し、再試行で回復する', async () => {
+    const state: MockState = { connected: false, repositoriesStatus: 500 };
+    stubFetch(state);
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('リポジトリ一覧を取得できませんでした');
+    expect(document.body.textContent).toContain('連携するリポジトリを選択');
+
+    state.repositoriesStatus = undefined;
+    clickBodyButton('再試行');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('koyori-app/docs');
+  });
 });

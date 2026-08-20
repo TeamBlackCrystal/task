@@ -141,9 +141,31 @@ pub async fn start_github_install(
         Some(row) => Some(row.installation_id),
         // 選択を放棄したインストールへ戻る経路。これが無いと「インストール済みだが
         // 連携レコードが無い」状態から抜け出せない（新規扱いの鮮度チェックで落ちる）。
-        None => install_state::peek_pending_installation(&state.redis_client, project_id)
-            .await
-            .map_err(AppError::Internal)?,
+        None => {
+            let pending = install_state::peek_pending_installation(&state.redis_client, project_id)
+                .await
+                .map_err(AppError::Internal)?;
+            // 既に消えているインストールに束縛すると、入れ直した installation を
+            // 逆に弾いてしまう。GitHub 側に残っているものだけを使う。
+            match pending {
+                Some(id)
+                    if github_app(&state.http_client, github)
+                        .fetch_installation(id)
+                        .await
+                        .is_err() =>
+                {
+                    tracing::info!(
+                        installation_id = id,
+                        "pending github installation is gone; treating as new install"
+                    );
+                    install_state::delete_pending_installation(&state.redis_client, project_id)
+                        .await
+                        .map_err(AppError::Internal)?;
+                    None
+                }
+                other => other,
+            }
+        }
     };
 
     let state_token = install_state::new_state_token();
@@ -233,6 +255,14 @@ pub async fn github_callback(
     // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
     // 選択トークンを渡しても選べない画面になるだけなので、ここで弾く。
     if repositories.is_empty() {
+        // 戻ってきたときに新規扱いの鮮度チェックで弾かれないよう、控えておく。
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
+        )
+        .await
+        .map_err(AppError::Internal)?;
         tracing::warn!(
             installation_id = query.installation_id,
             "github callback: installation has no accessible repositories"
@@ -283,6 +313,9 @@ pub async fn github_callback(
         &access,
     )
     .await?;
+    install_state::delete_pending_installation(&state.redis_client, payload.project_id)
+        .await
+        .map_err(AppError::Internal)?;
 
     Ok(Redirect::temporary(&redirect_to).into_response())
 }
@@ -478,6 +511,10 @@ pub async fn connect_github_repository(
     // 連携できたときだけトークンを捨てる（再利用防止）。
     // 検証で弾いた時点では消さないので、ユーザーは選び直せる。
     // 連携自体は成功しているので、破棄の失敗ではエラーを返さない（TTL で切れる）。
+    install_state::delete_pending_installation(&state.redis_client, project_id)
+        .await
+        .map_err(AppError::Internal)?;
+
     if let Err(e) =
         install_state::consume_select_token(&state.redis_client, &body.select_token).await
     {
@@ -672,6 +709,10 @@ pub async fn delete_github_integration(
 
     let active: github_integrations::ActiveModel = row.into();
     active.delete(&state.db).await?;
+
+    install_state::delete_pending_installation(&state.redis_client, project_id)
+        .await
+        .map_err(AppError::Internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
