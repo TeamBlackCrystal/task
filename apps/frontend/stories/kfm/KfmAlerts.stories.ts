@@ -46,6 +46,7 @@ const expectAlertAccents = async (
   canvasElement: HTMLElement,
   accents: Record<(typeof ALERT_TYPES)[number], string>,
 ) => {
+  const maskImages: string[] = [];
   for (const type of ALERT_TYPES) {
     const alert = canvasElement.querySelector(`.kfm-alert--${type}`);
     await expect(alert).not.toBeNull();
@@ -53,10 +54,14 @@ const expectAlertAccents = async (
     const title = alert?.querySelector('.kfm-alert__title');
     await expect(title).not.toBeNull();
     await expect(title ? getComputedStyle(title).color : '').toBe(accents[type]);
-    // アイコンの実体 (mask 塗りの ::before)。mask が剥がれると色付き矩形かアイコン無しになる
-    const before = title ? getComputedStyle(title, '::before') : null;
-    await expect(before?.maskImage ?? 'none').not.toBe('none');
+    // アイコンの実体 (mask 塗りの ::before)。mask が剥がれると色付き矩形かアイコン無しになる。
+    // 自作線画 SVG の data URI であることまで固定する (none や外部 URL への変化を弾く)
+    const maskImage = (title ? getComputedStyle(title, '::before') : null)?.maskImage ?? 'none';
+    await expect(maskImage).toContain('data:image/svg+xml');
+    maskImages.push(maskImage);
   }
+  // 5 種のアイコンが互いに異なること (変数取り違え・コピペで同じ絵に潰れる事故の検知)
+  await expect(new Set(maskImages).size).toBe(ALERT_TYPES.length);
 };
 
 const kfmRender = (args: KfmStoryArgs) => ({

@@ -109,7 +109,9 @@ export const KFM_STORY_INPUTS = {
     '```',
   ].join('\n'),
 
-  // inline style 付き生 HTML は (style どころか) 要素ごと落ちる。markdown の強調は通る。
+  // inline style 付き生 HTML の落ち方は要素で違う: block の div は要素ごと消えるが、
+  // inline の span はタグだけ落ちて中のテキストが素の文として残る (rendered fixture 参照)。
+  // どちらも style は絵に現れない。markdown の強調は通る。
   'sanitize-inline-style': [
     '**強調は通る**。次の行の赤字指定 (inline style) は絵に現れない:',
     '',

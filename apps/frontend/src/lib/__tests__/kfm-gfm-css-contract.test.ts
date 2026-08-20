@@ -52,8 +52,9 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
 
   it('style.css の全ルールが器クラス子孫限定 (bare 要素への漏れ・片側改名を弾く)', () => {
     const selectors = extractSelectors(fs.readFileSync(CSS_PATH, 'utf8'));
-    // 空振り防止: パースが 0 件なら何も検証していない (現状 12 セレクタ)
-    expect(selectors.length).toBeGreaterThanOrEqual(12);
+    // 空振り防止: パースが 0 件なら何も検証していない。13 は執筆時点の実数 =
+    // 「現状より少なくなったら見直す」下限であり、セレクタが増えても更新義務はない
+    expect(selectors.length).toBeGreaterThanOrEqual(13);
     const unscoped = selectors.filter((selector) => !isScoped(selector));
     expect(unscoped).toEqual([]);
   });
