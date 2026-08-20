@@ -2115,6 +2115,11 @@ export interface components {
             /** Format: uuid */
             assignee_id?: string | null;
             clear_sprint_id?: boolean;
+            /**
+             * @description 既存ラベルから外す ID 一覧。未付与・プロジェクト外の ID は単に無視される。
+             *     add_label_ids と同じ ID を含む場合は 400
+             */
+            remove_label_ids?: string[] | null;
             /** Format: uuid */
             sprint_id?: string | null;
             /** Format: uuid */

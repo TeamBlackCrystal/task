@@ -33,6 +33,7 @@ const CREATE_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' a
 
 type Priority = components['schemas']['TaskPriority'];
 type Status = components['schemas']['ProjectStatusResponse'];
+type LabelOption = components['schemas']['LabelResponse'];
 type CreatedTask = components['schemas']['TaskDetailResponse'];
 
 const priorityOptions = Object.entries(PRIORITY_CONFIG) as [
@@ -46,11 +47,17 @@ const props = defineProps<{
   projectId: string;
   projectKey: string;
   statuses: Status[];
+  /** undefined は未取得（ロード中・エラー）。正常な 0 件は空配列で渡すこと */
+  labels?: LabelOption[];
+  labelsLoading?: boolean;
+  /** ラベル一覧が手元に無いときだけ true にすること（使えるキャッシュがあれば false） */
+  labelsError?: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
   created: [task: CreatedTask];
+  retryLabels: [];
 }>();
 
 const queryClient = useQueryClient();
@@ -60,6 +67,7 @@ const description = ref('');
 const softDeadline = ref('');
 const hardDeadline = ref('');
 const priority = ref<Priority>('Medium');
+const selectedLabelIds = ref<string[]>([]);
 const validationMessage = ref<string | null>(null);
 const requestError = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
@@ -80,10 +88,33 @@ watch(
   { immediate: true },
 );
 
+// プロジェクトが切り替わったら旧プロジェクトの入力（特にラベル ID）を持ち越さない
+watch(
+  () => props.projectId,
+  () => resetForm(),
+);
+
+// ラベル一覧の正常取得後、削除済み ID を選択から落とす。
+// undefined はロード中・エラー（一覧が不明）なので選択を保持する
+watch(
+  () => props.labels,
+  (labels) => {
+    if (!labels) return;
+    const ids = new Set(labels.map((label) => label.id));
+    selectedLabelIds.value = selectedLabelIds.value.filter((id) => ids.has(id));
+  },
+);
+
 function onOpenChange(value: boolean) {
   if (!value && createMutation.isPending.value) return;
   if (!value) resetForm();
   emit('update:open', value);
+}
+
+function toggleLabel(labelId: string) {
+  selectedLabelIds.value = selectedLabelIds.value.includes(labelId)
+    ? selectedLabelIds.value.filter((id) => id !== labelId)
+    : [...selectedLabelIds.value, labelId];
 }
 
 function resetForm() {
@@ -93,6 +124,7 @@ function resetForm() {
   softDeadline.value = '';
   hardDeadline.value = '';
   priority.value = 'Medium';
+  selectedLabelIds.value = [];
   validationMessage.value = null;
   requestError.value = null;
   successMessage.value = null;
@@ -124,6 +156,7 @@ async function submit() {
   if (normalizedDescription) body.description = normalizedDescription;
   if (softDeadline.value) body.soft_deadline = toIsoDate(softDeadline.value);
   if (hardDeadline.value) body.hard_deadline = toIsoDate(hardDeadline.value);
+  if (selectedLabelIds.value.length) body.label_ids = selectedLabelIds.value;
 
   try {
     const created = await createMutation.mutateAsync({
@@ -224,6 +257,51 @@ async function submit() {
             </SelectContent>
           </Select>
           <input type="hidden" name="priority" :value="priority" />
+        </div>
+
+        <div
+          v-if="labelsLoading || labelsError || labels?.length"
+          class="space-y-1.5"
+          role="group"
+          aria-labelledby="task-labels-label"
+        >
+          <Label id="task-labels-label">ラベル</Label>
+          <p v-if="labelsLoading" class="text-xs text-muted-foreground">ラベルを読み込み中...</p>
+          <div v-else-if="labelsError" class="flex items-center gap-2">
+            <p role="alert" class="text-xs text-destructive">ラベルの取得に失敗しました</p>
+            <Button type="button" variant="outline" size="sm" @click="emit('retryLabels')">
+              再試行
+            </Button>
+          </div>
+          <div v-else class="flex flex-wrap gap-1.5">
+            <button
+              v-for="label in labels"
+              :key="label.id"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors"
+              :aria-pressed="selectedLabelIds.includes(label.id)"
+              :style="
+                selectedLabelIds.includes(label.id)
+                  ? {
+                      backgroundColor: label.color + '1a',
+                      borderColor: label.color,
+                      color: label.color,
+                    }
+                  : {}
+              "
+              :class="
+                selectedLabelIds.includes(label.id) ? '' : 'text-muted-foreground hover:bg-muted/40'
+              "
+              @click="toggleLabel(label.id)"
+            >
+              <span
+                class="inline-block size-2 shrink-0 rounded-full"
+                :style="{ backgroundColor: label.color }"
+                aria-hidden="true"
+              />
+              {{ label.name }}
+            </button>
+          </div>
         </div>
 
         <p v-if="validationMessage" role="alert" class="text-sm text-destructive">

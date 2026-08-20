@@ -18579,6 +18579,14 @@
           "clear_sprint_id": {
             "type": "boolean"
           },
+          "remove_label_ids": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "既存ラベルから外す ID 一覧。未付与・プロジェクト外の ID は単に無視される。\nadd_label_ids と同じ ID を含む場合は 400"
+          },
           "sprint_id": {
             "type": ["string", "null"],
             "format": "uuid"

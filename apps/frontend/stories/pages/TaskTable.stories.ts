@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, screen, userEvent, within } from 'storybook/test';
 import { provide, reactive, nextTick } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import TaskTablePage from '@/pages/@tenant/projects/@projectKey/tasks/+Page.vue';
@@ -148,7 +148,16 @@ const sampleTasks = {
       soft_deadline: '2026-07-02T00:00:00Z',
       hard_deadline: null,
       is_archived: false,
-      labels: [],
+      labels: [
+        {
+          id: 'label-bug',
+          name: 'bug',
+          description: '',
+          color: '#e11d48',
+          icon_url: null,
+          project_id: 'proj-eng',
+        },
+      ],
       progress_pct: 0,
       created_at: '2026-06-01T00:00:00Z',
       updated_at: '2026-06-15T00:00:00Z',
@@ -369,6 +378,17 @@ const mktStatuses = [
   },
 ];
 
+const mktLabels = [
+  {
+    id: 'label-campaign',
+    name: 'campaign',
+    description: '',
+    color: '#8b5cf6',
+    icon_url: null,
+    project_id: 'proj-mkt',
+  },
+];
+
 const mktSampleTasks = {
   tasks: [
     {
@@ -391,17 +411,6 @@ const mktSampleTasks = {
   ],
   total: 1,
 };
-
-const mktLabels = [
-  {
-    id: 'label-campaign',
-    name: 'campaign',
-    description: '',
-    color: '#f59e0b',
-    icon_url: null,
-    project_id: 'proj-mkt',
-  },
-];
 
 type ProjectSwitchMock = {
   restore: () => void;
@@ -726,6 +735,13 @@ export const ProjectSwitch: Story = {
 
     await expect(canvas.findByText('OAuth 対応を実装する')).resolves.toBeInTheDocument();
 
+    // 切替前: 作成ダイアログのラベル候補は ENG のもの。旧選択の持ち越し検証用に選択しておく
+    await userEvent.click(await canvas.findByRole('button', { name: '新規タスク' }));
+    const dialog = await screen.findByRole('dialog');
+    const bugButton = await within(dialog).findByRole('button', { name: /bug/ });
+    await userEvent.click(bugButton);
+    await expect(bugButton).toHaveAttribute('aria-pressed', 'true');
+
     if (!reactivePageContext) {
       throw new Error('reactive page context is not initialized');
     }
@@ -744,7 +760,21 @@ export const ProjectSwitch: Story = {
     await expect(canvas.findByText('SNSキャンペーン企画')).resolves.toBeInTheDocument();
     await expect(canvas.queryByText(engTitle)).not.toBeInTheDocument();
 
-    // ラベルドロップダウンには切替先プロジェクトのラベルだけが並ぶ
+    // MKT の初期ロード中は一覧全体と共にダイアログも v-if で外れて unmount される。
+    // 一覧の再表示で再マウントされた現在のダイアログを取り直し、ラベル候補が MKT の
+    // ものに入れ替わって旧プロジェクトの候補と選択が残らないことを確認する
+    const dialogAfter = await screen.findByRole('dialog');
+    await expect(
+      within(dialogAfter).findByText('MKT にタスクを追加します'),
+    ).resolves.toBeInTheDocument();
+    const campaignButton = await within(dialogAfter).findByRole('button', { name: /campaign/ });
+    await expect(campaignButton).toHaveAttribute('aria-pressed', 'false');
+    await expect(
+      within(dialogAfter).queryByRole('button', { name: /bug/ }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(await within(dialogAfter).findByRole('button', { name: '閉じる' }));
+
+    // ラベルドロップダウンにも切替先プロジェクトのラベルだけが並ぶ
     // （プロジェクト一覧やENGのラベルが混入しない）
     await userEvent.click(await canvas.findByRole('button', { name: 'ラベル' }));
     const labelMenu = within(document.body);
