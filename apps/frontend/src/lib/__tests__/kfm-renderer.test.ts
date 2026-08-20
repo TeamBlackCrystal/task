@@ -276,20 +276,32 @@ describe('renderDescription (決定性・profile seam)', () => {
   });
 });
 
-describe('renderDescription (脚注 id の scope)', () => {
+describe('renderDescription (脚注 fn-* / fnref-* id の scope)', () => {
   const FOOTNOTE = '本文[^1]\n\n[^1]: 脚注内容';
 
-  it('scope 未指定は GitHub 既定 prefix のまま (user-content-fn-*)', async () => {
+  it('scope 未指定は fn-* / fnref-* とも GitHub 既定 prefix のまま', async () => {
     const html = await renderDescription(FOOTNOTE);
     expect(html).toContain('id="user-content-fn-1"');
+    expect(html).toContain('id="user-content-fnref-1"');
   });
 
-  it('scope 違いは脚注 id が衝突しない (1 ページ複数描画で id 重複を出さない)', async () => {
+  it('scope 違いは fn-* / fnref-* id を分離する', async () => {
     const first = await renderDescription(FOOTNOTE, { scope: 'task-1' });
     const second = await renderDescription(FOOTNOTE, { scope: 'comment-2' });
     expect(first).toContain('id="user-content-task-1-fn-1"');
+    expect(first).toContain('id="user-content-task-1-fnref-1"');
     expect(second).toContain('id="user-content-comment-2-fn-1"');
+    expect(second).toContain('id="user-content-comment-2-fnref-1"');
     expect(second).not.toContain('user-content-task-1-');
+  });
+
+  it('scope 違いでも footnote-label は同一 id になる現状を固定する (#588 で解消予定)', async () => {
+    const first = await renderDescription(FOOTNOTE, { scope: 'task-1' });
+    const second = await renderDescription(FOOTNOTE, { scope: 'comment-2' });
+    expect(first).toContain('id="footnote-label"');
+    expect(second).toContain('id="footnote-label"');
+    expect(first).toContain('aria-describedby="footnote-label"');
+    expect(second).toContain('aria-describedby="footnote-label"');
   });
 
   it('同一 scope は決定的 (独立 renderer 間で同一 HTML = L1 キャッシュ前提を壊さない)', async () => {

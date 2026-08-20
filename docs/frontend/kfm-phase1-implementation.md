@@ -16,7 +16,7 @@ apps/frontend/src/lib/
   remark-gfm/                  GFM 層の薄いラッパ ＋ GFM 由来 class の sanitize スキーマ
     index.ts
   remark-koyori-alerts/        KFM 拡張第一号: GitHub alerts (> [!NOTE] 等) → callout
-    index.ts                   自前 transformer（約 40 行・5 分岐）
+    index.ts                   自前 transformer（GitHub alerts の境界規則）
     style.css                  サイドカー CSS（アイコンは名前空間クラス・inline style 不使用）
   markup-renderer/             KFM コア
     index.ts                   composition root（renderDescription singleton・公開 API）
@@ -31,6 +31,9 @@ apps/frontend/src/pages/
 
 `index.ts` のみが外部 API（`_*.ts` は内部）。コアはプラグインを import せず、
 composition root が remark 層と sanitize スキーマを注入する。
+ただし client registry は例外で、composition root から再エクスポートしてはならない。
+`+client.ts` は `_client-registry.ts` を直接 import し、サーバ用レンダラ一式が client bundle へ
+混入するのを防ぐ。この非再エクスポート規約は bundle 境界であり、公開 API の整理ではない。
 
 ## パイプライン
 
@@ -45,6 +48,8 @@ composition root が remark 層と sanitize スキーマを注入する。
   scope なし（既定 `clobberPrefix`）の経路のみ。scope 付き描画は毎回 build する——scope の
   値空間（comment id 等）は非有界で、singleton に溜めるとメモリが漏れるため
   （`_renderer.ts` の `getProcessor` の分岐）。
+- 描画の既定 profile は composition root が `CreateRendererOptions.defaultProfile` へ
+  `contentConfig.defaultProfile` を渡して接続する。未指定時の fallback は `github`。
 
 ## GitHub alerts（remark-koyori-alerts）
 
@@ -52,7 +57,8 @@ GitHub 完全互換の境界仕様をテストで固定している:
 
 - 5 種のみ（NOTE / TIP / IMPORTANT / WARNING / CAUTION）・type は case-insensitive
 - マーカーは blockquote 先頭行に単独。同一行に後続テキストがあれば通常 blockquote
-- ネスト不可（内側は通常 blockquote）・不正 type は通常 blockquote へフォールバック
+- ネスト不可。alert 内の alert と、通常 blockquote 内の alert の両側とも、内側は通常
+  blockquote のままにする。不正 type も通常 blockquote へフォールバックする
 - 出力: `div.kfm-alert.kfm-alert--{type}` ＋ `p.kfm-alert__title`。inline style は一切出さない
 - アイコン・配色は `style.css` の名前空間クラスで当てる（消費側で明示 import するサイドカー方式）
 
@@ -64,8 +70,14 @@ DOMPurify は HTML 構造の allowlist に専念する:
 - class は既知トークン**完全一致** allowlist（`afterSanitizeAttributes` フック）。
   許可集合は各プラグインが export する `SanitizeSchema` を `createRenderer({ sanitizeSchemas })`
   で合成した registry が単一ソース
+- 動的 class は `SanitizeSchema.classPatterns` で明示した固定形だけを許可する。Phase 1 では
+  コードフェンスの `language-*` に限定し、任意のアプリ class を通す汎用パターンにはしない
 - `CUSTOM_ELEMENT_HANDLING` は registry 登録制（Phase 1 は登録タグ空）。
   `allowCustomizedBuiltInElements: false` で `is=""` 経路を封鎖
+
+DOMPurify を最終段に置くのは、remark プラグインが emit したものを含む最終 HTML 文字列を、
+`v-html` へ渡す直前の一つの境界で検査するためである。class allowlist 用フックは DOMPurify の
+モジュール singleton を汚染しないよう sanitize 呼び出し中だけ登録し、`finally` で撤去する。
 
 ## キャッシュ（_cache.ts）
 
@@ -88,6 +100,9 @@ DOMPurify は HTML 構造の allowlist に専念する:
   **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
   ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
   scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する
+- 現状 scope が分離するのは脚注の `fn-*` / `fnref-*` 系 id だけで、見出しの
+  `footnote-label` と参照側の `aria-describedby` は複数断片でも同じ値になる。この残課題は
+  後続 PR #588 の rehype 層で解消するため、本 PR では現状固定試験のみを置く
 - 入口で `\r\n` と単独 `\r` を `\n` へ正規化する（キー構築より前）。正規化しないと
   alert のマーカー照合が CRLF 本文で成立せず、LF 版と CRLF 版が別 HTML・
   別キャッシュエントリになる
@@ -117,6 +132,9 @@ import '@/lib/remark-koyori-alerts/style.css';
 
 カスタム要素は `_client-registry.ts` の定義配列に追加し、対応プラグインの `SanitizeSchema.tags` /
 `attrs` と三点を揃える。多層 config（`_config.ts`）は解決層を重ねる形で拡張する。
+追加プラグインは生 HTML や inline style を出さず、`data.hName` / `hProperties` の型付き emit と
+対応する `SanitizeSchema` を同じ変更で提供する。新しい class は完全一致 token を原則とし、
+動的な値が必要な場合だけ、許容字種を狭く固定した `classPatterns` と陽性・陰性試験を加える。
 
 ## テスト
 
