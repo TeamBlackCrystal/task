@@ -78,6 +78,13 @@ services:
       PERSONAL_TOKEN_SECRET: "dev-only-dummy-personal-token-00"
       RECOVERY_CODE_SECRET: "dev-only-dummy-recovery-code-000"
       TOTP_ENCRYPTION_KEY: "dev-only-dummy-totp-key-00000000"
+      # --- GitHub App 連携（任意）。シェルの環境変数か .env から渡す。
+      #     GITHUB_APP_ID が空なら連携機能は無効のまま起動する ---
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-}
       # --- SMTP はダミー（メール送信は失敗する。認証メールの中身は確認できない）---
       SMTP_HOST: localhost
       SMTP_PORT: "587"
