@@ -92,6 +92,7 @@ function onDeleteDialogCancel(event: Event) {
   <TaskDetailHub
     :task="displayTask"
     :description-html="data?.descriptionHtml ?? null"
+    :description-source="data?.descriptionSource ?? null"
     :project-key="projectKey"
     :statuses="statuses"
     :project-labels="projectLabels"

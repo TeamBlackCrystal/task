@@ -6,6 +6,7 @@
 // +data は既定で server-only のため、この import が client バンドルへ入ることはない。
 import type { PageContextServer } from 'vike/types';
 
+import { API_BASE } from '#/api-base';
 import type { components } from '@/generated/api';
 import { renderDescription } from '@/lib/markup-renderer';
 
@@ -13,21 +14,32 @@ type TenantResponse = components['schemas']['TenantResponse'];
 type ProjectResponse = components['schemas']['ProjectResponse'];
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 
-// server/middlewares/api-proxy.ts の env.API_BASE と同じ既定値。+data は Vike の
-// server ランタイムで走り Elysia の proxy を経由しないため、backend を直接叩く。
-const API_BASE = process.env.API_BASE ?? 'http://localhost:3400';
-
 export type Data = {
   /**
    * renderDescription (サーバ) の出力。説明が無い・取得に失敗した場合は null で、
    * 表示側はプレーンテキスト表示へフォールバックする (v-html には入らない)。
    */
   descriptionHtml: string | null;
+  /**
+   * renderDescription へ渡した入力そのもの。表示側 (TaskDetailHub) は最新の
+   * task.description と厳密一致するときだけ descriptionHtml を v-html へ流す
+   * （保存直後・reload 失敗・他者更新で古い HTML が出る経路を塞ぐ照合キー）。
+   * ハッシュではなく原文を載せるのは照合を同期・厳密 (衝突なし) にするため。
+   * payload に説明文が二重に載る分は、説明がタスク単位の短文であることから許容する。
+   */
+  descriptionSource: string | null;
 };
+
+const EMPTY: Data = { descriptionHtml: null, descriptionSource: null };
+
+// 遅い backend で SSR 全体を止めない: 各 GET は 3 秒で打ち切り、打ち切りは
+// 取得失敗と同じ扱いで null (プレーンテキスト表示フォールバック) へ倒す。
+const FETCH_TIMEOUT_MS = 3000;
 
 async function fetchJson<T>(url: string, cookie: string | undefined): Promise<T | null> {
   const response = await fetch(url, {
     headers: cookie ? { cookie } : undefined,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!response.ok) return null;
   return (await response.json()) as T;
@@ -46,34 +58,42 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
   const taskId = String(pageContext.routeParams?.taskId ?? '');
   const cookie = pageContext.headers?.cookie;
 
-  if (!tenantDisplayId || !projectKey || !taskId) return { descriptionHtml: null };
+  if (!tenantDisplayId || !projectKey || !taskId) return EMPTY;
 
-  // 取得失敗は throw せず null へ倒す: 説明の KFM 表示は付加価値であり、
+  // 取得失敗・タイムアウトは throw せず null へ倒す: 説明の KFM 表示は付加価値であり、
   // ここで 500 にするとページ本体 (クライアント側の取得・編集) まで巻き添えになる。
+  //
+  // 3 連続 GET が要るのは、URL が表示用 id (tenant display_id / project key / seq key)
+  // しか持たない一方で backend の各エンドポイントが UUID 階層でしか引けないため:
+  // display_id → tenant UUID → project UUID → task の順にしか解決できない。
+  // 各 GET は FETCH_TIMEOUT_MS で有界なので、直列でも SSR の待ちは最悪 ~9 秒で打ち切られ、
+  // タイムアウト後はプレーン表示へ倒れる (KFM 表示は次の reload で回復する)。
+  // 短縮するには backend に表示用 id で直接引ける口が要る (別途検討)。
   try {
     const tenants = toTenantList(await fetchJson<unknown>(`${API_BASE}/v1/tenants`, cookie));
     const tenantId = tenants.find((tenant) => tenant.display_id === tenantDisplayId)?.id;
-    if (!tenantId) return { descriptionHtml: null };
+    if (!tenantId) return EMPTY;
 
     const projects = await fetchJson<ProjectResponse[]>(
       `${API_BASE}/v1/tenants/${tenantId}/projects`,
       cookie,
     );
     const projectId = projects?.find((project) => project.key === projectKey)?.id;
-    if (!projectId) return { descriptionHtml: null };
+    if (!projectId) return EMPTY;
 
     const task = await fetchJson<TaskDetail>(
       `${API_BASE}/v1/tenants/${tenantId}/projects/${projectId}/tasks/${encodeURIComponent(taskId)}`,
       cookie,
     );
-    if (!task?.description) return { descriptionHtml: null };
+    if (!task?.description) return EMPTY;
 
     // scope はタスク UUID で決定的 (同一入力 → 同一 HTML)。URL の seq key (例 "ENG-42")
     // ではなく UUID を使うのは、scope の文字集合制約 [A-Za-z0-9_-]+ を常に満たすため。
     return {
       descriptionHtml: await renderDescription(task.description, { scope: `task-${task.id}` }),
+      descriptionSource: task.description,
     };
   } catch {
-    return { descriptionHtml: null };
+    return EMPTY;
   }
 }

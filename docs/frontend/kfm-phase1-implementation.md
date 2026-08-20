@@ -5,10 +5,12 @@ Phase 1 の実体は **github profile（複製レンダラ）** = GFM ＋ GitHub
 コードブロック着色（starry-night）＋ 安全 core。
 本書は出荷した実装の説明であり、設計判断の根拠は設計書（別管理）を正とする。
 
-**Phase 1 の出荷範囲はレンダラ（`renderDescription`）の提供まで**。UI への接続
-（タスク詳細の `+data.ts` から呼び出して `v-html` へ渡す変更と、alert CSS の消費側
-import）は本 PR には含めず、別 PR で行う。現時点で `renderDescription` を呼ぶ本番
-コードは存在せず、後述の「利用方法」は接続時の使い方を先に示すものである。
+**Phase 1 の出荷範囲はレンダラ（`renderDescription`）の提供と、タスク詳細ページへの
+UI 接続まで**。本番の呼び出し元はタスク詳細の `+data.ts`（サーバ）で、描画済み HTML と
+描画元テキスト（stale 照合キー `descriptionSource`）を `+Page.vue` 経由で
+`TaskDetailHub.vue` へ渡し、最新の `task.description` と厳密一致するときだけ `v-html`
+する（不一致はプレーンテキスト表示へフォールバック）。サイドカー CSS 4 本も
+`TaskDetailHub.vue` が import 済み。後述の「利用方法」はこの接続実体の要約である。
 
 ## 構成
 
@@ -188,9 +190,9 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 ## 利用方法
 
 ```ts
-// +data.ts（サーバ側）
+// +data.ts（サーバ側）— 実体は tasks/@taskId/+data.ts。scope はタスク UUID で決定的
 import { renderDescription } from '@/lib/markup-renderer';
-const descriptionHtml = await renderDescription(task.description); // 既定 profile = github
+const descriptionHtml = await renderDescription(task.description, { scope: `task-${task.id}` });
 
 // 消費側レイアウトで alert / GFM / 着色 CSS を明示 import
 import '@/lib/remark-koyori-alerts/style.css';

@@ -250,11 +250,12 @@ describe('TaskDetailHub', () => {
 describe('TaskDetailHub description KFM 表示', () => {
   const RENDERED_HTML = '<h1 id="user-content-task-uuid-h">見出し</h1><p><strong>強調</strong></p>';
 
-  it('descriptionHtml があれば kfm-content の器へ v-html でそのまま入る', () => {
+  it('descriptionHtml が最新 description の描画なら kfm-content の器へ v-html でそのまま入る', () => {
     const wrapper = mount(TaskDetailHub, {
       props: {
         task: { ...task, description: '# 見出し\n\n**強調**' },
         descriptionHtml: RENDERED_HTML,
+        descriptionSource: '# 見出し\n\n**強調**',
         projectKey: 'TEST',
         statuses: [],
         statusId: task.status_id,
@@ -291,6 +292,7 @@ describe('TaskDetailHub description KFM 表示', () => {
       props: {
         task: { ...task, description: '# 見出し' },
         descriptionHtml: RENDERED_HTML,
+        descriptionSource: '# 見出し',
         projectKey: 'TEST',
         statuses: [],
         statusId: task.status_id,
@@ -309,6 +311,7 @@ describe('TaskDetailHub description KFM 表示', () => {
       props: {
         task: { ...task, description: null },
         descriptionHtml: RENDERED_HTML,
+        descriptionSource: '# 見出し',
         projectKey: 'TEST',
         statuses: [],
         statusId: task.status_id,
@@ -318,12 +321,47 @@ describe('TaskDetailHub description KFM 表示', () => {
     expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
     expect(wrapper.text()).toContain('説明はありません');
   });
+
+  it('descriptionSource が最新 description と不一致なら stale HTML を捨ててプレーン表示へ倒す', () => {
+    // 保存直後 (reload 完了前)・reload 失敗・他者更新の再現: クライアントの
+    // task.description は新しいが、サーバ描画 HTML は古い本文のもの。
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: '新しい本文' },
+        descriptionHtml: RENDERED_HTML,
+        descriptionSource: '# 見出し\n\n**強調**',
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
+    expect(wrapper.get('p.whitespace-pre-wrap').text()).toContain('新しい本文');
+    // 古い HTML の中身がどこにも出ていない
+    expect(wrapper.find('strong').exists()).toBe(false);
+  });
+
+  it('descriptionSource 無しで descriptionHtml だけ渡されたら v-html しない (対渡しの強制)', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task: { ...task, description: '# 見出し\n\n**強調**' },
+        descriptionHtml: RENDERED_HTML,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+      },
+    });
+
+    expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
+    expect(wrapper.get('p.whitespace-pre-wrap').text()).toContain('**強調**');
+  });
 });
 
 describe('TaskDetailHub v-html 経路の source 契約', () => {
-  it('SFC 内の v-html は descriptionHtml へのバインド 1 箇所だけ', () => {
+  it('SFC 内の v-html は照合済み freshDescriptionHtml へのバインド 1 箇所だけ', () => {
     const source = readFileSync(path.join(__dirname, '../TaskDetailHub.vue'), 'utf-8');
     const bindings = source.match(/v-html="[^"]*"/g) ?? [];
-    expect(bindings).toEqual(['v-html="descriptionHtml"']);
+    expect(bindings).toEqual(['v-html="freshDescriptionHtml"']);
   });
 });

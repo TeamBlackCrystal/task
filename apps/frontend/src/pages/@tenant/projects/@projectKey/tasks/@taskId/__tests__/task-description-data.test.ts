@@ -83,6 +83,12 @@ describe('task description +data', () => {
     expect(result.descriptionHtml).toBe(expected);
   });
 
+  it('descriptionSource は renderDescription へ渡した本文そのもの (stale 照合キー)', async () => {
+    stubBackend();
+    const result = await data(pageContext());
+    expect(result.descriptionSource).toBe(DESCRIPTION);
+  });
+
   it('Markdown が描画され、alert は callout として出る', async () => {
     stubBackend();
     const { descriptionHtml } = await data(pageContext());
@@ -113,10 +119,10 @@ describe('task description +data', () => {
 
   it('取得失敗・説明なしは null (プレーン表示へフォールバック)', async () => {
     stubBackend({ taskStatus: 500 });
-    expect((await data(pageContext())).descriptionHtml).toBeNull();
+    expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
 
     stubBackend({ description: null });
-    expect((await data(pageContext())).descriptionHtml).toBeNull();
+    expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
 
     // fetch 自体の失敗 (backend down) でも throw しない
     vi.stubGlobal(
@@ -125,7 +131,36 @@ describe('task description +data', () => {
         throw new Error('ECONNREFUSED');
       }),
     );
-    expect((await data(pageContext())).descriptionHtml).toBeNull();
+    expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
+  });
+
+  it('全 GET に 3 秒の AbortSignal.timeout を付け、タイムアウトは null へ倒す', async () => {
+    // 値 (3000ms) の機械検証: fetch へ渡る signal が AbortSignal.timeout(3000) の戻りであること
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const signals: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        signals.push(init?.signal);
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.endsWith('/v1/tenants')) {
+          return jsonResponse([{ id: TENANT_UUID, display_id: 'acme' }]);
+        }
+        // 2 本目以降: 実際のタイムアウト時と同じ DOMException で打ち切られたことにする
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }),
+    );
+
+    const result = await data(pageContext());
+
+    expect(timeoutSpy).toHaveBeenCalledWith(3000);
+    expect(signals.length).toBeGreaterThan(0);
+    for (const signal of signals) {
+      expect(signal).toBeInstanceOf(AbortSignal);
+    }
+    // タイムアウトは throw させず、取得失敗と同じフォールバックへ倒す
+    expect(result).toEqual({ descriptionHtml: null, descriptionSource: null });
+    timeoutSpy.mockRestore();
   });
 
   it('tenant / project が見つからない場合は null', async () => {
