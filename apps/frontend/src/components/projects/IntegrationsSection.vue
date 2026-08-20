@@ -80,6 +80,10 @@ async function loadRepositories() {
     });
     if (error || !data) throw new Error('repositories-unavailable');
     repositories.value = data.repositories;
+    // 10 分有効な選択トークンを履歴・Referer に残さない
+    const url = new URL(window.location.href);
+    url.searchParams.delete('github_select');
+    window.history.replaceState(window.history.state, '', url);
   } catch {
     selectToken.value = null;
     repositories.value = [];
@@ -213,8 +217,12 @@ async function confirmDisconnect() {
         <p class="mt-0.5 text-xs text-muted-foreground">
           このインストールから 1 つのリポジトリをプロジェクトに紐付けます。
         </p>
-        <p v-if="!repositories.length" role="status" class="mt-3 text-sm text-muted-foreground">
-          リポジトリを読み込み中…
+        <p
+          v-if="!repositories.length"
+          :role="selectPending ? 'status' : 'alert'"
+          class="mt-3 text-sm text-muted-foreground"
+        >
+          {{ selectPending ? 'リポジトリを読み込み中…' : '選択できるリポジトリがありません' }}
         </p>
         <ul v-else class="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto">
           <li

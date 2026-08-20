@@ -388,6 +388,45 @@ async fn github_http_integration_suite() {
         let body: serde_json::Value = list.json().await.expect("repositories json");
         assert_eq!(body["repositories"].as_array().unwrap().len(), 30);
 
+        // 別ユーザーは同じ選択トークンを使えない（403）
+        let owner_email = user.email.clone();
+        let owner_password = user.password.clone();
+        app.reset_session_client();
+        let other = app.insert_user(false, false).await;
+        app.login_session(&other.email, &other.password).await;
+        let stolen_list = app
+            .get_with_session(&repositories_path(&tp, &select_token))
+            .await;
+        assert_eq!(stolen_list.status(), StatusCode::FORBIDDEN);
+        let stolen_connect = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            )
+            .await;
+        assert_eq!(stolen_connect.status(), StatusCode::FORBIDDEN);
+        app.cleanup_user(other.id).await;
+        app.reset_session_client();
+        app.login_session(&owner_email, &owner_password).await;
+
+        // 同じユーザーでも、トークンに束縛されていない別プロジェクトには使えない（400）
+        let other_project = app.insert_tenant_project(user.id).await;
+        let wrong_project = app
+            .post_json_with_session(
+                &connect_path(&other_project),
+                serde_json::json!({
+                    "select_token": select_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            )
+            .await;
+        assert_eq!(wrong_project.status(), StatusCode::BAD_REQUEST);
+
         // installation の可視範囲にないリポジトリは拒否する（このときトークンは残す）
         let rejected = app
             .post_json_with_session(

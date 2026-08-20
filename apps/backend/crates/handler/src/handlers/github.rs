@@ -223,6 +223,16 @@ pub async fn github_callback(
         .await
         .map_err(AppError::Internal)?;
 
+    // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
+    // 選択トークンを渡しても選べない画面になるだけなので、ここで弾く。
+    if repositories.is_empty() {
+        tracing::warn!(
+            installation_id = query.installation_id,
+            "github callback: installation has no accessible repositories"
+        );
+        return Err(AppError::BadRequest);
+    }
+
     let redirect_to =
         settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
 
