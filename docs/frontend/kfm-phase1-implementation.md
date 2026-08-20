@@ -4,6 +4,11 @@ task 本文（GitHub issue 形式）のレンダラ **KFM (Koyori Flavored Markd
 Phase 1 の実体は **github profile（複製レンダラ）** = GFM ＋ GitHub alerts ＋ 安全 core。
 本書は出荷した実装の説明であり、設計判断の根拠は設計書（別管理）を正とする。
 
+**Phase 1 の出荷範囲はレンダラ（`renderDescription`）の提供まで**。UI への接続
+（タスク詳細の `+data.ts` から呼び出して `v-html` へ渡す変更と、alert CSS の消費側
+import）は本 PR には含めず、別 PR で行う。現時点で `renderDescription` を呼ぶ本番
+コードは存在せず、後述の「利用方法」は接続時の使い方を先に示すものである。
+
 ## 構成
 
 ```
@@ -30,13 +35,16 @@ composition root が remark 層と sanitize スキーマを注入する。
 ## パイプライン
 
 ```
-入力テキスト → remark-parse → remark-gfm → remark-koyori-alerts
+入力テキスト → 改行 LF 正規化 → remark-parse → remark-gfm → remark-koyori-alerts
   → remark-rehype → rehype-stringify → DOMPurify → HTML 文字列 → <div v-html>
 ```
 
 - `allowDangerousHtml` は使わない。mdast の生 `html` ノードは remark-rehype 既定で消える。
   プラグインは `data.hName` / `hProperties` の型付き emit のみ行う。
-- processor は profile ごとに 1 回だけ build して memoize する。
+- processor は profile ごとに 1 回だけ build して memoize する。ただし memoize されるのは
+  scope なし（既定 `clobberPrefix`）の経路のみ。scope 付き描画は毎回 build する——scope の
+  値空間（comment id 等）は非有界で、singleton に溜めるとメモリが漏れるため
+  （`_renderer.ts` の `getProcessor` の分岐）。
 
 ## GitHub alerts（remark-koyori-alerts）
 
@@ -64,7 +72,9 @@ DOMPurify は HTML 構造の allowlist に専念する:
 - `renderDescription` はモジュール singleton = プロセス全体（SSR では全リクエスト・全 tenant）で
   共有される。この前提で **L1 のキーは入力本文そのもの（full-text）**。ハッシュ化は禁止
   （32-bit ハッシュは誕生日境界 ≈ 77,000 件で衝突し、別 tenant 本文の HTML を返す漏えいになる）
-- キー前置部 = pipeline fingerprint ＋ profile ＋ 解決済み content-scope config。
+- キー前置部 = pipeline fingerprint ＋ profile ＋ scope ＋ 解決済み content-scope config。
+  scope をキーに載せることは安全条件の一部——落とすと `clobberPrefix` の違う HTML を
+  取り違え、別断片の脚注 id が付いた HTML を返す。
   fingerprint は plugin 列と sanitize スキーマから導出し、構成変更で旧 HTML が自動失効する
 - `lru-cache` は `max` ＋ `maxSize` ＋ `sizeCalculation`（UTF-8 バイト長）で有界
 - L2（ブラウザ永続）は不採用。必要性を計測してから設計する
@@ -74,6 +84,13 @@ DOMPurify は HTML 構造の allowlist に専念する:
 - サーバ生成 HTML を唯一の入力とする。ページの `+data.ts` で
   `descriptionHtml: await renderDescription(text)` を実行して `pageContext.data` に載せ、
   コンポーネントは `v-html` で受けるだけにする
+- 同一ページに複数の KFM 断片（タスク本文＋コメント等）を並べる場合は、断片ごとに
+  **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
+  ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
+  scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する
+- 入口で `\r\n` と単独 `\r` を `\n` へ正規化する（キー構築より前）。正規化しないと
+  alert のマーカー照合が CRLF 本文で成立せず、LF 版と CRLF 版が別 HTML・
+  別キャッシュエントリになる
 - クライアントは再パース・再サニタイズしない（DOMPurify はサーバで一度だけ）
 - カスタム要素の登録は `src/pages/+client.ts`（client 専用 entry）から行い、関数側にも
   `customElements` 不在ガードを持つ二重防御。main.ts は存在せず、`+onCreateApp.ts` は
@@ -103,7 +120,7 @@ import '@/lib/remark-koyori-alerts/style.css';
 
 ## テスト
 
-`src/lib/__tests__/kfm-*.test.ts` の 4 ファイル 48 テスト:
+`src/lib/__tests__/kfm-*.test.ts` の 4 ファイル（件数は追加で変わるため書かない）:
 
 - `kfm-renderer.test.ts` — GFM 基本・alerts 境界・安全 core・決定性・profile fail-closed
 - `kfm-sanitize.test.ts` — FORBID style・class 完全一致・XSS 基本・カスタム要素 registry
