@@ -24,7 +24,6 @@
  * - 見た目はサイドカー style.css を消費側が明示 import する (alerts と同じ方式)。
  */
 import upstreamRehypeStarryNight from 'rehype-starry-night';
-import type { Options as RehypeStarryNightOptions } from 'rehype-starry-night';
 
 type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
 
@@ -53,14 +52,18 @@ type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
  * 行うことで、memoize 済み processor も次回に新実体を掴む。instance guard は、遅れて
  * reject した旧実体が別描画の据えた新実体を巻き添えで破棄するのを防ぐ
  * (_renderer.ts の processorCache guard と同型)。
+ *
+ * upstream options は意図して受け取らない。_renderer.ts の fingerprint は plugin の
+ * 関数名しか見ないため、closure に閉じた options は設定差があってもキャッシュキーに
+ * 現れず、CreateRendererOptions.cache を共有する renderer 間で他構成の HTML を返し得る。
+ * options の口を開けるときは fingerprint への直列化とキー分離試験 (kfm-cache.test.ts)
+ * を同じ変更で入れること。
  */
-export function createRehypeStarryNight(
-  options?: Readonly<RehypeStarryNightOptions> | null,
-): () => UpstreamTransformer {
+export function createRehypeStarryNight(): () => UpstreamTransformer {
   let shared: UpstreamTransformer | undefined;
   return function rehypeStarryNightShared(): UpstreamTransformer {
     return async function transform(...args: Parameters<UpstreamTransformer>) {
-      const instance = (shared ??= upstreamRehypeStarryNight(options));
+      const instance = (shared ??= upstreamRehypeStarryNight());
       try {
         return await instance(...args);
       } catch (error) {

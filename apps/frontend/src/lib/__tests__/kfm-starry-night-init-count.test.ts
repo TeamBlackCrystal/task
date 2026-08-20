@@ -69,14 +69,6 @@ describe('starry-night 初期化回数 (renderer スコープ共有)', () => {
     expect(upstreamFactory.calls).toBe(1);
   });
 
-  it('options を upstream へ素通しする', async () => {
-    const render = createHighlightRenderer(createRehypeStarryNight({ plainText: ['ts'] }));
-    const html = await render(fixtureFor('plain-text-option'));
-    expect(html).toContain('language-ts');
-    expect(html).not.toContain('class="pl-');
-    expect(upstreamFactory.calls).toBe(1);
-  });
-
   it('共有は renderer スコープ — renderer を作り直すと実体も作り直される (プロセス共有ではない)', async () => {
     // 実体の寿命は renderer に束縛される。プロセス共有にするとテスト間の隔離と
     // 「renderer と共に捨てられる」所有権が崩れるため、renderer ごとに 1 回で正しい。

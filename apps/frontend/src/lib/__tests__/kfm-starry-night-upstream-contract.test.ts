@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { starryNightSanitizeSchema } from '../rehype-starry-night';
 
@@ -15,15 +15,29 @@ const readUpstream = (relativePath: string): string =>
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort();
 
-function extractThemeClasses(source: string): string[] {
-  const mapping = source.match(/const scopeToClassGithub = \{([\s\S]*?)\n\}/)?.[1];
-  if (!mapping) throw new Error('starry-night lib/theme.js の scope map を読めなかった');
-  return uniqueSorted([...mapping.matchAll(/:\s*'(pl-[a-z0-9]+)'/g)].map((match) => match[1]!));
+/**
+ * theme.js の class 値域は正規表現抽出ではなく実体を import して読む。
+ * 抽出パターン (例: pl-[a-z0-9]+ 限定) だと upstream が pl-foo-bar のような
+ * パターン外 class を足したとき黙って取り零し、件数固定の試験がそのまま通ってしまう。
+ */
+async function loadThemeClasses(): Promise<string[]> {
+  const themeModule = (await import(
+    pathToFileURL(path.join(STARRY_NIGHT_ROOT, 'lib/theme.js')).href
+  )) as { classes?: unknown };
+  const { classes } = themeModule;
+  if (!Array.isArray(classes) || !classes.every((value) => typeof value === 'string')) {
+    throw new Error('starry-night lib/theme.js の export const classes を読めなかった');
+  }
+  return uniqueSorted(classes);
 }
 
 function extractSelectorClasses(source: string): string[] {
+  // theme.js 側と違い CSS には機械可読な export が無いためセレクタ抽出は残るが、
+  // sanitize の許可パターンより広く取る (ハイフン許容) — 抽出漏れで差分が隠れる側に倒さない。
   const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, '');
-  return uniqueSorted([...withoutComments.matchAll(/\.(pl-[a-z0-9]+)/g)].map((match) => match[1]!));
+  return uniqueSorted(
+    [...withoutComments.matchAll(/\.(pl-[a-z0-9-]+)/g)].map((match) => match[1]!),
+  );
 }
 
 function extractVariables(source: string): Map<string, string> {
@@ -36,8 +50,8 @@ function extractVariables(source: string): Map<string, string> {
 }
 
 describe('@wooorm/starry-night upstream 契約', () => {
-  it('theme.js の値域 34 class は sanitize schema で全て許可される', () => {
-    const classes = extractThemeClasses(readUpstream('lib/theme.js'));
+  it('theme.js の値域 34 class は sanitize schema で全て許可される', async () => {
+    const classes = await loadThemeClasses();
     expect(classes).toHaveLength(34);
     expect(
       classes.filter(
@@ -47,8 +61,8 @@ describe('@wooorm/starry-night upstream 契約', () => {
     ).toEqual([]);
   });
 
-  it('light.css と both.css のセレクタ集合は同じ 33 class', () => {
-    const themeClasses = extractThemeClasses(readUpstream('lib/theme.js'));
+  it('light.css と both.css のセレクタ集合は同じ 33 class', async () => {
+    const themeClasses = await loadThemeClasses();
     const lightClasses = extractSelectorClasses(readUpstream('style/light.css'));
     const bothClasses = extractSelectorClasses(readUpstream('style/both.css'));
     expect(lightClasses).toHaveLength(33);

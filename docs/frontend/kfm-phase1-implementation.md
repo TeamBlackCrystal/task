@@ -196,10 +196,12 @@ scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同
 - `kfm-cache.test.ts` — djb2 衝突ペアの実衝突証明つき full-text キー検証・fingerprint 分離
 - `kfm-client-registry.test.ts` — SSR ガード（customElements 不在で no-op）・二重 define 安全
 - `kfm-gfm-css-contract.test.ts` — GFM サイドカー CSS の scope が器クラス単一ソースと一致
-- `kfm-code-highlight.test.ts` — 着色の境界仕様（言語別 pl-*・未知言語・plainText・sanitize 整合）
-- `kfm-code-highlight-fixtures.test.ts` — 着色 story fixture の drift 検査
+- `kfm-code-highlight.test.ts` — 着色の境界仕様（言語別 pl-*・style 属性禁止・未知言語
+  フォールバック・注入ペイロード封じ・sanitize 整合）
 - `kfm-starry-night-init-count.test.ts` — 文法初期化「回数」の機械計数（N scope 描画で
   初期化 1 回・旧配線（factory 直挿し）が N 回になる陽性対照つき）
+- `kfm-starry-night-upstream-contract.test.ts` — upstream 実体（theme.js の classes 値域・
+  light/both/dark CSS）と sanitize 許可・サイドカー style.css の契約固定
 - `kfm-processor-memoize.test.ts` — processor 構築回数の機械計数（既定 prefix は memoize・
   scope 付きは都度構築だが初期化回数とは独立）
 - `kfm-starry-night-init-failure.test.ts` — 初期化失敗（poisoned promise）を捨てて次描画で

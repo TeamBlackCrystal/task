@@ -8,6 +8,8 @@ import typescriptHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-typ
 import unknownLanguageHtml from '@/lib/kfm-story-fixtures/rendered/code-highlight-unknown-language.html?raw';
 import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 // CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
+// (器 .kfm-content のスタイルは GFM サイドカー側 — 他 story と同じ二枚組)
+import '@/lib/remark-gfm/style.css';
 import '@/lib/rehype-starry-night/style.css';
 
 /*
