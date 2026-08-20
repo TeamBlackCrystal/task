@@ -34,7 +34,7 @@ describe('KFM story fixtures (drift 検査)', () => {
   // 足し忘れると、新しい層の fixture が丸ごと「孤立」と誤判定されて落ちる。
   const ALL_STORY_INPUTS = {
     ...KFM_STORY_INPUTS,
-      ...KFM_MERMAID_STORY_INPUTS,
+    ...KFM_MERMAID_STORY_INPUTS,
   };
 
   it('rendered/*.html に対応する入力キーが無い孤立 fixture が無い', () => {
