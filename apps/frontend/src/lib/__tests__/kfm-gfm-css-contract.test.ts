@@ -31,9 +31,21 @@ const extractSelectors = (css: string): string[] =>
     .map((selector) => selector.trim())
     .filter((selector) => selector.length > 0);
 
-/** セレクタが .kfm-content の compound を含むか (.kfm-content-like 等の前方一致は不可) */
-const isScoped = (selector: string): boolean =>
-  new RegExp(`\\.${KFM_CONTENT_CLASS}(?![\\w-])`).test(selector);
+/** .kfm-content の子孫または子結合子だけを許す (兄弟結合子や at-rule は不可) */
+const isScoped = (selector: string): boolean => {
+  if (selector.includes('@')) return false;
+
+  const scopeClass = new RegExp(`\\.${KFM_CONTENT_CLASS}(?![\\w-])`, 'g');
+  return Array.from(selector.matchAll(scopeClass)).some((match) => {
+    const suffix = selector.slice((match.index ?? 0) + match[0].length);
+    // scope class と同じ compound の残り (.foo / :hover 等) を読み飛ばし、
+    // 最初の combinator を検査する。現契約では descendant と child だけを許す。
+    const relation = suffix.replace(/^[^\s>+~,{]*/, '');
+    const trimmed = relation.trimStart();
+    if (trimmed.startsWith('>')) return /^>\s*[^+~>\s]/.test(trimmed);
+    return relation.length > trimmed.length && trimmed.length > 0 && !/^[+~>]/.test(trimmed);
+  });
+};
 
 describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () => {
   it('KFM_CONTENT_CLASS は文書化された値 kfm-content である', () => {
@@ -43,18 +55,22 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     expect(KFM_CONTENT_CLASS).toBe('kfm-content');
   });
 
-  it('検査器の陽性対照: 非 scope セレクタを拒み、前方一致の別クラスも拒む', () => {
+  it('検査器の陽性対照: 子孫・子結合子だけを許し、兄弟結合子と at-rule を拒む', () => {
     expect(isScoped('ul')).toBe(false);
+    expect(isScoped(`.${KFM_CONTENT_CLASS}`)).toBe(false);
     expect(isScoped(`.${KFM_CONTENT_CLASS} ul`)).toBe(true);
+    expect(isScoped(`.${KFM_CONTENT_CLASS} > ul`)).toBe(true);
     expect(isScoped(`.dark .${KFM_CONTENT_CLASS} a`)).toBe(true);
     expect(isScoped(`.${KFM_CONTENT_CLASS}-like ul`)).toBe(false);
+    expect(isScoped(`.${KFM_CONTENT_CLASS} + ul`)).toBe(false);
+    expect(isScoped(`.${KFM_CONTENT_CLASS} ~ ul`)).toBe(false);
+    expect(isScoped(`@media print { .${KFM_CONTENT_CLASS} ul`)).toBe(false);
   });
 
   it('style.css の全ルールが器クラス子孫限定 (bare 要素への漏れ・片側改名を弾く)', () => {
     const selectors = extractSelectors(fs.readFileSync(CSS_PATH, 'utf8'));
-    // 空振り防止: パースが 0 件なら何も検証していない。13 は執筆時点の実数 =
-    // 「現状より少なくなったら見直す」下限であり、セレクタが増えても更新義務はない
-    expect(selectors.length).toBeGreaterThanOrEqual(13);
+    // 空振りだけを防ぐ。ルール削除を一律に破壊扱いせず、残った全ルールの scope を検査する。
+    expect(selectors.length).toBeGreaterThanOrEqual(1);
     const unscoped = selectors.filter((selector) => !isScoped(selector));
     expect(unscoped).toEqual([]);
   });

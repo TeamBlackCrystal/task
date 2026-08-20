@@ -191,12 +191,12 @@ export const NestedLists: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: 番号付き/記号リストの 4 段入れ子 (ol > ol > ul > ul) が 1 段に潰れると play の DOM 構造が変わる。CSS サイドカーが無いとマーカー/インデントが消え絵も変わる。',
+          '壊れたら: 番号付き/記号リストの 5 段入れ子 (ol > ol > ul > ul > ul) が 1 段に潰れると play の DOM 構造が変わる。CSS サイドカーが無いとマーカー/インデントが消え絵も変わる。五段目は style.css の square ルールを実際に消費し、未使用 CSS を契約化するため残す。',
       },
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelectorAll('ol ol ul ul')).toHaveLength(1);
+    await expect(canvasElement.querySelectorAll('ol ol ul ul ul')).toHaveLength(1);
     const outerOl = canvasElement.querySelector('ol');
     await expect(outerOl?.querySelectorAll(':scope > li')).toHaveLength(2);
     // マーカーとインデントの実効。CSS サイドカーが無いと preflight が両方消し、
@@ -204,10 +204,10 @@ export const NestedLists: Story = {
     const outerStyle = outerOl ? getComputedStyle(outerOl) : null;
     await expect(outerStyle?.listStyleType).toBe('decimal');
     await expect(Number.parseFloat(outerStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
-    const deepUl = canvasElement.querySelector('ol ol ul ul');
+    const deepUl = canvasElement.querySelector('ol ol ul ul ul');
     const deepStyle = deepUl ? getComputedStyle(deepUl) : null;
-    // 四段目 ul は「ul の中の ul」なので .kfm-content ul ul の circle が当たる
-    await expect(deepStyle?.listStyleType).toBe('circle');
+    // 五段目 ul は 3 重の ul なので、残すと決めた .kfm-content ul ul ul を実際に消費する
+    await expect(deepStyle?.listStyleType).toBe('square');
     await expect(Number.parseFloat(deepStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
   },
 };
