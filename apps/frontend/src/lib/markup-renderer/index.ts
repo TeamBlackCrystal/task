@@ -22,6 +22,8 @@
  *   class="kfm-content" (@/lib/remark-gfm/content-class.ts) を付ける (Tailwind
  *   preflight 対策)。GFM 出力は素の ul/blockquote/a で掴む class が無いため、
  *   器 scope が無いと GFM CSS は一行も当たらない。
+ * - mermaid のフォールバック表示は消費側で
+ *   `@/lib/remark-kfm-mermaid/style.css` を明示 import する。
  * - コードブロック着色の見た目も同方式: 消費側で `@/lib/rehype-starry-night/style.css` を
  *   明示 import する (実体は @wooorm/starry-night の light シート固定 ＋ .dark ブリッジ。
  *   選定理由は同 CSS のコメントを参照)。

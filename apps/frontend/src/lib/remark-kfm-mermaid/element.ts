@@ -41,23 +41,57 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** mermaid の返す SVG を shadow DOM へ入れる直前の最終防御 */
+function assertSafeSvg(svg: string): void {
+  const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  if (
+    document.querySelector('parsererror') !== null ||
+    document.documentElement.localName !== 'svg'
+  ) {
+    throw new Error('mermaid returned invalid SVG');
+  }
+  for (const element of document.querySelectorAll('*')) {
+    if (element.localName === 'script') throw new Error('mermaid returned an unsafe SVG element');
+    for (const attribute of element.attributes) {
+      if (attribute.name.toLowerCase().startsWith('on')) {
+        throw new Error('mermaid returned an unsafe SVG attribute');
+      }
+    }
+  }
+}
+
 export function createKfmMermaidElement(): CustomElementConstructor {
   return class KfmMermaidElement extends HTMLElement {
     /** connectedCallback は移動・再接続でも複数回呼ばれる。描画は初回のみ */
     #started = false;
+    /** 切断前に始まった非同期描画を、再接続後の要素へ反映させないための世代 */
+    #renderToken = 0;
 
     connectedCallback(): void {
       if (this.#started) return;
       this.#started = true;
-      void this.#render();
+      void this.#render(++this.#renderToken);
     }
 
-    async #render(): Promise<void> {
+    disconnectedCallback(): void {
+      if (this.dataset.kfmMermaid === undefined) {
+        this.#started = false;
+        this.#renderToken += 1;
+      }
+    }
+
+    async #render(token: number): Promise<void> {
       // light DOM はサーバがエスケープしたソーステキストのみ (remark-kfm-mermaid 契約)。
       // textContent で実体参照は復元済みの生ソースが得られる。
       const source = this.textContent ?? '';
       try {
         const { default: mermaid } = await import('mermaid');
+        // import 待ちの間に切断された場合はキューへ不要な仕事を積まず、再接続に委ねる。
+        if (token !== this.#renderToken) return;
+        if (!this.isConnected) {
+          this.#started = false;
+          return;
+        }
         const { svg } = await enqueue(() => {
           // アプリ本体・story と同じ .dark ancestor 方式でテーマを引く
           const dark = this.closest('.dark') !== null;
@@ -69,13 +103,23 @@ export function createKfmMermaidElement(): CustomElementConstructor {
           });
           return mermaid.render(`${KFM_MERMAID_TAG}-${renderSequence++}`, source);
         });
-        if (!this.isConnected) return;
+        if (token !== this.#renderToken) return;
+        if (!this.isConnected) {
+          this.#started = false;
+          return;
+        }
+        assertSafeSvg(svg);
         // shadow は成功時のみ張る: 失敗時に張ると light DOM のフォールバックまで隠れる
         const shadow = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
         shadow.innerHTML = `<style>:host { display: block; }</style>${svg}`;
         this.dataset.kfmMermaid = 'rendered' satisfies KfmMermaidState;
-      } catch {
-        if (!this.isConnected) return;
+      } catch (error) {
+        if (token !== this.#renderToken) return;
+        console.error('[kfm-mermaid] render failed', error);
+        if (!this.isConnected) {
+          this.#started = false;
+          return;
+        }
         this.dataset.kfmMermaid = 'error' satisfies KfmMermaidState;
       }
     }

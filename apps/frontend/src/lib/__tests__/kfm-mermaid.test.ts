@@ -140,6 +140,7 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
   });
 
   it('描画失敗は data-kfm-mermaid="error" へ倒れ、shadow を張らずソーステキストが残る', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     mermaidMock.render.mockImplementation(async () => {
       throw new Error('Parse error');
     });
@@ -149,5 +150,44 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     // 失敗時に shadow を張るとフォールバック (light DOM ソース) まで隠れるため張らない
     expect(element.shadowRoot).toBeNull();
     expect(element.textContent).toBe(source);
+    expect(consoleError).toHaveBeenCalledWith(
+      '[kfm-mermaid] render failed',
+      expect.objectContaining({ message: 'Parse error' }),
+    );
+    consoleError.mockRestore();
+  });
+
+  it('script / on* を含む SVG は shadow DOM へ入れず error へ倒す', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg onload="alert(1)"><script>alert(2)</script></svg>',
+    });
+    const element = await mount('flowchart TD\n  A --> B');
+    expect(element.dataset.kfmMermaid).toBe('error');
+    expect(element.shadowRoot).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith('[kfm-mermaid] render failed', expect.any(Error));
+    consoleError.mockRestore();
+  });
+
+  it('描画待ち中に切断された要素は、再接続時に描画を再試行する', async () => {
+    let resolveFirstRender!: (value: { svg: string }) => void;
+    mermaidMock.render.mockImplementationOnce(
+      async () =>
+        await new Promise<{ svg: string }>((resolve) => {
+          resolveFirstRender = resolve;
+        }),
+    );
+
+    const element = document.createElement(KFM_MERMAID_TAG);
+    element.textContent = 'flowchart TD\n  A --> B';
+    document.body.append(element);
+    await vi.waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(1));
+    element.remove();
+    resolveFirstRender({ svg: '<svg><g></g></svg>' });
+    expect(element.dataset.kfmMermaid).toBeUndefined();
+
+    document.body.append(element);
+    await vi.waitFor(() => expect(element.dataset.kfmMermaid).toBe('rendered'));
+    expect(mermaidMock.render).toHaveBeenCalledTimes(2);
   });
 });

@@ -27,13 +27,17 @@ apps/frontend/src/lib/
                                共有・失敗回収）
     schema.ts                  pl-* class の sanitize スキーマ
     style.css                  サイドカー CSS（light シート固定 ＋ .dark ブリッジ）
+  remark-kfm-mermaid/          mermaid フェンス → client 描画 custom element
+    index.ts                   remark 変換と sanitize スキーマ
+    element.ts                 遅延ロード・SVG 描画・再接続処理
+    style.css                  JS 無効/描画失敗時のソース表示フォールバック
   markup-renderer/             KFM コア
     index.ts                   composition root（renderDescription singleton・公開 API）
     _renderer.ts               createRenderer（controlled pipeline・profile memoize）
     _sanitize.ts               DOMPurify 設定（構造専任・registry 方式）
     _cache.ts                  L1 キャッシュ（full-text キー）
     _config.ts                 多層 config 解決（Phase 1 はコード既定＋system 層）
-    _client-registry.ts        カスタム要素の client 登録（登録タグは現状空）
+    _client-registry.ts        カスタム要素の client 登録（kfm-mermaid）
 apps/frontend/src/pages/
   +client.ts                   client 専用 entry（カスタム要素登録の呼び出し口）
 ```
@@ -51,8 +55,8 @@ composition root が remark 層と sanitize スキーマを注入する。
 
 ```
 入力テキスト → 改行 LF 正規化 → remark-parse → remark-gfm → remark-koyori-alerts
-  → remark-rehype → rehype-starry-night → rehype-stringify → DOMPurify
-  → HTML 文字列 → <div v-html>
+  → remark-kfm-mermaid → remark-rehype → rehype-starry-night → rehype-stringify
+  → DOMPurify → HTML 文字列 → <div v-html>
 ```
 
 - `allowDangerousHtml` は使わない。mdast の生 `html` ノードは remark-rehype 既定で消える。
@@ -87,7 +91,7 @@ DOMPurify は HTML 構造の allowlist に専念する:
   で合成した registry が単一ソース
 - 動的 class は `SanitizeSchema.classPatterns` で明示した固定形だけを許可する。Phase 1 では
   コードフェンスの `language-*` に限定し、任意のアプリ class を通す汎用パターンにはしない
-- `CUSTOM_ELEMENT_HANDLING` は registry 登録制（Phase 1 は登録タグ空）。
+- `CUSTOM_ELEMENT_HANDLING` は registry 登録制（現在は kfm-mermaid を許可、属性は許可しない）。
   `allowCustomizedBuiltInElements: false` で `is=""` 経路を封鎖
 - `classPatterns` の正規表現に `g` / `y` フラグは使えない（`lastIndex` 状態で `.test()` の
   判定が呼び出し履歴により反転するため、registry 組立時に fail-fast で throw する）
@@ -155,6 +159,7 @@ const descriptionHtml = await renderDescription(task.description); // 既定 pro
 import '@/lib/remark-koyori-alerts/style.css';
 import '@/lib/remark-gfm/style.css';
 import '@/lib/rehype-starry-night/style.css';
+import '@/lib/remark-kfm-mermaid/style.css';
 ```
 
 ```html
@@ -173,6 +178,8 @@ import '@/lib/rehype-starry-night/style.css';
   直接指す。実体は upstream の light シート固定 ＋ `.dark` ブリッジ（アプリの
   class 戦略ダークに追従。OS 設定連動の both.css は使わない — 発火条件を
   `.dark` の一系統に畳み、OS ダーク × アプリライトでコードだけ暗転する継ぎ目を防ぐ）
+- **mermaid CSS は import のみで当たる** — JS 無効時または描画失敗時の light DOM ソースを
+  `white-space: pre` と横スクロールで読める状態に保つ
 
 着色 transformer の初期化・変換が reject した場合、`renderDescription` も reject する。
 未着色コードへ部分フォールバックはせず、`+data.ts` が本文 HTML を await する標準構成では

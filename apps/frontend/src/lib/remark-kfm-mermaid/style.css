@@ -1,0 +1,6 @@
+/* JS 無効時・描画失敗時も mermaid ソースの改行と横スクロールを保つ。 */
+kfm-mermaid {
+  display: block;
+  white-space: pre;
+  overflow-x: auto;
+}

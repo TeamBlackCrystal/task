@@ -5,6 +5,7 @@ import flowchartHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-flowchart.h
 import noneHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-none.html?raw';
 import sequenceHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-sequence.html?raw';
 import stateHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-state.html?raw';
+import '@/lib/remark-kfm-mermaid/style.css';
 // 本番では +client.ts が行う client 登録を story でも同じ入口で行う (二重 define は registry 側で防止)
 import { registerKfmCustomElements } from '@/lib/markup-renderer/_client-registry';
 
@@ -113,6 +114,8 @@ export const BrokenInput: Story = {
     // フォールバック: shadow を張らず、ソーステキストがそのまま見える
     await expect(element?.shadowRoot).toBeNull();
     await expect(element?.textContent).toContain('閉じ括弧がない');
+    await expect(getComputedStyle(element as HTMLElement).whiteSpace).toBe('pre');
+    await expect(getComputedStyle(element as HTMLElement).overflowX).toBe('auto');
   },
 };
 
