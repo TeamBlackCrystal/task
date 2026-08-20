@@ -174,9 +174,9 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
   セグメントとして `fn` / `fnref` を含む scope（`fn-1`、`a-fn-b` 等）も throw する
   （脚注 id は `user-content-<scope>-fn-<label>` で label は利用者入力のため、細工した
   label と別 scope の id が一致し得る。scope 側からセグメントを禁止すれば衝突しない）
-- 現状 scope が分離するのは脚注の `fn-*` / `fnref-*` 系 id だけで、見出しの
-  `footnote-label` と参照側の `aria-describedby` は複数断片でも同じ値になる。この残課題は
-  後続 PR #588 の rehype 層で解消するため、本 PR では現状固定試験のみを置く
+- scope 付き描画では脚注 id（`fn-*` / `fnref-*`）に加え、`footnote-label` と
+  それを指す `aria-describedby` も scope 付きになる。scope 無しの既定描画は
+  GitHub 互換の固定 `footnote-label` を保つ
 - 入口で `\r\n` と単独 `\r` を `\n` へ正規化する（キー構築より前）。正規化しないと
   alert のマーカー照合が CRLF 本文で成立せず、LF 版と CRLF 版が別 HTML・
   別キャッシュエントリになる

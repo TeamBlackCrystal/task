@@ -110,14 +110,15 @@ function rehypeScopeFootnoteLabel(clobberPrefix: string) {
       if (node.properties.id === FOOTNOTE_LABEL_ID) {
         node.properties.id = scopedId;
       }
-      // hast では aria-describedby (spaceSeparated) が配列にも文字列にもなり得る
+      // 現行の mdast-util-to-hast は aria-describedby を配列で emit する。
+      // 文字列分岐は将来の rehype 層が同属性を文字列で出した場合の防御。
       const describedBy = node.properties.ariaDescribedBy;
       if (Array.isArray(describedBy)) {
         node.properties.ariaDescribedBy = describedBy.map((token) =>
           token === FOOTNOTE_LABEL_ID ? scopedId : token,
         );
       } else if (describedBy === FOOTNOTE_LABEL_ID) {
-        // spaceSeparated 属性ゆえ配列でも直列化結果は同一 (型は配列側に寄せる)
+        // spaceSeparated 属性ゆえ配列でも直列化結果は同一 (現行 emitter の型へ寄せる)
         node.properties.ariaDescribedBy = [scopedId];
       }
     });
