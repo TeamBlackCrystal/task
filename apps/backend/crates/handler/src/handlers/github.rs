@@ -209,10 +209,30 @@ pub async fn github_callback(
     // インストールへ乗り換える動線を塞がない。
     let expected_installation_id = match payload.installation_id {
         Some(bound) => Some(bound),
-        None => install_state::peek_pending_installation(&state.redis_client, payload.project_id)
-            .await
-            .map_err(AppError::Internal)?
-            .filter(|pending| *pending == query.installation_id),
+        None => {
+            let pending =
+                install_state::peek_pending_installation(&state.redis_client, payload.project_id)
+                    .await
+                    .map_err(AppError::Internal)?
+                    .filter(|pending| *pending == query.installation_id);
+            match pending {
+                Some(id) => Some(id),
+                // 同じテナントの別プロジェクトが既に使っているインストールなら、そのテナントが
+                // 正規に入れたものだと分かっている。1 インストールに複数リポジトリが見える
+                // 構成では「同じ org の別リポジトリを別プロジェクトへ」が普通に起きるので、
+                // 鮮度チェックだけで弾くと 10 分を過ぎた時点で連携できなくなる。
+                None if installation_used_in_tenant(
+                    &state,
+                    payload.tenant_id,
+                    query.installation_id,
+                )
+                .await? =>
+                {
+                    Some(query.installation_id)
+                }
+                None => None,
+            }
+        }
     };
     let installation = match app
         .verify_installation(
@@ -405,6 +425,22 @@ async fn upsert_integration(
     }
 
     Ok(())
+}
+
+/// そのテナントのどれかのプロジェクトが、既にこのインストールを使っているか。
+async fn installation_used_in_tenant(
+    state: &AppState,
+    tenant_id: Uuid,
+    installation_id: i64,
+) -> Result<bool, AppError> {
+    let used = github_integrations::Entity::find()
+        .filter(github_integrations::Column::InstallationId.eq(installation_id))
+        .inner_join(projects::Entity)
+        .filter(projects::Column::TenantId.eq(tenant_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+    Ok(used)
 }
 
 /// インストールが GitHub 側から消えているか。
@@ -772,15 +808,26 @@ pub async fn delete_github_integration(
 
     let installation_id = row.installation_id;
 
+    // 同じインストールを他のプロジェクトも使っていたら、GitHub 側は消さない
+    // （アンインストールはアカウント単位なので、他のプロジェクトの連携ごと壊れる）。
+    let shared = github_integrations::Entity::find()
+        .filter(github_integrations::Column::InstallationId.eq(installation_id))
+        .filter(github_integrations::Column::ProjectId.ne(project_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+
     // GitHub 側を先に解除する（404/410 は冪等成功として delete_installation 内で処理済み）。
     // DB を先に削除すると GitHub 側の失敗時に installation_id が失われ再試行不能になる。
-    github_app(&state.http_client, github)
-        .delete_installation(installation_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, installation_id, "github delete_installation failed");
-            AppError::Internal(e)
-        })?;
+    if !shared {
+        github_app(&state.http_client, github)
+            .delete_installation(installation_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, installation_id, "github delete_installation failed");
+                AppError::Internal(e)
+            })?;
+    }
 
     let active: github_integrations::ActiveModel = row.into();
     active.delete(&state.db).await?;

@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use backend::utils::github::install_state::{self as github_oauth_state, GithubOAuthStatePayload};
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, projects, tenants};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 use wiremock::matchers::{header, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -790,6 +790,114 @@ async fn github_http_integration_suite() {
             "unexpected redirect location: {rejected_location}"
         );
         assert!(!rejected_location.contains("github_select="));
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 11. 同じ org のインストールを、同じテナントの別プロジェクトへ連携できる（#594 の受け入れ条件）
+    {
+        let user = app.insert_user(false, false).await;
+        let first = app.insert_tenant_project(user.id).await;
+        // 同じテナントに 2 つ目のプロジェクトを足す
+        let second_project_id = Uuid::new_v4();
+        entity::projects::ActiveModel {
+            id: sea_orm::ActiveValue::Set(second_project_id),
+            name: sea_orm::ActiveValue::Set("github-test-2".into()),
+            description: sea_orm::ActiveValue::Set(String::new()),
+            tenant_id: sea_orm::ActiveValue::Set(first.tenant_id),
+            icon_emoji: sea_orm::ActiveValue::Set(None),
+            icon_url: sea_orm::ActiveValue::Set(None),
+            key: sea_orm::ActiveValue::Set(format!(
+                "Q{}",
+                &second_project_id.to_string()[..8].to_uppercase()
+            )),
+            is_personal: sea_orm::ActiveValue::Set(false),
+            personal_owner_id: sea_orm::ActiveValue::Set(None),
+        }
+        .insert(&app.state.db)
+        .await
+        .expect("insert second project");
+        let second = TestTenantProject {
+            tenant_id: first.tenant_id,
+            project_id: second_project_id,
+        };
+        app.login_session(&user.email, &user.password).await;
+
+        // 1 つ目のプロジェクトを、作成から時間が経ったインストールへ連携する
+        let installation_id = unique_old_installation_id();
+        github_oauth_state::store_pending_installation(
+            &app.state.redis_client,
+            first.project_id,
+            installation_id,
+        )
+        .await
+        .expect("store pending installation");
+        let first_state = get_install_state(&app, &first).await;
+        let first_callback = app
+            .get_with_session(&callback_path(&first_state, installation_id))
+            .await;
+        let first_token = select_token_from_location(
+            first_callback
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .expect("location header"),
+        );
+        let first_connect = app
+            .post_json_with_session(
+                &connect_path(&first),
+                serde_json::json!({
+                    "select_token": first_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            )
+            .await;
+        assert_eq!(first_connect.status(), StatusCode::NO_CONTENT);
+
+        // 2 つ目のプロジェクトは控えを持たないが、同じテナントで使用中のインストールなので通る
+        // （修正前は鮮度チェックで installation_rejected になっていた）
+        let second_state = get_install_state(&app, &second).await;
+        let second_callback = app
+            .get_with_session(&callback_path(&second_state, installation_id))
+            .await;
+        let second_location = second_callback
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .expect("location header");
+        assert!(
+            second_location.contains("github_select="),
+            "second project should reach the selection UI: {second_location}"
+        );
+        let second_connect = app
+            .post_json_with_session(
+                &connect_path(&second),
+                serde_json::json!({
+                    "select_token": select_token_from_location(&second_location),
+                    "repo_owner": "acme",
+                    "repo_name": "repo-2"
+                }),
+            )
+            .await;
+        assert_eq!(second_connect.status(), StatusCode::NO_CONTENT);
+
+        // 片方を解除しても、もう片方の連携は残る（GitHub 側のアンインストールを伴わない）
+        let delete_first = app.delete_with_session(&integration_path(&first)).await;
+        assert_eq!(delete_first.status(), StatusCode::NO_CONTENT);
+        let remaining = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(second.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("second integration row");
+        assert_eq!(remaining.repo_name, "repo-2");
+
+        // 最後の 1 件の解除では GitHub 側も消す
+        let delete_second = app.delete_with_session(&integration_path(&second)).await;
+        assert_eq!(delete_second.status(), StatusCode::NO_CONTENT);
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
