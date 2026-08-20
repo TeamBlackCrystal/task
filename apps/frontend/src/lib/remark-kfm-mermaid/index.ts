@@ -55,7 +55,8 @@ export function remarkKfmMermaid() {
  * 本プラグインが emit するタグの許可宣言。composition root が createRenderer へ渡して
  * sanitize registry と単一ソース化する。属性は SSR 段では一切許可しない —
  * data-kfm-mermaid はレンダリング結果として client が立てる状態であり、
- * サーバ生成 HTML に現れてはならない (現れたら sanitize が剥がすのが正)。
+ * サーバ生成 HTML に現れてはならない (remark-rehype が生 HTML を落とすため、
+ * sanitizer まで届かない)。
  */
 export const kfmMermaidSanitizeSchema = {
   tags: [KFM_MERMAID_TAG],

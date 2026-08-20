@@ -44,7 +44,8 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
- * mermaid の返す SVG を shadow DOM へ入れる直前の最終防御。
+ * mermaid の返す SVG を shadow DOM へ入れる直前の構造の健全性検査。
+ * URL の安全性は mermaid 側の sanitize-url に委ねる。
  *
  * 検査は sink (shadow への挿入 = HTML fragment パース) と同じ HTML 文法で行う。
  * XML パーサ (image/svg+xml) を使わない決め手は二つ:
