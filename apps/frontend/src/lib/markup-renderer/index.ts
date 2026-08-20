@@ -9,10 +9,10 @@
  *   コンポーネントは `<div v-html="descriptionHtml" />` で受けるだけにする。
  * - 同一ページに複数の KFM 断片 (タスク本文＋コメント等) を並べる場合は、断片ごとに
  *   決定的な scope を渡す: `renderDescription(text, { scope: `comment-${id}` })`。
- *   scope が prefix を付けるのは脚注の fn-* / fnref-* 系 id
- *   (user-content-<scope>-fn-* / -fnref-*) に限る。mdast-util-to-hast が固定で出す
- *   footnote-label (id と aria-describedby) は clobberPrefix を経由しないため
- *   ここでは衝突が残り、その穴は #588 の rehype 層が塞ぐ。random でなく
+ *   clobberPrefix が脚注の fn-* / fnref-* 系 id
+ *   (user-content-<scope>-fn-* / -fnref-*) を scope 化し、続く core の rehype scope 層が
+ *   clobberPrefix を経由しない footnote-label (id と aria-describedby) も scope 化する。
+ *   これにより断片間で全脚注 id の衝突を防ぐ。random でなく
  *   決定的なのは同一入力→同一 HTML (L1 キャッシュ・SSR/CSR 同一性) を保つため。
  * - クライアントは再パース・再サニタイズしない (DOMPurify はサーバで一度だけ)。
  * - alert の見た目は消費側で `@/lib/remark-koyori-alerts/style.css` を明示 import する

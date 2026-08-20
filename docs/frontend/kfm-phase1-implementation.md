@@ -55,8 +55,8 @@ composition root が remark 層と sanitize スキーマを注入する。
 
 ```
 入力テキスト → 改行 LF 正規化 → remark-parse → remark-gfm → remark-koyori-alerts
-  → remark-kfm-mermaid → remark-rehype → rehype-starry-night → rehype-stringify
-  → DOMPurify → HTML 文字列 → <div v-html>
+  → remark-kfm-mermaid → remark-rehype → rehype-scope-footnote-label（scope 付きのみ）
+  → rehype-starry-night → rehype-stringify → DOMPurify → HTML 文字列 → <div v-html>
 ```
 
 - `allowDangerousHtml` は使わない。mdast の生 `html` ノードは remark-rehype 既定で消える。

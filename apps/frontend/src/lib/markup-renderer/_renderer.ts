@@ -110,16 +110,16 @@ function rehypeScopeFootnoteLabel(clobberPrefix: string) {
       if (node.properties.id === FOOTNOTE_LABEL_ID) {
         node.properties.id = scopedId;
       }
-      // 現行の mdast-util-to-hast は aria-describedby を配列で emit する。
-      // 文字列分岐は将来の rehype 層が同属性を文字列で出した場合の防御。
+      // 現行の mdast-util-to-hast は配列で emit するが、rehype 層が文字列を渡す場合も
+      // space-separated token 列へ正規化し、以後の置換経路を一つに保つ。
       const describedBy = node.properties.ariaDescribedBy;
-      if (Array.isArray(describedBy)) {
-        node.properties.ariaDescribedBy = describedBy.map((token) =>
+      const describedByTokens = (Array.isArray(describedBy) ? describedBy : [describedBy])
+        .flatMap((value) => (typeof value === 'string' ? value.split(/\s+/) : []))
+        .filter(Boolean);
+      if (describedByTokens.includes(FOOTNOTE_LABEL_ID)) {
+        node.properties.ariaDescribedBy = describedByTokens.map((token) =>
           token === FOOTNOTE_LABEL_ID ? scopedId : token,
         );
-      } else if (describedBy === FOOTNOTE_LABEL_ID) {
-        // spaceSeparated 属性ゆえ配列でも直列化結果は同一 (現行 emitter の型へ寄せる)
-        node.properties.ariaDescribedBy = [scopedId];
       }
     });
   };
@@ -178,7 +178,7 @@ function buildPipelineFingerprint(options: CreateRendererOptions): string {
     classPatterns: (schema.classPatterns ?? []).map(String),
   }));
   return JSON.stringify({
-    core: ['remark-parse', 'remark-rehype', 'rehype-stringify'],
+    core: ['remark-parse', 'remark-rehype', 'rehype-scope-footnote-label', 'rehype-stringify'],
     plugins: pluginNames,
     sanitize: sanitizeShape,
   });
