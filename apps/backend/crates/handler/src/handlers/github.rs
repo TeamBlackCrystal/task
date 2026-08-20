@@ -237,17 +237,22 @@ pub async fn github_callback(
         }
     };
 
-    let access = app
-        .installation_access_token(installation.id)
-        .await
-        .map_err(AppError::Internal)?;
-    let repositories = app
-        .list_repositories(&access.token)
-        .await
-        .map_err(AppError::Internal)?;
-
+    // 着地点なので、GitHub 側の不調も設定画面へ戻して理由を出す。
     let redirect_to =
         settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+    let unavailable = |e: anyhow::Error| {
+        tracing::warn!(error = %e, "github callback: github api unavailable");
+        Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
+            .into_response()
+    };
+    let access = match app.installation_access_token(installation.id).await {
+        Ok(access) => access,
+        Err(e) => return Ok(unavailable(e)),
+    };
+    let repositories = match app.list_repositories(&access.token).await {
+        Ok(repositories) => repositories,
+        Err(e) => return Ok(unavailable(e)),
+    };
 
     // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
     // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
@@ -391,7 +396,8 @@ async fn upsert_integration(
 /// 型で受け取れるようになったら差し替える。
 fn is_installation_gone(error: &anyhow::Error) -> bool {
     let message = error.to_string();
-    message.contains(" 404 ") || message.contains(" 410 ")
+    // 403 はサスペンド。復帰にはインストールの操作が要るので「使えない」側に入れる。
+    message.contains(" 403 ") || message.contains(" 404 ") || message.contains(" 410 ")
 }
 
 /// 選択トークンを検証し、束縛された installation のリポジトリ一覧を取得する。

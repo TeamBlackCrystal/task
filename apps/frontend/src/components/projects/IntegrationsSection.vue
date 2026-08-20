@@ -32,7 +32,12 @@ const CALLBACK_ERRORS: Record<string, string> = {
     'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。',
   installation_rejected:
     'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。',
+  github_unavailable: 'GitHub と通信できませんでした。時間をおいて、もう一度お試しください。',
 };
+
+/** 設定セクションを切り替えるとこのコンポーネントは破棄されるので、
+ * URL から落とした選択トークンはタブ内に退避しておく（TTL は 10 分）。 */
+const SELECT_TOKEN_STORAGE_KEY = 'github-select-token';
 
 // callback が付けたクエリは、読んだらすぐ URL から落とす（下の clearCallbackQuery）。
 // pageContext は replaceState を反映しないため、消えたことが分かる window.location から読む。
@@ -96,8 +101,7 @@ async function loadRepositories() {
       // 4xx はトークンが無効（期限切れ・使用済み）。それ以外は一時障害なので
       // トークンを捨てず、再試行させる。
       if (response.status < 500) {
-        selectToken.value = null;
-        repositories.value = [];
+        forgetSelectToken();
         selectError.value = '選択の有効期限が切れました。もう一度「連携する」を押してください。';
         return;
       }
@@ -111,9 +115,21 @@ async function loadRepositories() {
   }
 }
 
+function stashKey() {
+  return `${SELECT_TOKEN_STORAGE_KEY}:${props.projectId}`;
+}
+
+function forgetSelectToken() {
+  selectToken.value = null;
+  repositories.value = [];
+  window.sessionStorage.removeItem(stashKey());
+}
+
 onMounted(() => {
   const search = new URLSearchParams(window.location.search);
-  selectToken.value = search.get('github_select');
+  const fromUrl = search.get('github_select');
+  selectToken.value = fromUrl ?? window.sessionStorage.getItem(stashKey());
+  if (fromUrl) window.sessionStorage.setItem(stashKey(), fromUrl);
   callbackError.value = CALLBACK_ERRORS[search.get('github_error') ?? ''] ?? null;
   clearCallbackQuery();
   void loadRepositories();
@@ -130,17 +146,18 @@ async function connectRepository(owner: string, name: string) {
       body: { select_token: token, repo_owner: owner, repo_name: name },
     });
     if (error) {
-      // 一覧を出したまま放置するとトークンが切れる。一時障害と区別して案内する。
       if (response.status < 500) {
-        selectToken.value = null;
-        repositories.value = [];
-        selectError.value = '選択の有効期限が切れました。もう一度「連携する」を押してください。';
+        // トークン切れか、その間にリポジトリが外れたか。一覧を取り直せばどちらか分かる
+        // （トークンが死んでいれば loadRepositories が期限切れとして畳む）。
+        await loadRepositories();
+        if (selectToken.value) {
+          selectError.value = 'このリポジトリは選べませんでした。別のものを選んでください。';
+        }
         return;
       }
       throw new Error('connect-failed');
     }
-    selectToken.value = null;
-    repositories.value = [];
+    forgetSelectToken();
     await queryClient.invalidateQueries({ queryKey: ['get', GITHUB_INTEGRATION_PATH] });
   } catch {
     selectError.value = 'リポジトリを連携できませんでした';

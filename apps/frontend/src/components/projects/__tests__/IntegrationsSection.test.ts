@@ -319,11 +319,26 @@ describe('IntegrationsSection', () => {
     expect(bodyButton('連携する')).toBeTruthy();
   });
 
-  it('連携が 4xx（トークン切れ）なら理由を出して選択 UI を畳む', async () => {
+  it('連携が 4xx でもトークンが生きていれば一覧を取り直して選び直させる', async () => {
     stubFetch({ connected: false, connectStatus: 400 });
     mountSection({ selectToken: 'select-token-1' });
     await flushPromises();
 
+    clickSelectButton(0);
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('このリポジトリは選べませんでした');
+    expect(document.body.textContent).toContain('koyori-app/koyori');
+  });
+
+  it('連携が 4xx でトークンも切れていたら期限切れとして畳む', async () => {
+    const state: MockState = { connected: false, connectStatus: 400 };
+    stubFetch(state);
+    mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+
+    // 連携要求と同時にトークンが失効した状況
+    state.repositoriesStatus = 400;
     clickSelectButton(0);
     await flushPromises();
 
@@ -370,7 +385,7 @@ describe('IntegrationsSection', () => {
     expect(bodyButton('連携する')).toBeTruthy();
   });
 
-  it('連携後にセクションを開き直しても、消費済みトークンで再取得しない', async () => {
+  it('連携後にセクションを開き直しても、消費済みトークンで再取得しない（退避も消す）', async () => {
     const fetchMock = stubFetch({ connected: false });
     const first = mountSection({ selectToken: 'select-token-1' });
     await flushPromises();
@@ -390,5 +405,22 @@ describe('IntegrationsSection', () => {
       .some((req) => req.url.includes('/github/repositories'));
     expect(refetched).toBe(false);
     expect(document.body.textContent).not.toContain('選択の有効期限が切れました');
+  });
+
+  it('セクションを開き直しても、選択中のトークンは失われない', async () => {
+    stubFetch({ connected: false });
+    const first = mountSection({ selectToken: 'select-token-1' });
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/docs');
+    first.unmount();
+
+    // 再マウント（セクション切り替え相当）。URL にトークンは無いが選択は続けられる
+    mountSection();
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/docs');
+
+    clickSelectButton(0);
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/koyori');
   });
 });
