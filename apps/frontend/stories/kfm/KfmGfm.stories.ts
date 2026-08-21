@@ -118,7 +118,9 @@ export const TaskList: Story = {
     await expect(canvasElement.querySelectorAll('input[type="checkbox"]')).toHaveLength(5);
     // DOM 構造だけでは CSS 剥がれの平坦表示が「正常」として VRT baseline に焼き付く
     // (task PR#583)。CSS サイドカーの実効を computed で固定する:
-    // 最上位は bullet 無し・字下げ 0 (checkbox がマーカー役)、入れ子は字下げ > 0
+    // 親 ul はあえて disc のまま、子 li だけ none にする。これにより子ルールを
+    // 消すと継承した disc が復活するため、親ルール由来の none で空振りしない。
+    // 親ルール削除は字下げ 0 の監視、子ルール削除は li の none の監視で落とす。
     const topList = canvasElement.querySelector(`.${KFM_CONTENT_CLASS} > ul.contains-task-list`);
     const nestedList = canvasElement.querySelector('.task-list-item > ul.contains-task-list');
     const taskItem = canvasElement.querySelector('.task-list-item');
@@ -127,7 +129,7 @@ export const TaskList: Story = {
     await expect(taskItem).not.toBeNull();
     const topStyle = topList ? getComputedStyle(topList) : null;
     const nestedStyle = nestedList ? getComputedStyle(nestedList) : null;
-    await expect(topStyle?.listStyleType).toBe('none');
+    await expect(topStyle?.listStyleType).toBe('disc');
     await expect(topStyle?.paddingLeft).toBe('0px');
     await expect(Number.parseFloat(nestedStyle?.paddingLeft ?? '0')).toBeGreaterThan(0);
     await expect(taskItem ? getComputedStyle(taskItem).listStyleType : '').toBe('none');

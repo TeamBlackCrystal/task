@@ -6,11 +6,11 @@ import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REMARK_CSS_PATHS = fs.globSync(path.join(__dirname, '../remark-*/style.css'));
-// remark-koyori-alerts は自身が emit する .kfm-alert 名前空間を直接指すため対象外。
-// bare 要素を描画するプラグインだけ、器クラスの scope 契約をここで宣言する。
-const CONTAINER_SCOPED_REMARK_PLUGINS = new Set(['remark-gfm']);
-const CONTAINER_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter((cssPath) =>
-  CONTAINER_SCOPED_REMARK_PLUGINS.has(path.basename(path.dirname(cssPath))),
+// 自身が emit する名前空間を直接指す CSS だけを除外する。
+// 新しい remark-* CSS は既定で器 scope の検査対象になり、未登録でも素通りしない。
+const NAMESPACED_REMARK_PLUGINS = new Set(['remark-koyori-alerts']);
+const CONTAINER_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter(
+  (cssPath) => !NAMESPACED_REMARK_PLUGINS.has(path.basename(path.dirname(cssPath))),
 );
 
 /**
@@ -88,9 +88,11 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     const discoveredPlugins = REMARK_CSS_PATHS.map((cssPath) =>
       path.basename(path.dirname(cssPath)),
     );
-    for (const plugin of CONTAINER_SCOPED_REMARK_PLUGINS) {
-      expect(discoveredPlugins).toContain(plugin);
-    }
+    const containerScopedPlugins = CONTAINER_SCOPED_CSS_PATHS.map((cssPath) =>
+      path.basename(path.dirname(cssPath)),
+    );
+    const classifiedPlugins = [...NAMESPACED_REMARK_PLUGINS, ...containerScopedPlugins];
+    expect(classifiedPlugins.sort()).toEqual(discoveredPlugins.sort());
 
     const selectors = CONTAINER_SCOPED_CSS_PATHS.flatMap((cssPath) =>
       extractSelectors(fs.readFileSync(cssPath, 'utf8')).map((selector) => ({
