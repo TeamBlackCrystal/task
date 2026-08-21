@@ -6,6 +6,11 @@ import flowchartHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-flowchart.h
 import noneHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-none.html?raw';
 import sequenceHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-sequence.html?raw';
 import stateHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-state.html?raw';
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
+// CSS サイドカー: レンダラは CSS を import しない契約のため、消費側 (= story) が明示 import
+// (器 .kfm-content のスタイルは GFM サイドカー側 — 他 story と同じ二枚組＋mermaid 独自分)
+import '@/lib/remark-gfm/style.css';
+import '@/lib/rehype-starry-night/style.css';
 import '@/lib/remark-kfm-mermaid/style.css';
 // 本番では +client.ts が行う client 登録を story でも同じ入口で行う (二重 define は registry 側で防止)
 import { registerKfmCustomElements } from '@/lib/markup-renderer/_client-registry';
@@ -24,7 +29,7 @@ type KfmStoryArgs = { html: string };
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
-  template: '<div class="kfm-story" v-html="args.html" />',
+  template: `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" />`,
 });
 
 const meta = {
@@ -144,8 +149,8 @@ export const DarkTheme: Story = {
     setup: () => ({ args }),
     template:
       '<div class="grid gap-4">' +
-      '<div class="p-4"><div class="kfm-story kfm-story-light" v-html="args.html" /></div>' +
-      '<div class="dark bg-background text-foreground p-4"><div class="kfm-story kfm-story-dark" v-html="args.html" /></div>' +
+      `<div class="p-4"><div class="${KFM_CONTENT_CLASS} kfm-story-light" v-html="args.html" /></div>` +
+      `<div class="dark bg-background text-foreground p-4"><div class="${KFM_CONTENT_CLASS} kfm-story-dark" v-html="args.html" /></div>` +
       '</div>',
   }),
   parameters: {
