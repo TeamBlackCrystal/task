@@ -112,6 +112,8 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
   scope をキーに載せることは安全条件の一部——落とすと `clobberPrefix` の違う HTML を
   取り違え、別断片の脚注 id が付いた HTML を返す。
   fingerprint は plugin 列と sanitize スキーマから導出し、構成変更で旧 HTML が自動失効する
+- fingerprint が観測する非配列 plugin は `plugin.name` のみで、closure に閉じた設定値は見えない。
+  factory に options を追加する場合は、設定の直列化とキャッシュキー分離を同じ変更で実装する
 - `lru-cache` は `max` ＋ `maxSize` ＋ `sizeCalculation`（UTF-8 バイト長）で有界
 - L2（ブラウザ永続）は不採用。必要性を計測してから設計する
 

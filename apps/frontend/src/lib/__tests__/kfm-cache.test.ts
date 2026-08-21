@@ -91,6 +91,11 @@ describe('buildCacheKey (fingerprint / profile / scope / config 分離)', () => 
 });
 
 describe('pipeline fingerprint (設定変更で旧エントリを拾わない)', () => {
+  it('starry-night factory は fingerprint が観測できない options 口を持たない', () => {
+    // 引数を足すなら fingerprint 直列化とキー分離試験を同じ変更で追加すること。
+    expect(createRehypeStarryNight.length).toBe(0);
+  });
+
   it('sanitize スキーマが違う renderer は同一本文でも別キャッシュエントリになる', async () => {
     const shared = new LRUCache<string, string>({ max: 100 });
     const renderA = createRenderer({
