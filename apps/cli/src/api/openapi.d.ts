@@ -6275,6 +6275,11 @@ export interface operations {
                 state: string;
                 /** @description GitHub が送る操作種別。"request" はオーナー承認待ちであり連携未完了。 */
                 setup_action?: string;
+                /**
+                 * @description インストール時のユーザー認可で GitHub が付ける認可コード。
+                 *     これを交換して得たユーザーアクセストークンで、installation の所有者を確認する。
+                 */
+                code?: string;
             };
             header?: never;
             path?: never;
@@ -9582,10 +9587,10 @@ export interface operations {
     };
     list_github_repositories: {
         parameters: {
-            query: {
-                select_token: string;
+            query?: never;
+            header: {
+                "X-Github-Select-Token": string;
             };
-            header?: never;
             path: {
                 tenant_id: string;
                 project_id: string;

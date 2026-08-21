@@ -207,6 +207,8 @@ pub fn load_github_test_env() {
         std::env::set_var("GITHUB_APP_ID", "1");
         std::env::set_var("GITHUB_APP_WEBHOOK_SECRET", "webhook-secret");
         std::env::set_var("GITHUB_APP_NAME", "task-app");
+        std::env::set_var("GITHUB_APP_CLIENT_ID", "Iv1.testclientid");
+        std::env::set_var("GITHUB_APP_CLIENT_SECRET", "test-client-secret");
         std::env::set_var(
             "GITHUB_TOKEN_ENCRYPTION_KEY",
             "01234567890123456789012345678901",

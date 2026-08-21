@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
 import { computed, onMounted, ref } from 'vue';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,8 @@ const CALLBACK_ERRORS: Record<string, string> = {
     'インストールにリポジトリが 1 件も含まれていません。GitHub 側でリポジトリを追加してから、もう一度お試しください。',
   installation_rejected:
     'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。',
+  installation_forbidden:
+    'このインストールはあなたのアカウントからは操作できません。ご自身がアクセスできるアカウントまたは Organization に、もう一度インストールしてください。',
   github_unavailable: 'GitHub と通信できませんでした。時間をおいて、もう一度お試しください。',
 };
 
@@ -45,6 +48,7 @@ const SELECT_TOKEN_STORAGE_KEY = 'github-select-token';
 // window.location から読む。
 const selectToken = ref<string | null>(null);
 const repositories = ref<{ owner: string; name: string }[]>([]);
+const repositoryFilter = ref('');
 const callbackError = ref<string | null>(null);
 const selectError = ref<string | null>(null);
 const selectPending = ref(false);
@@ -105,10 +109,12 @@ async function loadRepositories() {
   selectError.value = null;
   selectPending.value = true;
   try {
+    // トークンはクエリではなくヘッダーに載せる。クエリだと backend とその手前の
+    // プロキシのアクセスログに残り、フラグメントで渡した手当てが台無しになる。
     const { data, error, response } = await fetchClient.GET(GITHUB_REPOSITORIES_PATH, {
       params: {
         path: { tenant_id: props.tenantId, project_id: props.projectId },
-        query: { select_token: token },
+        header: { 'X-Github-Select-Token': token },
       },
     });
     if (error || !data) {
@@ -138,6 +144,7 @@ function stashKey() {
 function forgetSelectToken() {
   selectToken.value = null;
   repositories.value = [];
+  repositoryFilter.value = '';
   window.sessionStorage.removeItem(stashKey());
 }
 
@@ -149,6 +156,15 @@ onMounted(() => {
   callbackError.value = CALLBACK_ERRORS[search.get('github_error') ?? ''] ?? null;
   clearCallbackQuery();
   void loadRepositories();
+});
+
+/** 数百リポジトリの org でも目的のものへ辿り着けるよう、owner/name の部分一致で絞る。 */
+const filteredRepositories = computed(() => {
+  const keyword = repositoryFilter.value.trim().toLowerCase();
+  if (!keyword) return repositories.value;
+  return repositories.value.filter((repo) =>
+    `${repo.owner}/${repo.name}`.toLowerCase().includes(keyword),
+  );
 });
 
 async function connectRepository(owner: string, name: string) {
@@ -292,27 +308,44 @@ async function confirmDisconnect() {
         >
           {{ selectPending ? 'リポジトリを読み込み中…' : '選択できるリポジトリがありません' }}
         </p>
-        <ul v-else class="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto">
-          <li
-            v-for="repo in repositories"
-            :key="`${repo.owner}/${repo.name}`"
-            class="flex items-center gap-3 rounded-md border p-2.5"
+        <template v-else-if="repositories.length">
+          <!-- 数百リポジトリの org では全件を並べても選べないので、手元で絞り込む -->
+          <Input
+            v-model="repositoryFilter"
+            class="mt-3"
+            type="search"
+            aria-label="リポジトリを絞り込む"
+            placeholder="owner/name で絞り込む"
+          />
+          <p
+            v-if="!filteredRepositories.length"
+            role="status"
+            class="mt-3 text-sm text-muted-foreground"
           >
-            <span class="min-w-0 flex-1 truncate font-mono text-sm"
-              >{{ repo.owner }}/{{ repo.name }}</span
+            「{{ repositoryFilter }}」に一致するリポジトリはありません
+          </p>
+          <ul v-else class="mt-3 flex max-h-72 flex-col gap-1.5 overflow-y-auto">
+            <li
+              v-for="repo in filteredRepositories"
+              :key="`${repo.owner}/${repo.name}`"
+              class="flex items-center gap-3 rounded-md border p-2.5"
             >
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              class="shrink-0"
-              :disabled="selectPending"
-              @click="connectRepository(repo.owner, repo.name)"
-            >
-              選択
-            </Button>
-          </li>
-        </ul>
+              <span class="min-w-0 flex-1 truncate font-mono text-sm"
+                >{{ repo.owner }}/{{ repo.name }}</span
+              >
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                class="shrink-0"
+                :disabled="selectPending"
+                @click="connectRepository(repo.owner, repo.name)"
+              >
+                選択
+              </Button>
+            </li>
+          </ul>
+        </template>
         <div v-if="selectError" class="mt-3 flex items-center gap-3">
           <p role="alert" class="text-sm text-destructive">{{ selectError }}</p>
           <Button

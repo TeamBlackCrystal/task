@@ -10,6 +10,10 @@ pub struct GithubCallbackQuery {
     /// GitHub が送る操作種別。"request" はオーナー承認待ちであり連携未完了。
     #[serde(default)]
     pub setup_action: Option<String>,
+    /// インストール時のユーザー認可で GitHub が付ける認可コード。
+    /// これを交換して得たユーザーアクセストークンで、installation の所有者を確認する。
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -27,13 +31,6 @@ pub struct GithubIntegrationResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GithubInstallUrlResponse {
     pub url: String,
-}
-
-/// リポジトリ選択トークン。callback がリダイレクト URL に載せて frontend へ渡す。
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct GithubRepositoriesQuery {
-    pub select_token: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -4268,6 +4268,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "インストール時のユーザー認可で GitHub が付ける認可コード。\nこれを交換して得たユーザーアクセストークンで、installation の所有者を確認する。",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9254,8 +9263,8 @@
             }
           },
           {
-            "name": "select_token",
-            "in": "query",
+            "name": "X-Github-Select-Token",
+            "in": "header",
             "required": true,
             "schema": {
               "type": "string"

@@ -114,6 +114,62 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .expect(1..)
         .mount(server)
         .await;
+
+    // インストール時のユーザー認可。code を交換してユーザーアクセストークンにし、
+    // そのユーザーが見えるインストールを返す。code は `user-<installation_id>` 形式で、
+    // 「その installation を入れた本人」を表す（別 ID の code を使えば他人になる）。
+    Mock::given(method("POST"))
+        .and(path("/login/oauth/access_token"))
+        .respond_with(|req: &wiremock::Request| {
+            let code = url::form_urlencoded::parse(&req.body)
+                .find(|(key, _)| key == "code")
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or_default();
+            match user_code_installation_id(&code) {
+                Some(id) => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": format!("ghu_{id}"),
+                    "token_type": "bearer",
+                    "scope": ""
+                })),
+                // GitHub は無効な code でも 200 を返し、error フィールドで伝えてくる。
+                None => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "error": "bad_verification_code",
+                    "error_description": "The code passed is incorrect or expired."
+                })),
+            }
+        })
+        .mount(server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/user/installations"))
+        .respond_with(|req: &wiremock::Request| {
+            let installations: Vec<serde_json::Value> = req
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer ghu_"))
+                .and_then(|id| id.parse::<i64>().ok())
+                .map(|id| serde_json::json!({ "id": id }))
+                .into_iter()
+                .collect();
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": installations.len(),
+                "installations": installations,
+            }))
+        })
+        .mount(server)
+        .await;
+}
+
+/// テスト用の認可コードが表すインストール（`user-<installation_id>`）。
+fn user_code_installation_id(code: &str) -> Option<i64> {
+    code.strip_prefix("user-").and_then(|id| id.parse().ok())
+}
+
+/// そのインストールを入れた本人であることを示す認可コード。
+fn owner_code(installation_id: i64) -> String {
+    format!("user-{installation_id}")
 }
 
 /// この値以上の installation id は「複数リポジトリが見えるインストール」として扱う。
@@ -149,11 +205,26 @@ fn unique_old_installation_id() -> i64 {
     OLD_ID_BASE + (Uuid::new_v4().as_u128() % 900_000_000_000) as i64
 }
 
-fn repositories_path(tp: &TestTenantProject, select_token: &str) -> String {
+fn repositories_path(tp: &TestTenantProject) -> String {
     format!(
-        "/v1/tenants/{}/projects/{}/github/repositories?select_token={select_token}",
+        "/v1/tenants/{}/projects/{}/github/repositories",
         tp.tenant_id, tp.project_id
     )
+}
+
+/// 選択トークンはクエリではなくヘッダーで送る
+/// （クエリだと backend とその手前のプロキシのアクセスログに残る）。
+async fn get_repositories(
+    app: &TestApp,
+    tp: &TestTenantProject,
+    select_token: &str,
+) -> reqwest::Response {
+    app.session_client()
+        .get(format!("{}{}", app.base_url(), repositories_path(tp)))
+        .header("X-Github-Select-Token", select_token)
+        .send()
+        .await
+        .expect("repositories request")
 }
 
 fn connect_path(tp: &TestTenantProject) -> String {
@@ -183,7 +254,17 @@ fn install_path(tp: &TestTenantProject) -> String {
     )
 }
 
+/// 既定では「本人が入れたインストール」の認可コード付きで叩く。
 fn callback_path(state: &str, installation_id: i64) -> String {
+    callback_path_with_code(state, installation_id, &owner_code(installation_id))
+}
+
+fn callback_path_with_code(state: &str, installation_id: i64, code: &str) -> String {
+    format!("/v1/github/callback?state={state}&installation_id={installation_id}&code={code}")
+}
+
+/// ユーザー認可を通っていない（App 設定が古い・直接叩かれた）ときの callback。
+fn callback_path_without_code(state: &str, installation_id: i64) -> String {
     format!("/v1/github/callback?state={state}&installation_id={installation_id}")
 }
 
@@ -228,6 +309,11 @@ async fn github_http_integration_suite() {
     // serial アトリビュートにより他テストとの並列実行を防いでいる。
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
+    }
+    // ユーザー認可（code 交換）だけは api.github.com ではなく github.com 側にある。
+    // SAFETY: 上と同じ理由（シングルスレッドの初期化前 + serial）。
+    unsafe {
+        std::env::set_var("GITHUB_OAUTH_BASE_URL", mock_server.uri());
     }
     mount_github_api_mocks(&mock_server).await;
 
@@ -457,9 +543,7 @@ async fn github_http_integration_suite() {
         assert!(pending.is_none(), "integration must wait for selection");
 
         // 一覧が取れる（トークンは消費されない）
-        let list = app
-            .get_with_session(&repositories_path(&tp, &select_token))
-            .await;
+        let list = get_repositories(&app, &tp, &select_token).await;
         assert_eq!(list.status(), StatusCode::OK);
         let body: serde_json::Value = list.json().await.expect("repositories json");
         assert_eq!(
@@ -469,35 +553,45 @@ async fn github_http_integration_suite() {
         );
 
         // 知らない選択トークンは 400（フロントの「期限切れ」判定が 4xx に依存している）
-        let unknown = app
-            .get_with_session(&repositories_path(&tp, "no-such-select-token"))
-            .await;
+        let unknown = get_repositories(&app, &tp, "no-such-select-token").await;
         assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
 
-        // 別ユーザーは同じ選択トークンを使えない（403）
-        let owner_email = user.email.clone();
-        let owner_password = user.password.clone();
-        app.reset_session_client();
-        let other = app.insert_user(false, false).await;
-        app.login_session(&other.email, &other.password).await;
-        let stolen_list = app
-            .get_with_session(&repositories_path(&tp, &select_token))
-            .await;
+        // ヘッダーが無いのも 400（クエリに載せていた頃の呼び方は通らない）
+        let missing_header = app.get_with_session(&repositories_path(&tp)).await;
+        assert_eq!(missing_header.status(), StatusCode::BAD_REQUEST);
+
+        // 選択トークンの user 束縛を突く（403）。
+        // 別ユーザーのセッションで叩くと require_tenant_owner が先に 403 を返すため、
+        // resolve_select_token の user 判定まで到達せず、この検査を消しても緑のままになる。
+        // そこで「user_id だけ別人のトークン」をオーナー本人のセッションで使う。
+        let outsider = app.insert_user(false, false).await;
+        let outsider_token = github_oauth_state::new_state_token();
+        github_oauth_state::store_select_token(
+            &app.state.redis_client,
+            &outsider_token,
+            &github_oauth_state::RepoSelectPayload {
+                tenant_id: tp.tenant_id,
+                project_id: tp.project_id,
+                user_id: outsider.id,
+                installation_id,
+            },
+        )
+        .await
+        .expect("store select token");
+        let stolen_list = get_repositories(&app, &tp, &outsider_token).await;
         assert_eq!(stolen_list.status(), StatusCode::FORBIDDEN);
         let stolen_connect = app
             .post_json_with_session(
                 &connect_path(&tp),
                 serde_json::json!({
-                    "select_token": select_token,
+                    "select_token": outsider_token,
                     "repo_owner": "acme",
                     "repo_name": "repo-1"
                 }),
             )
             .await;
         assert_eq!(stolen_connect.status(), StatusCode::FORBIDDEN);
-        app.cleanup_user(other.id).await;
-        app.reset_session_client();
-        app.login_session(&owner_email, &owner_password).await;
+        app.cleanup_user(outsider.id).await;
 
         // 同じユーザーでも、トークンに束縛されていない別プロジェクトには使えない（400）
         let other_project = app.insert_tenant_project(user.id).await;
@@ -925,6 +1019,108 @@ async fn github_http_integration_suite() {
         // 最後の 1 件の解除では GitHub 側も消す
         let delete_second = app.delete_with_session(&integration_path(&second)).await;
         assert_eq!(delete_second.status(), StatusCode::NO_CONTENT);
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 12. callback は installation の所有者を確認する（#595 レビュー指摘）
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        let redirect_error = |response: reqwest::Response| -> String {
+            let status = response.status();
+            assert!(
+                status == StatusCode::FOUND || status == StatusCode::TEMPORARY_REDIRECT,
+                "callback should redirect, got {status}"
+            );
+            response
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+                .expect("location header")
+        };
+
+        // 他人が入れたインストールの ID を差し込む。認可コードが指すのは別の
+        // インストールなので、GitHub は「このユーザーからは見えない」と答える。
+        // 修正前は鮮度チェックだけだったため、ここを通ってリポジトリ名の一覧が読めた。
+        let victim_installation_id = unique_multi_repo_installation_id();
+        let attacker_installation_id = unique_multi_repo_installation_id();
+        let state_token = get_install_state(&app, &tp).await;
+        let stolen = app
+            .get_with_session(&callback_path_with_code(
+                &state_token,
+                victim_installation_id,
+                &owner_code(attacker_installation_id),
+            ))
+            .await;
+        let location = redirect_error(stolen);
+        assert!(
+            location.contains("github_error=installation_forbidden"),
+            "unexpected redirect location: {location}"
+        );
+        // 選択トークンも出さない（一覧すら開かせない）
+        assert!(!location.contains("github_select="));
+
+        // 無効・期限切れの認可コードも拒否
+        let invalid_state = get_install_state(&app, &tp).await;
+        let invalid = app
+            .get_with_session(&callback_path_with_code(
+                &invalid_state,
+                unique_multi_repo_installation_id(),
+                "not-a-valid-code",
+            ))
+            .await;
+        let invalid_location = redirect_error(invalid);
+        assert!(
+            invalid_location.contains("github_error=installation_forbidden"),
+            "unexpected redirect location: {invalid_location}"
+        );
+
+        // 認可コードが付いていない callback も拒否（所有者を確かめる手段が無い）
+        let missing_state = get_install_state(&app, &tp).await;
+        let missing = app
+            .get_with_session(&callback_path_without_code(
+                &missing_state,
+                unique_installation_id(),
+            ))
+            .await;
+        let missing_location = redirect_error(missing);
+        assert!(
+            missing_location.contains("github_error=installation_forbidden"),
+            "unexpected redirect location: {missing_location}"
+        );
+
+        // どの経路でも連携レコードは作られない
+        assert!(
+            github_integrations::Entity::find()
+                .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+                .one(&app.state.db)
+                .await
+                .expect("query integration")
+                .is_none()
+        );
+
+        // 対照: 本人の認可コードなら、これまでどおり連携できる（過剰拒否でない）
+        let ok_state = get_install_state(&app, &tp).await;
+        let ok = app
+            .get_with_session(&callback_path(&ok_state, unique_installation_id()))
+            .await;
+        let ok_location = redirect_error(ok);
+        assert!(
+            !ok_location.contains("github_error="),
+            "owner callback must not be rejected: {ok_location}"
+        );
+        let row = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("integration row");
+        assert_eq!(row.repo_name, "backend");
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();

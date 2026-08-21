@@ -200,6 +200,50 @@ pub async fn github_callback(
     require_project_in_tenant(&state, payload.tenant_id, payload.project_id).await?;
 
     let app = github_app(&state.http_client, github);
+    // GitHub からの着地点なので、以降の失敗は素のエラーではなく設定画面へ理由付きで戻す。
+    let redirect_to =
+        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+
+    // 所有者確認。installation_id はクエリで差し込めるので、これが無いと
+    // 「他人が入れたインストール」をそのまま自分のプロジェクトへ紐付けられる。
+    // インストール時のユーザー認可で GitHub が付ける code を交換し、そのユーザーが
+    // 見えるインストールに当該 ID が含まれることを GitHub 自身に答えさせる。
+    // User インストールでも Organization インストールでも同じ経路で確かめられる。
+    let Some(code) = query.code.as_deref() else {
+        tracing::warn!(
+            installation_id = query.installation_id,
+            "github callback: no authorization code; user authorization is required on the app"
+        );
+        return Ok(
+            Redirect::temporary(&format!("{redirect_to}&github_error=installation_forbidden"))
+                .into_response(),
+        );
+    };
+    match app
+        .verify_installation_access(code, query.installation_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(
+                installation_id = query.installation_id,
+                "github callback: installation does not belong to the authenticated user"
+            );
+            return Ok(
+                Redirect::temporary(&format!("{redirect_to}&github_error=installation_forbidden"))
+                    .into_response(),
+            );
+        }
+        // 拒否ではなく GitHub 側の不調。アンインストールを促さないよう理由を分ける。
+        Err(e) => {
+            tracing::warn!(error = %e, "github callback: installation ownership check failed");
+            return Ok(
+                Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
+                    .into_response(),
+            );
+        }
+    }
+
     // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
     // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
     //
@@ -253,9 +297,6 @@ pub async fn github_callback(
             } else {
                 "github_unavailable"
             };
-            let redirect_to =
-                settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id)
-                    .await?;
             return Ok(
                 Redirect::temporary(&format!("{redirect_to}&github_error={reason}"))
                     .into_response(),
@@ -263,9 +304,6 @@ pub async fn github_callback(
         }
     };
 
-    // 着地点なので、GitHub 側の不調も設定画面へ戻して理由を出す。
-    let redirect_to =
-        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
     // 検証は通っているので、ここで落ちても戻れるように控えておく
     // （控えが無いと、鮮度が切れたあと入れ直すまで連携できなくなる）。
     let unavailable = async |e: anyhow::Error| -> Result<Response, AppError> {
@@ -518,6 +556,22 @@ async fn resolve_select_token(
     Ok((payload, repositories, access))
 }
 
+/// 選択トークンを載せるリクエストヘッダー。
+///
+/// callback はトークンをクエリではなくフラグメントで返している（クエリだと
+/// frontend / CDN のアクセスログと Referer に残るため）。ここでクエリに載せ直すと
+/// backend とその手前のプロキシのアクセスログに残り、その手当てが台無しになるので、
+/// ヘッダーで受け取る。
+const SELECT_TOKEN_HEADER: &str = "X-Github-Select-Token";
+
+fn select_token_from_headers(headers: &HeaderMap) -> Result<&str, AppError> {
+    headers
+        .get(SELECT_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .ok_or(AppError::BadRequest)
+}
+
 #[axum::debug_handler]
 #[utoipa::path(
     get,
@@ -527,7 +581,7 @@ async fn resolve_select_token(
     params(
         ("tenant_id" = Uuid, Path),
         ("project_id" = Uuid, Path),
-        GithubRepositoriesQuery,
+        ("X-Github-Select-Token" = String, Header),
     ),
     responses((status = 200, body = GithubRepositoriesResponse), CrudErrors)
 )]
@@ -535,15 +589,16 @@ pub async fn list_github_repositories(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
-    Query(query): Query<GithubRepositoriesQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<GithubRepositoriesResponse>, AppError> {
     state.settings.require_github_app()?;
     auth.require_session()?;
     require_tenant_owner(&state, tenant_id, auth.user_id).await?;
     require_project_in_tenant(&state, tenant_id, project_id).await?;
 
+    let select_token = select_token_from_headers(&headers)?;
     // 一覧は何度でも開けるようトークンを消費しない（確定は POST /connect 側）。
-    let stored = install_state::peek_select_token(&state.redis_client, &query.select_token)
+    let stored = install_state::peek_select_token(&state.redis_client, select_token)
         .await
         .map_err(AppError::Internal)?;
     let (_, repositories, _) =

@@ -68,9 +68,11 @@ services:
       # 管理者ゼロのときだけ、このメールのユーザーを管理者に昇格する（初回セットアップ用）
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL}
       # GitHub App 連携（任意）。GITHUB_APP_ID が空なら連携機能ごと無効になる。
-      # 有効にするときは 5 つすべて設定する。private key は改行を \n で表した 1 行で入れる
+      # 有効にするときは 7 つすべて設定する。private key は改行を \n で表した 1 行で入れる
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_CLIENT_SECRET: ${GITHUB_APP_CLIENT_SECRET:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
       GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-}
