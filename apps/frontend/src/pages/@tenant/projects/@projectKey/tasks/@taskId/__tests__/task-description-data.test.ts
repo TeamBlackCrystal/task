@@ -134,9 +134,9 @@ describe('task description +data', () => {
     expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
   });
 
-  it('全 GET に 3 秒の AbortSignal.timeout を付け、タイムアウトは null へ倒す', async () => {
-    // 値 (3000ms) の機械検証: fetch へ渡る signal が AbortSignal.timeout(3000) の戻りであること
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+  it('3 連続 GET は 1 本の SSR 予算 (3 秒) signal を共有する', async () => {
+    const budgetSignal = AbortSignal.timeout(999_999);
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(budgetSignal);
     const signals: unknown[] = [];
     vi.stubGlobal(
       'fetch',
@@ -146,21 +146,57 @@ describe('task description +data', () => {
         if (url.endsWith('/v1/tenants')) {
           return jsonResponse([{ id: TENANT_UUID, display_id: 'acme' }]);
         }
-        // 2 本目以降: 実際のタイムアウト時と同じ DOMException で打ち切られたことにする
+        if (url.endsWith(`/v1/tenants/${TENANT_UUID}/projects`)) {
+          return jsonResponse([{ id: PROJECT_UUID, key: 'ENG' }]);
+        }
+        if (url.endsWith(`/v1/tenants/${TENANT_UUID}/projects/${PROJECT_UUID}/tasks/ENG-42`)) {
+          return jsonResponse({ id: TASK_UUID, description: DESCRIPTION });
+        }
+        return jsonResponse({}, 404);
+      }),
+    );
+
+    await data(pageContext());
+
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(3000);
+    expect(signals).toHaveLength(3);
+    for (const signal of signals) {
+      expect(signal).toBe(budgetSignal);
+    }
+    timeoutSpy.mockRestore();
+  });
+
+  it('SSR 予算超過 (タイムアウト) は null へ倒す', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.endsWith('/v1/tenants')) {
+          return jsonResponse([{ id: TENANT_UUID, display_id: 'acme' }]);
+        }
         throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
       }),
     );
 
     const result = await data(pageContext());
-
-    expect(timeoutSpy).toHaveBeenCalledWith(3000);
-    expect(signals.length).toBeGreaterThan(0);
-    for (const signal of signals) {
-      expect(signal).toBeInstanceOf(AbortSignal);
-    }
-    // タイムアウトは throw させず、取得失敗と同じフォールバックへ倒す
     expect(result).toEqual({ descriptionHtml: null, descriptionSource: null });
-    timeoutSpy.mockRestore();
+  });
+
+  it('fetch 失敗は console.error で記録し null へ倒す', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    expect(await data(pageContext())).toEqual({ descriptionHtml: null, descriptionSource: null });
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[task-description-data] SSR data failed',
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 
   it('本文長上限: 65536 文字ちょうどは描画し、超過は null (プレーン表示) へ倒す', async () => {

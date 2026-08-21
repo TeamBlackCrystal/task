@@ -39,14 +39,19 @@ const EMPTY: Data = { descriptionHtml: null, descriptionSource: null };
 // 65536 文字に合わせる (KFM Phase 1 = github profile の複製レンダラ)。
 const MAX_DESCRIPTION_LENGTH = 65_536;
 
-// 遅い backend で SSR 全体を止めない: 各 GET は 3 秒で打ち切り、打ち切りは
-// 取得失敗と同じ扱いで null (プレーンテキスト表示フォールバック) へ倒す。
-const FETCH_TIMEOUT_MS = 3000;
+// 遅い backend で SSR 全体を止めない: 3 連続 GET で共有する 1 本の予算。
+// 各 GET に個別 timeout を付けると直列で合算 (~9s) になるため、
+// data() 開始時点から SSR_FETCH_BUDGET_MS の単一 AbortSignal を全 fetch へ渡す。
+const SSR_FETCH_BUDGET_MS = 3000;
 
-async function fetchJson<T>(url: string, cookie: string | undefined): Promise<T | null> {
+async function fetchJson<T>(
+  url: string,
+  cookie: string | undefined,
+  signal: AbortSignal,
+): Promise<T | null> {
   const response = await fetch(url, {
     headers: cookie ? { cookie } : undefined,
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal,
   });
   if (!response.ok) return null;
   return (await response.json()) as T;
@@ -73,17 +78,22 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
   // 3 連続 GET が要るのは、URL が表示用 id (tenant display_id / project key / seq key)
   // しか持たない一方で backend の各エンドポイントが UUID 階層でしか引けないため:
   // display_id → tenant UUID → project UUID → task の順にしか解決できない。
-  // 各 GET は FETCH_TIMEOUT_MS で有界なので、直列でも SSR の待ちは最悪 ~9 秒で打ち切られ、
-  // タイムアウト後はプレーン表示へ倒れる (KFM 表示は次の reload で回復する)。
+  // SSR_FETCH_BUDGET_MS の単一 signal を全 GET で共有するので、SSR 全体の待ちは
+  // 最悪 SSR_FETCH_BUDGET_MS で打ち切られ、タイムアウト後はプレーン表示へ倒れる
+  // (KFM 表示は次の reload で回復する)。
   // 短縮するには backend に表示用 id で直接引ける口が要る (別途検討)。
+  const fetchBudget = AbortSignal.timeout(SSR_FETCH_BUDGET_MS);
   try {
-    const tenants = toTenantList(await fetchJson<unknown>(`${API_BASE}/v1/tenants`, cookie));
+    const tenants = toTenantList(
+      await fetchJson<unknown>(`${API_BASE}/v1/tenants`, cookie, fetchBudget),
+    );
     const tenantId = tenants.find((tenant) => tenant.display_id === tenantDisplayId)?.id;
     if (!tenantId) return EMPTY;
 
     const projects = await fetchJson<ProjectResponse[]>(
       `${API_BASE}/v1/tenants/${tenantId}/projects`,
       cookie,
+      fetchBudget,
     );
     const projectId = projects?.find((project) => project.key === projectKey)?.id;
     if (!projectId) return EMPTY;
@@ -91,6 +101,7 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
     const task = await fetchJson<TaskDetail>(
       `${API_BASE}/v1/tenants/${tenantId}/projects/${projectId}/tasks/${encodeURIComponent(taskId)}`,
       cookie,
+      fetchBudget,
     );
     if (!task?.description) return EMPTY;
     if (task.description.length > MAX_DESCRIPTION_LENGTH) return EMPTY;
@@ -101,7 +112,8 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
       descriptionHtml: await renderDescription(task.description, { scope: `task-${task.id}` }),
       descriptionSource: task.description,
     };
-  } catch {
+  } catch (error) {
+    console.error('[task-description-data] SSR data failed', error);
     return EMPTY;
   }
 }
