@@ -5,11 +5,11 @@ exclude = ["migration"]
 [workspace.dependencies]
 anyhow = "1.0.102"
 # OAuth / Git ホスティング連携の土台。別リポジトリへ切り出して他プロジェクトと共有する。
-auth-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "15a0b47f1ef449d0ff732d37993a3d3bf100a6ee" }
-auth-core-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "15a0b47f1ef449d0ff732d37993a3d3bf100a6ee" }
-auth-core-gitlab = { git = "https://github.com/koyori-app/auth-core.git", rev = "15a0b47f1ef449d0ff732d37993a3d3bf100a6ee" }
-forge-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "15a0b47f1ef449d0ff732d37993a3d3bf100a6ee" }
-forge-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "15a0b47f1ef449d0ff732d37993a3d3bf100a6ee" }
+auth-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "5d527dcf7e833e2980212560992d8f49efcbdda5" }
+auth-core-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "5d527dcf7e833e2980212560992d8f49efcbdda5" }
+auth-core-gitlab = { git = "https://github.com/koyori-app/auth-core.git", rev = "5d527dcf7e833e2980212560992d8f49efcbdda5" }
+forge-core = { git = "https://github.com/koyori-app/auth-core.git", rev = "5d527dcf7e833e2980212560992d8f49efcbdda5" }
+forge-github = { git = "https://github.com/koyori-app/auth-core.git", rev = "5d527dcf7e833e2980212560992d8f49efcbdda5" }
 axum = { version = "0.8.8", features = ["macros"] }
 config = "0.15.22"
 dotenvy = "0.15"
