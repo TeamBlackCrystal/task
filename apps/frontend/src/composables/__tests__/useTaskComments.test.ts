@@ -202,6 +202,23 @@ describe('useTaskComments', () => {
 
     expect(posted).toBe(false);
     expect(comments.submitError.value).toBe('コメントを投稿できませんでした（forbidden）');
+    // 新規投稿の失敗は返信側のエラーには入らない
+    expect(comments.replyError.value).toBe(null);
+    expect(comments.replyErrorThreadId.value).toBe(null);
+  });
+
+  it('返信が API に拒否されたら replyError と対象スレッド ID に入れる（submitError には入れない）', async () => {
+    control.threads = [sampleThread('c-1', '親コメント')];
+    control.rejectPost = { status: 400, message: 'thread deleted' };
+    mountHost();
+    await flushPromises();
+
+    const posted = await comments.submitComment('返信です', 'c-1');
+
+    expect(posted).toBe(false);
+    expect(comments.replyError.value).toBe('返信を投稿できませんでした（thread deleted）');
+    expect(comments.replyErrorThreadId.value).toBe('c-1');
+    expect(comments.submitError.value).toBe(null);
   });
 
   it('編集は PUT body を送り、成功で true を返して一覧を取り直す', async () => {
@@ -231,7 +248,9 @@ describe('useTaskComments', () => {
 
     expect(saved).toBe(false);
     expect(comments.updateError.value).toBe('コメントを更新できませんでした（not your comment）');
+    // 進行中 ID は消えるが、エラーの対象 ID は表示のために残る
     expect(comments.updatingCommentId.value).toBe(null);
+    expect(comments.updateErrorCommentId.value).toBe('c-1');
   });
 
   it('削除は DELETE を送り、成功で true を返して一覧を取り直す', async () => {
@@ -261,5 +280,6 @@ describe('useTaskComments', () => {
     expect(deleted).toBe(false);
     expect(comments.deleteError.value).toBe('コメントを削除できませんでした（forbidden）');
     expect(comments.deletingCommentId.value).toBe(null);
+    expect(comments.deleteErrorCommentId.value).toBe('c-1');
   });
 });

@@ -64,10 +64,17 @@ describe('TaskComments', () => {
     expect(wrapper.text()).toContain('コメントはまだありません');
   });
 
-  it('一覧の読み込み失敗はコメント節の中だけでエラー表示し、投稿フォームも出さない', () => {
-    const wrapper = mountComments({ listError: true });
+  it('一覧の読み込み失敗はリスト位置でエラー表示しつつ、投稿フォームは出したままにする', async () => {
+    const onRetry = vi.fn();
+    const wrapper = mountComments({ listError: true, onRetry });
     expect(wrapper.text()).toContain('コメントを読み込めませんでした');
-    expect(wrapper.find('form').exists()).toBe(false);
+    // 一覧の GET が失敗しても POST は独立に成功しうるため、書く導線は残す
+    expect(wrapper.find('form').exists()).toBe(true);
+
+    const retryButton = wrapper.findAll('button').find((button) => button.text() === '再試行');
+    expect(retryButton).toBeDefined();
+    await retryButton!.trigger('click');
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('投稿は onSubmit を呼び、成功したら下書きを消す', async () => {
@@ -119,7 +126,11 @@ describe('TaskComments', () => {
 
   it('編集は onUpdate をコメント ID と新本文で呼ぶ', async () => {
     const onUpdate = vi.fn(async () => true);
-    const wrapper = mountComments({ threads: [thread('c-1', '元の本文')], onUpdate });
+    const wrapper = mountComments({
+      threads: [thread('c-1', '元の本文')],
+      currentUserId: user.id,
+      onUpdate,
+    });
 
     await wrapper.get('button[aria-label="コメントを編集"]').trigger('click');
     const editArea = wrapper.get('textarea[aria-label="コメントを編集"]');
@@ -164,5 +175,59 @@ describe('TaskComments', () => {
       threads: [thread('c-1', '本文', { updated_at: '2026-08-19T02:00:00Z' })],
     });
     expect(wrapper.text()).toContain('(編集済み)');
+  });
+
+  it('削除済みスレッドには返信ボタンを出さない（backend が必ず 400 で弾く導線）', () => {
+    const wrapper = mountComments({
+      threads: [thread('c-1', null, { is_deleted: true }), thread('c-2', '生きているスレッド')],
+    });
+
+    // 返信ボタンは生きているスレッドの 1 つだけ
+    const replyButtons = wrapper.findAll('button').filter((button) => button.text() === '返信');
+    expect(replyButtons).toHaveLength(1);
+  });
+
+  it('編集ボタンは投稿者本人のコメントにだけ出す（backend が本人以外を必ず 403 にする）', () => {
+    const other = { id: 'user-2', name: '佐藤花子' };
+    const wrapper = mountComments({
+      threads: [thread('c-1', '自分のコメント'), thread('c-2', '他人のコメント', { user: other })],
+      currentUserId: user.id,
+    });
+
+    const editButtons = wrapper.findAll('button[aria-label="コメントを編集"]');
+    expect(editButtons).toHaveLength(1);
+    // 削除ボタンはテナントオーナーも許されるため全コメントに出る
+    expect(wrapper.findAll('button[aria-label="コメントを削除"]')).toHaveLength(2);
+  });
+
+  it('返信の失敗は対象スレッドの返信フォーム直下に出す', async () => {
+    const wrapper = mountComments({
+      threads: [thread('c-1', '親コメント')],
+      onSubmit: vi.fn(async () => false),
+    });
+
+    const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
+    await replyOpenButton!.trigger('click');
+    await wrapper.setProps({
+      replyError: '返信を投稿できませんでした（bad-request）',
+      replyErrorThreadId: 'c-1',
+    });
+
+    const replyForm = wrapper.find('textarea[aria-label="返信"]');
+    expect(replyForm.exists()).toBe(true);
+    expect(wrapper.text()).toContain('返信を投稿できませんでした（bad-request）');
+  });
+
+  it('更新・削除の失敗は対象コメントの中に出す', async () => {
+    const other = { id: 'user-2', name: '佐藤花子' };
+    const wrapper = mountComments({
+      threads: [thread('c-1', '対象'), thread('c-2', '無関係', { user: other })],
+      updateError: 'コメントを更新できませんでした（forbidden）',
+      updateErrorCommentId: 'c-1',
+    });
+
+    const items = wrapper.findAll('[data-task-comment]');
+    expect(items[0].text()).toContain('コメントを更新できませんでした（forbidden）');
+    expect(items[1].text()).not.toContain('コメントを更新できませんでした');
   });
 });

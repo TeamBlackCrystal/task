@@ -16,10 +16,19 @@ const props = defineProps<{
   /** このコメントの削除リクエストが進行中 */
   deleting?: boolean;
   /**
-   * 編集の確定。成功で true を返したら編集 UI を閉じる（失敗時は下書きを残す）。
-   * 編集・削除ボタンは全コメントに出す — 可否は backend が判定し、
-   * 拒否されたら親がエラーメッセージとして拒まれた通りに表示する。
+   * ログイン中ユーザーの ID（/v1/auth/me）。未取得なら null。
+   * 編集は backend が投稿者本人以外を必ず 403 にするため、編集ボタンは
+   * comment.user.id が一致するときだけ出す。削除は backend が投稿者本人に
+   * 加えテナントオーナーにも許していて、frontend からはオーナーかどうかを
+   * 確実に判定できないため、削除ボタンは全コメントに出したままにする —
+   * 可否は backend が判定し、拒否されたら deleteError を拒まれた通りに表示する。
    */
+  currentUserId?: string | null;
+  /** このコメントの更新失敗メッセージ（対象コメントの中に出す） */
+  updateError?: string | null;
+  /** このコメントの削除失敗メッセージ（対象コメントの中に出す） */
+  deleteError?: string | null;
+  /** 編集の確定。成功で true を返したら編集 UI を閉じる（失敗時は下書きを残す）。 */
   onUpdate: (body: string) => Promise<boolean>;
   /** 削除の確定。成功で true。 */
   onDelete: () => Promise<boolean>;
@@ -68,12 +77,15 @@ async function confirmDelete() {
     <header class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
       <span class="font-medium text-foreground">{{ comment.user.name }}</span>
       <span>{{ formatTaskDate(comment.created_at) }}</span>
+      <!-- backend が作成時に created_at と updated_at へ同一の now を入れるため、
+           不一致は「編集された」と等価（create_comment の now 一回化とペア） -->
       <span v-if="comment.updated_at !== comment.created_at">(編集済み)</span>
       <span v-if="updating || deleting" class="inline-flex items-center">
         <Loader2 class="size-3 animate-spin" aria-hidden="true" />
       </span>
       <span v-if="!comment.is_deleted && !editing" class="ml-auto inline-flex items-center gap-1">
         <Button
+          v-if="comment.user.id === currentUserId"
           type="button"
           variant="ghost"
           size="icon"
@@ -161,5 +173,10 @@ async function confirmDelete() {
         {{ deleting ? '削除中…' : '削除する' }}
       </Button>
     </div>
+
+    <!-- 失敗は失敗したコメントの中に出す。一覧末尾にまとめると、どの操作が
+         失敗したのか分からない -->
+    <p v-if="updateError" class="text-xs text-destructive">{{ updateError }}</p>
+    <p v-if="deleteError" class="text-xs text-destructive">{{ deleteError }}</p>
   </article>
 </template>

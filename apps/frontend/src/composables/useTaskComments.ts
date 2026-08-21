@@ -60,12 +60,19 @@ export function useTaskComments(params: UseTaskCommentsParams) {
 
   const queryClient = useQueryClient();
 
+  /** 新規投稿の失敗。返信の失敗は replyError に分け、それぞれのフォーム直下に出す */
   const submitError = ref<string | null>(null);
+  const replyError = ref<string | null>(null);
+  /** 返信に失敗したスレッドの ID。返信フォームの直下にエラーを出すために持つ */
+  const replyErrorThreadId = ref<string | null>(null);
   const updateError = ref<string | null>(null);
   const deleteError = ref<string | null>(null);
   /** 更新・削除の対象コメント ID（進行中のみ非 null）。ボタンの disabled に使う */
   const updatingCommentId = ref<string | null>(null);
   const deletingCommentId = ref<string | null>(null);
+  /** 更新・削除に失敗したコメントの ID。エラーを当該コメントの中に出すために持つ */
+  const updateErrorCommentId = ref<string | null>(null);
+  const deleteErrorCommentId = ref<string | null>(null);
 
   const commentsQueryKey = computed(
     () =>
@@ -122,6 +129,8 @@ export function useTaskComments(params: UseTaskCommentsParams) {
   async function submitComment(body: string, parentCommentId?: string | null): Promise<boolean> {
     if (!tenantId.value || !projectId.value || !taskId.value) return false;
     submitError.value = null;
+    replyError.value = null;
+    replyErrorThreadId.value = null;
     // ペイン切替などで unmount しても完走した結果を対象タスクのキャッシュへ書けるよう、
     // query key は開始時点で固定する（useTaskDetail.mutateTask と同じ理由）
     const queryKey = commentsQueryKey.value;
@@ -135,7 +144,14 @@ export function useTaskComments(params: UseTaskCommentsParams) {
       await queryClient.invalidateQueries({ queryKey });
       return true;
     } catch (error) {
-      submitError.value = apiErrorMessage(error, 'コメントを投稿できませんでした');
+      // 失敗の出し先をフォームごとに分ける: 返信の失敗を最下部の新規投稿
+      // フォームに出すと、失敗した場所から離れて気づけない
+      if (parentCommentId) {
+        replyError.value = apiErrorMessage(error, '返信を投稿できませんでした');
+        replyErrorThreadId.value = parentCommentId;
+      } else {
+        submitError.value = apiErrorMessage(error, 'コメントを投稿できませんでした');
+      }
       return false;
     }
   }
@@ -144,6 +160,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
   async function updateComment(commentId: string, body: string): Promise<boolean> {
     if (!tenantId.value || !projectId.value || !taskId.value) return false;
     updateError.value = null;
+    updateErrorCommentId.value = null;
     updatingCommentId.value = commentId;
     const queryKey = commentsQueryKey.value;
     try {
@@ -155,6 +172,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
       return true;
     } catch (error) {
       updateError.value = apiErrorMessage(error, 'コメントを更新できませんでした');
+      updateErrorCommentId.value = commentId;
       return false;
     } finally {
       if (updatingCommentId.value === commentId) updatingCommentId.value = null;
@@ -165,6 +183,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
   async function deleteComment(commentId: string): Promise<boolean> {
     if (!tenantId.value || !projectId.value || !taskId.value) return false;
     deleteError.value = null;
+    deleteErrorCommentId.value = null;
     deletingCommentId.value = commentId;
     const queryKey = commentsQueryKey.value;
     try {
@@ -175,6 +194,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
       return true;
     } catch (error) {
       deleteError.value = apiErrorMessage(error, 'コメントを削除できませんでした');
+      deleteErrorCommentId.value = commentId;
       return false;
     } finally {
       if (deletingCommentId.value === commentId) deletingCommentId.value = null;
@@ -185,12 +205,20 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     threads: computed<CommentThread[]>(() => commentsQuery.data.value?.comments ?? []),
     commentsLoading: computed(() => commentsQuery.isLoading.value),
     commentsError: computed(() => commentsQuery.isError.value),
+    /** 一覧の再試行。エラー表示の「再試行」導線から呼ぶ */
+    refetchComments: () => {
+      void commentsQuery.refetch();
+    },
     submitPending: computed(() => createCommentMutation.isPending.value),
     submitError,
+    replyError,
+    replyErrorThreadId,
     updatingCommentId,
     updateError,
+    updateErrorCommentId,
     deletingCommentId,
     deleteError,
+    deleteErrorCommentId,
     submitComment,
     updateComment,
     deleteComment,

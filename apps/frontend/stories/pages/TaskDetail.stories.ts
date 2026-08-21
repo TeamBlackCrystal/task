@@ -232,6 +232,21 @@ function createMockFetch(overrides: MockOptions = {}) {
   const original = globalThis.fetch;
   globalThis.fetch = fn().mockImplementation(async (req: Request) => {
     const url = typeof req === 'string' ? req : req.url;
+    // ログイン中ユーザーは alpha。コメントの編集ボタンの出し分け（投稿者本人のみ）が
+    // ストーリーでも実挙動どおりになる
+    if (url.includes('/v1/auth/me')) {
+      return jsonResponse({
+        id: mockUsers.alpha.id,
+        username: mockUsers.alpha.username,
+        email: 'alpha@example.com',
+        email_verified: true,
+        avatar_url: null,
+        bio: null,
+        is_admin: false,
+        is_suspended: false,
+        totp_enabled: false,
+      });
+    }
     if (isListTenantsUrl(url)) {
       if (overrides.rejectTenantsList) {
         return jsonResponse({ message: 'server error' }, 500);
@@ -919,5 +934,8 @@ export const CommentsListError: Story = {
     // コメント節の中だけで倒れ、タスク詳細本体は表示され続ける
     await expect(canvas.findByText('コメントを読み込めませんでした')).resolves.toBeInTheDocument();
     await expect(canvas.getByRole('heading', { name: 'OAuth 対応を実装する' })).toBeInTheDocument();
+    // 一覧が読めなくても書く導線（投稿フォーム）と再試行は残る
+    await expect(canvas.getByRole('textbox', { name: 'コメントを入力' })).toBeInTheDocument();
+    await expect(canvas.getByRole('button', { name: '再試行' })).toBeInTheDocument();
   },
 };
