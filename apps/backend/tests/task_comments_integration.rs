@@ -72,6 +72,10 @@ async fn task_comments_integration_suite() {
     assert_eq!(create_parent.status(), StatusCode::CREATED);
     let parent: Value = create_parent.json().await.expect("parent json");
     let parent_id = parent["id"].as_str().expect("parent id");
+    // frontend は updated_at != created_at を「編集済み」と解釈する。
+    // now() を 2 回呼ぶ実装に戻るとマイクロ秒差で新規コメントに
+    // 「(編集済み)」が付くため、作成直後の完全一致を固定する
+    assert_eq!(parent["created_at"], parent["updated_at"]);
 
     let create_reply = app
         .post_json_with_session(
