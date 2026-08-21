@@ -170,7 +170,7 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 - 同一ページに複数の KFM 断片（タスク本文＋コメント等）を並べる場合は、断片ごとに
   **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
   ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
-  scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する。加えて `-` 区切り
+- scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する。加えて `-` 区切り
   セグメントとして `fn` / `fnref` を含む scope（`fn-1`、`a-fn-b` 等）も throw する
   （脚注 id は `user-content-<scope>-fn-<label>` で label は利用者入力のため、細工した
   label と別 scope の id が一致し得る。scope 側からセグメントを禁止すれば衝突しない）
