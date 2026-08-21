@@ -16,7 +16,7 @@ const mermaidMock = vi.hoisted(() => {
     /** vi.mock の factory が走った (= mermaid が import された) ことの観測点 */
     imported: false,
     initialize: vi.fn(),
-    render: vi.fn(async (_id: string, _source: string) => ({
+    render: vi.fn(async (_id: string, _source: string, _container?: Element) => ({
       svg: '<svg><g class="kfm-mermaid-test-probe"></g></svg>',
     })),
   };
@@ -114,7 +114,23 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     expect(mermaidMock.render).toHaveBeenCalledWith(
       expect.stringContaining('kfm-mermaid-'),
       source,
+      expect.any(HTMLElement),
     );
+  });
+
+  it('一時描画先は body 末尾でなく自要素内の不可視コンテナで、描画後に撤去される', async () => {
+    let renderContainer: Element | undefined;
+    mermaidMock.render.mockImplementationOnce(async (_id, _source, container) => {
+      renderContainer = container;
+      expect(container?.parentElement?.localName).toBe(KFM_MERMAID_TAG);
+      expect((container as HTMLElement | undefined)?.style.visibility).toBe('hidden');
+      expect(container?.isConnected).toBe(true);
+      return { svg: '<svg><g></g></svg>' };
+    });
+
+    await mount('flowchart TD\n  A --> B');
+    expect(renderContainer?.isConnected).toBe(false);
+    expect(renderContainer?.parentElement).toBeNull();
   });
 
   it('securityLevel strict / startOnLoad false / suppressErrorRendering を固定で渡す', async () => {
@@ -185,6 +201,21 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     mermaidMock.render.mockResolvedValueOnce({
       svg: '<svg onload="alert(1)"><script>alert(2)</script></svg>',
+    });
+    const element = await mount('flowchart TD\n  A --> B');
+    expect(element.dataset.kfmMermaid).toBe('error');
+    expect(element.shadowRoot).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith('[kfm-mermaid] render failed', expect.any(Error));
+    consoleError.mockRestore();
+  });
+
+  it.each([
+    ['href', 'java\nscript:alert(1)'],
+    ['xlink:href', 'data:text/html,<script>alert(1)</script>'],
+  ])('%s の実行可能スキームを含む SVG は error へ倒す', async (attribute, value) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: `<svg><a ${attribute}="${value}"><text>危険リンク</text></a></svg>`,
     });
     const element = await mount('flowchart TD\n  A --> B');
     expect(element.dataset.kfmMermaid).toBe('error');

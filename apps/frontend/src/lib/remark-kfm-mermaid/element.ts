@@ -9,7 +9,8 @@
  *   モジュール評価が落ちない)。
  * - securityLevel は strict 固定 (緩める変更は禁止)。suppressErrorRendering で
  *   構文エラー時に mermaid が DOM へエラー図を注入するのも止め、失敗は状態値で表す。
- * - 挿入前の最終防御 (parseSafeSvg) は sink と同じ HTML パースで検査する。
+ * - 挿入前の最終防御 (parseSafeSvg) は sink と同じ HTML パースで検査し、href 系の
+ *   実行可能スキームも明示的に拒否する。
  *   XML パーサを使わない理由はその関数のコメントを正とする。
  *
  * VRT / E2E 向けの完了シグナル (時間待ち不要の口):
@@ -45,7 +46,7 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 
 /**
  * mermaid の返す SVG を shadow DOM へ入れる直前の構造の健全性検査。
- * URL の安全性は mermaid 側の sanitize-url に委ねる。
+ * URL は mermaid 側の sanitize-url に加え、ここでも実行可能スキームを拒否する。
  *
  * 検査は sink (shadow への挿入 = HTML fragment パース) と同じ HTML 文法で行う。
  * XML パーサ (image/svg+xml) を使わない決め手は二つ:
@@ -71,8 +72,17 @@ function parseSafeSvg(svg: string): DocumentFragment {
   for (const element of fragment.querySelectorAll('*')) {
     if (element.localName === 'script') throw new Error('mermaid returned an unsafe SVG element');
     for (const attribute of element.attributes) {
-      if (attribute.name.toLowerCase().startsWith('on')) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith('on')) {
         throw new Error('mermaid returned an unsafe SVG attribute');
+      }
+      if (name === 'href' || name === 'xlink:href') {
+        // HTML パースで実体参照は復号済み。URL parser が scheme 判定前に無視する
+        // ASCII 制御・空白も除いてから判定し、java\nscript: 等の難読化を通さない。
+        const normalized = attribute.value.replace(/[\u0000-\u0020\u007f-\u009f]/g, '');
+        if (/^(?:javascript|vbscript|data):/i.test(normalized)) {
+          throw new Error('mermaid returned an unsafe SVG URL');
+        }
       }
     }
   }
@@ -126,7 +136,7 @@ export function createKfmMermaidElement(): CustomElementConstructor {
           this.#started = false;
           return;
         }
-        const { svg } = await enqueue(() => {
+        const { svg } = await enqueue(async () => {
           // アプリ本体・story と同じ .dark ancestor 方式でテーマを引く。
           // テーマは描画時スナップショット: 描画後に .dark が切り替わっても
           // 再描画・追従はしない (Phase 1 の割り切り。追従させる場合は .dark の
@@ -138,7 +148,27 @@ export function createKfmMermaidElement(): CustomElementConstructor {
             suppressErrorRendering: true,
             theme: dark ? 'dark' : 'default',
           });
-          return mermaid.render(`${KFM_MERMAID_TAG}-${renderSequence++}`, source);
+          // 第三引数を省くと mermaid は一時描画ノードを document.body 末尾へ置くため、
+          // 図が一瞬ページ末尾へ露出する。接続中の自要素内へ不可視コンテナを置き、
+          // 成否にかかわらず撤去して light DOM のフォールバックを元どおり保つ。
+          const renderContainer = document.createElement('div');
+          renderContainer.setAttribute('aria-hidden', 'true');
+          Object.assign(renderContainer.style, {
+            position: 'fixed',
+            visibility: 'hidden',
+            pointerEvents: 'none',
+            inset: '0 auto auto 0',
+          });
+          this.append(renderContainer);
+          try {
+            return await mermaid.render(
+              `${KFM_MERMAID_TAG}-${renderSequence++}`,
+              source,
+              renderContainer,
+            );
+          } finally {
+            renderContainer.remove();
+          }
         });
         if (token !== this.#renderToken) return;
         if (!this.isConnected) {
