@@ -176,6 +176,14 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
   `v-html` へ流し、不一致（保存直後・reload 失敗・他者更新で HTML が古い）は
   プレーンテキスト表示へフォールバックする。descriptionHtml を単独で受けて
   無条件に `v-html` する消費側を作ってはならない
+- **入力長の上限は 65536 文字**（GitHub issue 本文の上限と同値。KFM Phase 1 =
+  github profile の複製レンダラ）。上限は消費側の `+data.ts` が `renderDescription`
+  を呼ぶ**前**に敷き、超過は `descriptionHtml: null` = プレーンテキスト表示へ倒す
+  （エラー表示は出さない）。renderDescription の CPU も L1 キャッシュ
+  （full-text キー）のメモリも本文長に比例するため、SSR に非有界の入力を
+  入れない。新しい消費側（分割ビューのペイン・コメント本文等）を接続するときも
+  同じ上限を写すこと。
+  非対称に注意: backend は本文長を制限しないため、上限超の本文も保存はできる（表示だけプレーンへ倒れる）
 - 同一ページに複数の KFM 断片（タスク本文＋コメント等）を並べる場合は、断片ごとに
   **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
   ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
