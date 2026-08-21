@@ -125,6 +125,10 @@ async fn mount_github_api_mocks(server: &MockServer) {
                 .find(|(key, _)| key == "code")
                 .map(|(_, value)| value.into_owned())
                 .unwrap_or_default();
+            if code == FLAKY_CODE {
+                // 拒否ではなく GitHub 側の不調。呼び出し側が両者を分けているかを見る。
+                return ResponseTemplate::new(500).set_body_string("upstream error");
+            }
             match user_code_installation_id(&code) {
                 Some(id) => ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "access_token": format!("ghu_{id}"),
@@ -161,6 +165,9 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .mount(server)
         .await;
 }
+
+/// この認可コードは交換のたびに GitHub 側の不調（500）を返す。
+const FLAKY_CODE: &str = "flaky-code";
 
 /// テスト用の認可コードが表すインストール（`user-<installation_id>`）。
 fn user_code_installation_id(code: &str) -> Option<i64> {
@@ -860,10 +867,13 @@ async fn github_http_integration_suite() {
         .await
         .expect("store pending installation");
 
-        // 控えてある ID と一致 → 鮮度チェックを免除して選択画面へ
+        // 控えてある ID と一致 → 鮮度チェックを免除して選択画面へ。
+        // 束縛先が決まっているので所有者確認も省く（この控えは所有者確認を通った
+        // callback からしか生まれない）。GitHub が code を付け直さない復旧経路でも
+        // 戻れることを、認可コード無しで叩いて押さえる。
         let state_token = get_install_state(&app, &tp).await;
         let accepted = app
-            .get_with_session(&callback_path(&state_token, pending_id))
+            .get_with_session(&callback_path_without_code(&state_token, pending_id))
             .await;
         assert!(
             accepted.status() == StatusCode::FOUND
@@ -978,10 +988,11 @@ async fn github_http_integration_suite() {
         assert_eq!(first_connect.status(), StatusCode::NO_CONTENT);
 
         // 2 つ目のプロジェクトは控えを持たないが、同じテナントで使用中のインストールなので通る
-        // （修正前は鮮度チェックで installation_rejected になっていた）
+        // （修正前は鮮度チェックで installation_rejected になっていた）。
+        // ここも束縛先が決まっているので、認可コード無しで通ることを押さえる。
         let second_state = get_install_state(&app, &second).await;
         let second_callback = app
-            .get_with_session(&callback_path(&second_state, installation_id))
+            .get_with_session(&callback_path_without_code(&second_state, installation_id))
             .await;
         let second_location = second_callback
             .headers()
@@ -1080,7 +1091,8 @@ async fn github_http_integration_suite() {
             "unexpected redirect location: {invalid_location}"
         );
 
-        // 認可コードが付いていない callback も拒否（所有者を確かめる手段が無い）
+        // 認可コードが付いていない新規の callback も拒否。ただし理由は所有者違いと分ける
+        // （原因は App 設定でユーザー認可が無効なことで、入れ直しても直らない）。
         let missing_state = get_install_state(&app, &tp).await;
         let missing = app
             .get_with_session(&callback_path_without_code(
@@ -1090,8 +1102,24 @@ async fn github_http_integration_suite() {
             .await;
         let missing_location = redirect_error(missing);
         assert!(
-            missing_location.contains("github_error=installation_forbidden"),
+            missing_location.contains("github_error=installation_authorization_required"),
             "unexpected redirect location: {missing_location}"
+        );
+
+        // 交換が通信レベルで失敗したときは拒否ではなく一時障害として戻す
+        // （アンインストールや入れ直しを促す文言に落とさないため）。
+        let flaky_state = get_install_state(&app, &tp).await;
+        let flaky = app
+            .get_with_session(&callback_path_with_code(
+                &flaky_state,
+                unique_multi_repo_installation_id(),
+                FLAKY_CODE,
+            ))
+            .await;
+        let flaky_location = redirect_error(flaky);
+        assert!(
+            flaky_location.contains("github_error=github_unavailable"),
+            "unexpected redirect location: {flaky_location}"
         );
 
         // どの経路でも連携レコードは作られない

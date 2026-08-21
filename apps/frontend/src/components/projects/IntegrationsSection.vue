@@ -35,6 +35,8 @@ const CALLBACK_ERRORS: Record<string, string> = {
     'このインストールでは連携できませんでした。GitHub の設定から一度アンインストールしてから、もう一度お試しください。',
   installation_forbidden:
     'このインストールはあなたのアカウントからは操作できません。ご自身がアクセスできるアカウントまたは Organization に、もう一度インストールしてください。',
+  installation_authorization_required:
+    'GitHub App の設定でユーザー認可が有効になっていないため、連携できませんでした。管理者に設定の確認を依頼してください。',
   github_unavailable: 'GitHub と通信できませんでした。時間をおいて、もう一度お試しください。',
 };
 

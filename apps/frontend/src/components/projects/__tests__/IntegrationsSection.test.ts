@@ -399,6 +399,16 @@ describe('IntegrationsSection', () => {
     expect(bodyButton('連携する')).toBeTruthy();
   });
 
+  it('ユーザー認可が無効な App では、入れ直しではなく設定の確認を促す', async () => {
+    stubFetch({ connected: false });
+    mountSection({ callbackError: 'installation_authorization_required' });
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('管理者に設定の確認を依頼してください');
+    // 所有者違い（入れ直しで直る）と取り違えない
+    expect(document.body.textContent).not.toContain('もう一度インストールしてください');
+  });
+
   it('リポジトリが多いときは入力欄で絞り込める', async () => {
     stubFetch({
       connected: false,

@@ -93,6 +93,16 @@ async fn settings_redirect_url(
     ))
 }
 
+/// callback の失敗を、設定画面へ理由付きで戻すリダイレクトにする。
+///
+/// callback は GitHub からの着地点なので、素のエラーを返すとユーザーは何も分からない
+/// GitHub のページに取り残される。理由コードは frontend が文言に落とす。
+///
+/// 呼び出し側がそのまま `return` できるよう、ハンドラーの戻り値の形で返す。
+fn callback_error_redirect(redirect_to: &str, reason: &str) -> Result<Response, AppError> {
+    Ok(Redirect::temporary(&format!("{redirect_to}&github_error={reason}")).into_response())
+}
+
 /// GitHub Webhook 署名検証（HMAC-SHA256, ConstantTimeEq）。
 pub fn verify_webhook_signature(secret: &str, signature_header: &str, body: &[u8]) -> bool {
     let Some(hex_digest) = signature_header.strip_prefix("sha256=") else {
@@ -204,46 +214,6 @@ pub async fn github_callback(
     let redirect_to =
         settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
 
-    // 所有者確認。installation_id はクエリで差し込めるので、これが無いと
-    // 「他人が入れたインストール」をそのまま自分のプロジェクトへ紐付けられる。
-    // インストール時のユーザー認可で GitHub が付ける code を交換し、そのユーザーが
-    // 見えるインストールに当該 ID が含まれることを GitHub 自身に答えさせる。
-    // User インストールでも Organization インストールでも同じ経路で確かめられる。
-    let Some(code) = query.code.as_deref() else {
-        tracing::warn!(
-            installation_id = query.installation_id,
-            "github callback: no authorization code; user authorization is required on the app"
-        );
-        return Ok(
-            Redirect::temporary(&format!("{redirect_to}&github_error=installation_forbidden"))
-                .into_response(),
-        );
-    };
-    match app
-        .verify_installation_access(code, query.installation_id)
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => {
-            tracing::warn!(
-                installation_id = query.installation_id,
-                "github callback: installation does not belong to the authenticated user"
-            );
-            return Ok(
-                Redirect::temporary(&format!("{redirect_to}&github_error=installation_forbidden"))
-                    .into_response(),
-            );
-        }
-        // 拒否ではなく GitHub 側の不調。アンインストールを促さないよう理由を分ける。
-        Err(e) => {
-            tracing::warn!(error = %e, "github callback: installation ownership check failed");
-            return Ok(
-                Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
-                    .into_response(),
-            );
-        }
-    }
-
     // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
     // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
     //
@@ -278,6 +248,48 @@ pub async fn github_callback(
             }
         }
     };
+
+    // 所有者確認。新規に束縛するときだけ行う。
+    //
+    // installation_id はクエリで差し込めるので、これが無いと「他人が入れた
+    // インストール」をそのまま自分のプロジェクトへ紐付けられる。インストール時の
+    // ユーザー認可で GitHub が付ける code を交換し、そのユーザーが見えるインストールに
+    // 当該 ID が含まれることを GitHub 自身に答えさせる。User インストールでも
+    // Organization インストールでも同じ経路で確かめられる。
+    //
+    // 束縛先が既に決まっている（expected_installation_id が Some）ときは省く。
+    // その束縛に入るのは「state に載せた連携済みの ID」「このプロジェクトの選択待ちの
+    // 控え」「同じテナントが使用中のインストール」のいずれかで、どれもこの確認を通った
+    // callback からしか生まれない。ここで code を要求すると、リポジトリを足して戻る・
+    // 選び直すといった復旧の動線が、GitHub が code を付け直すかどうかに左右される。
+    if expected_installation_id.is_none() {
+        let Some(code) = query.code.as_deref() else {
+            tracing::warn!(
+                installation_id = query.installation_id,
+                "github callback: no authorization code; enable user authorization on the app"
+            );
+            return callback_error_redirect(&redirect_to, "installation_authorization_required");
+        };
+        match app
+            .verify_installation_access(code, query.installation_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    installation_id = query.installation_id,
+                    "github callback: installation does not belong to the authenticated user"
+                );
+                return callback_error_redirect(&redirect_to, "installation_forbidden");
+            }
+            // 拒否ではなく GitHub 側の不調。アンインストールを促さないよう理由を分ける。
+            Err(e) => {
+                tracing::warn!(error = %e, "github callback: installation ownership check failed");
+                return callback_error_redirect(&redirect_to, "github_unavailable");
+            }
+        }
+    }
+
     let installation = match app
         .verify_installation(
             query.installation_id,
@@ -297,10 +309,7 @@ pub async fn github_callback(
             } else {
                 "github_unavailable"
             };
-            return Ok(
-                Redirect::temporary(&format!("{redirect_to}&github_error={reason}"))
-                    .into_response(),
-            );
+            return callback_error_redirect(&redirect_to, reason);
         }
     };
 
@@ -315,10 +324,7 @@ pub async fn github_callback(
         )
         .await
         .map_err(AppError::Internal)?;
-        Ok(
-            Redirect::temporary(&format!("{redirect_to}&github_error=github_unavailable"))
-                .into_response(),
-        )
+        callback_error_redirect(&redirect_to, "github_unavailable")
     };
     let access = match app.installation_access_token(installation.id).await {
         Ok(access) => access,
@@ -344,10 +350,7 @@ pub async fn github_callback(
             installation_id = query.installation_id,
             "github callback: installation has no accessible repositories"
         );
-        return Ok(
-            Redirect::temporary(&format!("{redirect_to}&github_error=no_repositories"))
-                .into_response(),
-        );
+        return callback_error_redirect(&redirect_to, "no_repositories");
     }
 
     // 複数見えるときは連携せず、選択トークンを発行して設定ページへ戻す。
