@@ -166,6 +166,11 @@ export const KFM_STORY_INPUTS = {
 
   // アプリ側クラスの騙り: 生 HTML で kfm-alert を名乗っても alert の絵は増えない。
   // 正規の alert (プラグイン経由) だけが callout になる。
+  // タスク詳細ページ story (Pages/TaskDetail の DescriptionKfmRendered) の入力対。
+  // story は本番同様 descriptionHtml/descriptionSource の対で受けるため、
+  // descriptionSource 側もこの入力 (単一ソース) から取ること。
+  'task-detail-description': '**強調** と `code` を含む説明',
+
   'sanitize-class-spoof': [
     '> [!NOTE]',
     '> これは正規の alert (絵に出る callout はこれ 1 つ)。',

@@ -3,6 +3,8 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 import { provide } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import TaskDetailPage from '@/pages/@tenant/projects/@projectKey/tasks/@taskId/+Page.vue';
+import { KFM_STORY_INPUTS } from '@/lib/kfm-story-fixtures/inputs';
+import kfmDescriptionHtml from '@/lib/kfm-story-fixtures/rendered/task-detail-description.html?raw';
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
 // vike-vue の useData は inject('vike-vue:useData') の素通し。+data.ts の戻り値と
@@ -314,10 +316,13 @@ export const Default: Story = {
 };
 
 // KFM 表示 story の入力対。本番では +data.ts (サーバ) の renderDescription 出力だが、
-// story は同期描画のため sanitize 済み出力と同形の静的 HTML を使う。
+// story は同期描画のため事前生成 fixture (kfm-story-fixtures) を使う。入力は
+// inputs.ts の単一ソース、HTML は rendered/task-detail-description.html で、
+// kfm-story-fixtures.test.ts の drift 検査が「renderDescription の現在出力と一致」を
+// CI で強制する (手書き HTML だと実出力とズレても気づけない)。
 // descriptionSource は task.description と厳密一致させる (照合が成立する条件)。
-const KFM_DESCRIPTION = '**強調** と `code` を含む説明';
-const KFM_DESCRIPTION_HTML = '<p><strong>強調</strong> と <code>code</code> を含む説明</p>';
+const KFM_DESCRIPTION = KFM_STORY_INPUTS['task-detail-description'];
+const KFM_DESCRIPTION_HTML = kfmDescriptionHtml;
 
 export const DescriptionKfmRendered: Story = {
   name: '説明 KFM 描画（useData 接続）',
