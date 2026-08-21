@@ -71,8 +71,15 @@ const {
   // 描画せず (バンドル退行 +417.5 KB の再来防止)、+data.ts をサーバで再実行して
   // 描画済み HTML を取り直す。reload は保存確定後にのみ呼ばれるため、backend は
   // 既に新しい本文を返す。
+  // reload 失敗は黙殺しない: 失敗しても保存済みデータは失われず、descriptionSource の
+  // 照合不一致でプレーンテキスト表示へ倒れる (SSR 契約) ため UI エラーにはしないが、
+  // 「KFM 表示に戻らない」調査の手がかりとして記録は残す。
   onAfterFieldSaved: (field) => {
-    if (field === 'description') void reload();
+    if (field === 'description') {
+      reload().catch((error: unknown) => {
+        console.error('説明保存後の reload に失敗 (プレーンテキスト表示のまま):', error);
+      });
+    }
   },
 });
 
