@@ -53,6 +53,8 @@ export type RenderOptions = {
    * clobberPrefix へ `user-content-<scope>-` として反映され、キャッシュキーにも載る。
    * random ではなく呼び出し側の決定的識別子である理由: 同一入力→同一 HTML を保たないと
    * L1 キャッシュ前提 (SSR/CSR 同一性) が崩れるため。[A-Za-z0-9_-]+ 以外は throw。
+   * fn / fnref を `-` 区切りセグメントとして含む scope も throw
+   * (細工した脚注 label との id 衝突で scope 分離が破れるため)。
    */
   readonly scope?: string;
 };
@@ -66,6 +68,14 @@ const DEFAULT_CLOBBER_PREFIX = 'user-content-';
 // scope は id 属性と URL fragment (#...) にそのまま入るため、安全な字種に限定して
 // fail-closed で弾く (HTML 構造や href を scope 経由で汚染させない)。
 const SCOPE_RE = /^[A-Za-z0-9_-]+$/;
+
+// scope 分離の不変条件を守る追加制約。脚注 id は `user-content-<scope>-fn-<label>` で、
+// label は利用者入力ゆえ `-fn-` を含み得る。scope が `-` 区切りセグメントとして fn / fnref
+// を含むと、別 scope (または scope なし) の細工 label と id が一致し得る
+// (例: scope `a-fn-b` の label `c` と scope `a` の label `b-fn-c` は同一 id)。
+// scope 側からセグメント fn / fnref を禁止すれば、id 中で最初に現れる区切り済み
+// fn / fnref トークンが必ずマーカー由来となり、scope 境界が一意に復元できて衝突は起きない。
+const SCOPE_RESERVED_SEGMENT_RE = /(^|-)(fn|fnref)(-|$)/;
 
 function buildProcessor(definition: ProfileDefinition, clobberPrefix: string) {
   return unified()
@@ -147,6 +157,12 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     if (scope !== undefined && !SCOPE_RE.test(scope)) {
       throw new Error(
         `[markup-renderer] scope "${scope}" must match [A-Za-z0-9_-]+ (id / URL fragment safety)`,
+      );
+    }
+    if (scope !== undefined && SCOPE_RESERVED_SEGMENT_RE.test(scope)) {
+      throw new Error(
+        `[markup-renderer] scope "${scope}" must not contain a "fn" / "fnref" segment ` +
+          '(crafted footnote labels could collide across scopes)',
       );
     }
     // 改行を LF へ正規化する (\r\n と lone \r の両方。micromark はどちらも行末として

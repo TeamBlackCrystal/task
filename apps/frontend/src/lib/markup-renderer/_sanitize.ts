@@ -47,7 +47,17 @@ export function buildRegistry(schemas: readonly SanitizeSchema[]): Registry {
       attrsByTag.set(tag, set);
     }
     for (const token of schema.classTokens ?? []) classTokens.add(token);
-    classPatterns.push(...(schema.classPatterns ?? []));
+    for (const pattern of schema.classPatterns ?? []) {
+      // g / y フラグは lastIndex を跨いで保持し .test() が呼び出し履歴で真偽反転する
+      // (同じ token が交互に許可/拒否される)。registry 組立時に fail-fast で弾く。
+      if (pattern.global || pattern.sticky) {
+        throw new Error(
+          `[markup-renderer] classPatterns の正規表現 ${String(pattern)} に g / y フラグは使えない ` +
+            '(lastIndex 状態で .test() の判定が反転する)',
+        );
+      }
+      classPatterns.push(pattern);
+    }
   }
   return { tags, attrsByTag, classTokens, classPatterns };
 }

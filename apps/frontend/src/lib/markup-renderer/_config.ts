@@ -23,16 +23,28 @@ const CODE_DEFAULTS: KfmContentConfig = {
   defaultProfile: 'github',
 };
 
-/** キー単位スパース上書き: 各層は触るキーだけ持ち、未設定キーは下層へ fall through */
+// 各キーの安全 universe (コード定義済みの列挙)。層の値はここから選ぶだけで、
+// universe 外の値・未知キーは持ち込めない。
+const KNOWN_PROFILES: readonly KfmProfile[] = ['github'];
+
+/**
+ * キー単位スパース上書き: 各層は触るキーだけ持ち、未設定キーは下層へ fall through。
+ * 層の内容は無検証コピーしない — 既知キーのみを universe 検証つきで個別に取り込む
+ * (未知キーは黙って無視、universe 外の値は設定不備として fail-fast で throw)。
+ */
 export function resolveContentConfig(
   systemLayer: Partial<KfmContentConfig> = {},
 ): KfmContentConfig {
-  const resolved: KfmContentConfig = { ...CODE_DEFAULTS };
-  for (const key of Object.keys(systemLayer) as (keyof KfmContentConfig)[]) {
-    const value = systemLayer[key];
-    if (value !== undefined) {
-      (resolved as Record<string, unknown>)[key] = value;
-    }
+  if (
+    systemLayer.defaultProfile !== undefined &&
+    !KNOWN_PROFILES.includes(systemLayer.defaultProfile)
+  ) {
+    throw new Error(
+      `[markup-renderer] defaultProfile "${String(systemLayer.defaultProfile)}" is not in ` +
+        `the safe universe (${KNOWN_PROFILES.join(', ')})`,
+    );
   }
-  return resolved;
+  return {
+    defaultProfile: systemLayer.defaultProfile ?? CODE_DEFAULTS.defaultProfile,
+  };
 }

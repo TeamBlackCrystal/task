@@ -1,3 +1,4 @@
+import type { Root } from 'mdast';
 import { describe, expect, it } from 'vitest';
 import { createRenderer, renderDescription } from '../markup-renderer';
 import type { CreateRendererOptions, KfmProfile } from '../markup-renderer';
@@ -241,6 +242,66 @@ describe('renderDescription (安全 core)', () => {
   });
 });
 
+describe('renderDescription (sanitize 結線)', () => {
+  // 生 HTML は remark-rehype 既定 (allowDangerousHtml 不使用) の段階で消えるため、
+  // 「安全 core」の試験群は sanitize(...) 呼び出しを外しても緑のまま = 結線を検証しない。
+  // ここでは remark プラグインの正規 emit 経路 (data.hName / hProperties) から
+  // 「sanitize でしか落ちないもの」を最終 HTML へ流し込み、renderDescription の出力が
+  // 実際に sanitize を通っていることを固定する。_renderer.ts の sanitize(...) 呼び出しを
+  // 外すとこの describe が赤くなる (変異試験で実測済み)。
+  function remarkUnsafeEmitter() {
+    return (tree: Root) => {
+      tree.children.push(
+        {
+          type: 'paragraph',
+          data: {
+            hName: 'div',
+            hProperties: {
+              onclick: 'alert(1)',
+              style: 'position:fixed',
+              class: 'evil-class kfm-alert',
+            },
+          },
+          children: [{ type: 'text', value: 'emit 本文' }],
+        },
+        {
+          type: 'paragraph',
+          data: { hName: 'script' },
+          children: [{ type: 'text', value: 'alert(2)' }],
+        },
+      );
+    };
+  }
+
+  function createRendererWithUnsafeEmitter() {
+    return createRenderer({
+      profiles: {
+        github: { remarkPlugins: [remarkGfm, remarkKoyoriAlerts, remarkUnsafeEmitter] },
+      },
+      sanitizeSchemas: [gfmSanitizeSchema, koyoriAlertsSanitizeSchema],
+    });
+  }
+
+  it('emit 由来の script はタグも中身も最終出力に残らない', async () => {
+    const html = await createRendererWithUnsafeEmitter()('本文');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('alert(2)');
+  });
+
+  it('emit 由来の on* / style 属性は最終出力に残らない (要素と本文は残る陽性対照)', async () => {
+    const html = await createRendererWithUnsafeEmitter()('本文');
+    expect(html).toContain('emit 本文');
+    expect(html).not.toContain('onclick');
+    expect(html).not.toContain('style=');
+  });
+
+  it('emit 由来の未許可 class は落ち、許可 class だけ残る (class allowlist の結線)', async () => {
+    const html = await createRendererWithUnsafeEmitter()('本文');
+    expect(html).not.toContain('evil-class');
+    expect(html).toContain('class="kfm-alert"');
+  });
+});
+
 describe('renderDescription (決定性・profile seam)', () => {
   it('同一入力は独立 renderer 間で同一 HTML (SSR/CSR 同一性)', async () => {
     const input = '# 見出し\n\n> [!WARNING]\n> 注意\n\n- [x] done\n\n`code` と ~~strike~~';
@@ -313,5 +374,40 @@ describe('renderDescription (脚注 fn-* / fnref-* id の scope)', () => {
   it('id / URL fragment に安全でない scope は fail-closed で throw', async () => {
     await expect(renderDescription(FOOTNOTE, { scope: 'a b' })).rejects.toThrow('scope');
     await expect(renderDescription(FOOTNOTE, { scope: '' })).rejects.toThrow('scope');
+  });
+
+  it.each(['fn', 'fnref', 'fn-1', 'a-fn-b', 'a-fnref', 'comment-fn'])(
+    'fn / fnref セグメントを含む scope "%s" は throw (細工 label との id 衝突防止)',
+    async (scope) => {
+      // 例: scope 'a-fn-b' の label 'c' と scope 'a' の label 'b-fn-c' はどちらも
+      // id user-content-a-fn-b-fn-c になり scope 分離が破れる。scope 側から
+      // fn / fnref セグメントを禁止することで、細工した脚注 label でも衝突しない。
+      await expect(renderDescription(FOOTNOTE, { scope })).rejects.toThrow('fn');
+    },
+  );
+
+  it('fn / fnref を部分文字列として含むだけのセグメントは通る (fnord 等)', async () => {
+    const html = await renderDescription(FOOTNOTE, { scope: 'my-fnord-1' });
+    expect(html).toContain('id="user-content-my-fnord-1-fn-1"');
+  });
+
+  it('細工 label と別 scope の id は衝突しない (scope 分離の不変条件)', async () => {
+    // scope 'a' + 細工 label 'b-fn-1' が作る id は user-content-a-fn-b-fn-1。
+    // これと衝突し得た scope 'a-fn-b' は上の検証で throw 済みのため、生成側の id を
+    // 名指しで固定して不変条件を機械検証する。
+    const crafted = await renderDescription('本文[^b-fn-1]\n\n[^b-fn-1]: 細工', { scope: 'a' });
+    expect(crafted).toContain('id="user-content-a-fn-b-fn-1"');
+  });
+});
+
+describe('renderDescription (ユーザーリンクの現状契約)', () => {
+  it('リンクは target を持たない (rel 硬化を Phase 1 で行わない前提条件の固定)', async () => {
+    // 仕様: target="_blank" を出さないため reverse tabnabbing 経路が無く、rel 硬化は
+    // 行わない (docs/frontend/kfm-phase1-implementation.md)。target を導入する変更は
+    // ここで赤くなり、rel="noopener noreferrer" の同時導入を強制する。
+    const html = await renderDescription('[リンク](https://example.com/) と https://example.org/');
+    expect(html).toContain('<a href="https://example.com/">');
+    expect(html).not.toContain('target=');
+    expect(html).not.toContain('rel=');
   });
 });

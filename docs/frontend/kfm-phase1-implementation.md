@@ -74,6 +74,19 @@ DOMPurify は HTML 構造の allowlist に専念する:
   コードフェンスの `language-*` に限定し、任意のアプリ class を通す汎用パターンにはしない
 - `CUSTOM_ELEMENT_HANDLING` は registry 登録制（Phase 1 は登録タグ空）。
   `allowCustomizedBuiltInElements: false` で `is=""` 経路を封鎖
+- `classPatterns` の正規表現に `g` / `y` フラグは使えない（`lastIndex` 状態で `.test()` の
+  判定が呼び出し履歴により反転するため、registry 組立時に fail-fast で throw する）
+
+URI とリンク属性の契約（DOMPurify 既定に依拠する部分も仕様として明記する）:
+
+- **`data:` URI は画像系タグ（`img` 等）の `src` に限り通る**（DOMPurify 既定）。
+  `a href` の `data:` は通らない。GitHub 同様、埋め込み画像データの表示は許容する。
+  サイズ上限等の資源制約は KFM 層では課さない（必要になれば入力長制限側で扱う）
+- **ユーザーリンクの rel 硬化（`rel="nofollow noopener noreferrer"` 等）は Phase 1 では
+  行わない**。`target="_blank"` を一切出力しないため reverse tabnabbing の経路が無く、
+  同一タブ遷移では `noopener` は不要。`target` を導入する変更は rel 硬化とセットで行う
+  こと（リンクが `target` / `rel` を持たない現状はテストで固定済み）。`nofollow` は
+  SEO ポリシーの問題であり、必要になった時点で rehype 層として追加する
 
 DOMPurify を最終段に置くのは、remark プラグインが emit したものを含む最終 HTML 文字列を、
 `v-html` へ渡す直前の一つの境界で検査するためである。class allowlist 用フックは DOMPurify の
@@ -99,7 +112,10 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 - 同一ページに複数の KFM 断片（タスク本文＋コメント等）を並べる場合は、断片ごとに
   **決定的な scope** を渡す: `renderDescription(text, { scope: 'comment-42' })`。
   ランダムにしないのは同一入力→同一 HTML（L1 キャッシュ・SSR/CSR 同一性）を保つため。
-  scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する
+  scope は `[A-Za-z0-9_-]+` のみ許可し、それ以外は throw する。加えて `-` 区切り
+  セグメントとして `fn` / `fnref` を含む scope（`fn-1`、`a-fn-b` 等）も throw する
+  （脚注 id は `user-content-<scope>-fn-<label>` で label は利用者入力のため、細工した
+  label と別 scope の id が一致し得る。scope 側からセグメントを禁止すれば衝突しない）
 - 現状 scope が分離するのは脚注の `fn-*` / `fnref-*` 系 id だけで、見出しの
   `footnote-label` と参照側の `aria-describedby` は複数断片でも同じ値になる。この残課題は
   後続 PR #588 の rehype 層で解消するため、本 PR では現状固定試験のみを置く

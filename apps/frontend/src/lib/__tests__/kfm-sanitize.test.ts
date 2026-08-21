@@ -1,6 +1,6 @@
 import DOMPurify from 'isomorphic-dompurify';
 import { describe, expect, it } from 'vitest';
-import { createSanitizer } from '../markup-renderer/_sanitize';
+import { buildRegistry, createSanitizer } from '../markup-renderer/_sanitize';
 import { gfmSanitizeSchema } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema } from '../remark-koyori-alerts';
 
@@ -51,6 +51,38 @@ describe('createSanitizer (class 完全一致 allowlist)', () => {
     const html = sanitize('<div class="kfm-alert-evil kfm-alert__title2">x</div>');
     expect(html).not.toContain('kfm-alert-evil');
     expect(html).not.toContain('kfm-alert__title2');
+  });
+});
+
+describe('buildRegistry (classPatterns の g / y フラグ拒否)', () => {
+  // g / y フラグの正規表現は lastIndex を保持し、.test() が呼び出し履歴で真偽反転する
+  // (同じ token が交互に許可/拒否)。判定が非決定になるため registry 組立時に fail-fast。
+  it.each([/^language-x$/g, /^language-x$/y, /^language-x$/gy])(
+    'フラグ付き %s は registry 組立時に throw',
+    (pattern) => {
+      expect(() => buildRegistry([{ classPatterns: [pattern] }])).toThrow('フラグ');
+      expect(() => createSanitizer([{ classPatterns: [pattern] }])).toThrow('フラグ');
+    },
+  );
+
+  it('フラグ無し (および i 等の無害フラグ) は通る陽性対照', () => {
+    expect(() =>
+      buildRegistry([{ classPatterns: [/^language-x$/, /^language-y$/i] }]),
+    ).not.toThrow();
+  });
+});
+
+describe('createSanitizer (URI 契約)', () => {
+  it('data: 画像 URI は img src で通る (DOMPurify 既定・仕様書に明記)', () => {
+    const html = sanitize('<img src="data:image/png;base64,iVBORw0KGgo=" alt="x">');
+    expect(html).toContain('<img');
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+  });
+
+  it('data: URI は a href では通らない (data: 許可は画像系タグに限る)', () => {
+    const html = sanitize('<a href="data:text/html;base64,PHNjcmlwdD4=">リンク</a>');
+    expect(html).not.toContain('data:');
+    expect(html).toContain('リンク');
   });
 });
 
