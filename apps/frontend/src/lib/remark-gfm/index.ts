@@ -2,6 +2,10 @@
  * KFM の GFM 層 — remark-gfm の薄いラッパ。
  * 消費側は remark-gfm を直接 import せず本モジュールを経由する
  * (将来 @koyori-app/remark-gfm へ切り出すときの seam)。
+ * リスト/blockquote/リンクの見た目は `style.css` のサイドカー CSS で当てる。
+ * 消費契約は「明示 import ＋ v-html の器へ KFM_CONTENT_CLASS (./content-class.ts) を
+ * 付与」の二点で一つ (レンダラは CSS を import せず、GFM 出力は素の ul/blockquote/a
+ * ゆえ器 scope が無いと一行も当たらない)。
  */
 export { default as remarkGfm } from 'remark-gfm';
 

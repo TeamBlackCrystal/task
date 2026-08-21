@@ -245,7 +245,14 @@ export default defineConfig({
   fmt: {
     singleQuote: true,
     trailingComma: 'all',
-    ignorePatterns: ['content/**/*.md', 'src/components/ui/**', 'src/components/originui/**'],
+    ignorePatterns: [
+      'content/**/*.md',
+      'src/components/ui/**',
+      'src/components/originui/**',
+      // renderDescription の事前生成 fixture (toMatchFileSnapshot)。整形すると
+      // レンダラ出力とのバイト一致が壊れ drift 検査が偽陽性で落ちる
+      'src/lib/kfm-story-fixtures/rendered/**',
+    ],
   },
   lint: {
     plugins: ['oxc', 'typescript', 'unicorn', 'vue'],

@@ -15,7 +15,12 @@
  *   決定的なのは同一入力→同一 HTML (L1 キャッシュ・SSR/CSR 同一性) を保つため。
  * - クライアントは再パース・再サニタイズしない (DOMPurify はサーバで一度だけ)。
  * - alert の見た目は消費側で `@/lib/remark-koyori-alerts/style.css` を明示 import する
- *   (サイドカー方式)。
+ *   (サイドカー方式。alerts はレンダラが emit する .kfm-alert 等を CSS が直接指すため
+ *   import だけで当たる)。GFM 要素 (リスト/blockquote/リンク) は
+ *   `@/lib/remark-gfm/style.css` の明示 import に加え、v-html する器へ
+ *   class="kfm-content" (@/lib/remark-gfm/content-class.ts) を付ける (Tailwind
+ *   preflight 対策)。GFM 出力は素の ul/blockquote/a で掴む class が無いため、
+ *   器 scope が無いと GFM CSS は一行も当たらない。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全
  * リクエスト・全 tenant) で共有される。L1 キャッシュが full-text キーであることが
