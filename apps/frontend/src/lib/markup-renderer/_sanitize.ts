@@ -64,8 +64,8 @@ export function buildRegistry(schemas: readonly SanitizeSchema[]): Registry {
 
 // isomorphic-dompurify の DOMPurify はモジュール singleton で addHook もグローバルに効く。
 // 常駐フックは素の DOMPurify.sanitize を使う無関係コードの出力まで書き換えてしまう
-// (registry 不在の fail-closed で class 全消去) ため、フックは sanitize() 実行中のみ
-// 据え付け、finally で必ず撤去して有効範囲を sanitizer 内に閉じる。
+// (registry 不在の fail-closed で class 全消去) ため、各 sanitize() 呼び出しの直前に
+// addHook し、呼び出し後は finally で必ず removeHook する。
 // - DOMPurify.sanitize は同期であり、据え付け〜撤去の間に他者のコードは走らない。
 // - removeHook は関数指定の除去 (dompurify 3.x) を使い、他者が据えたフックには触れない。
 // - 別インスタンス化 (createDOMPurify(window) 相当) は SSR 側 window (jsdom) が

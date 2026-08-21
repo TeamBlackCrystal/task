@@ -108,7 +108,7 @@ describe('createSanitizer (XSS 基本)', () => {
   });
 });
 
-describe('createSanitizer (フックの有効範囲は sanitizer 内に閉じる)', () => {
+describe('createSanitizer (フックは sanitize() 呼び出しごとに据え付けて撤去する)', () => {
   it('sanitizer 構築後も素の DOMPurify.sanitize は class を保持する (グローバル汚染なし)', () => {
     // 本番構成 sanitizer (module top の createSanitizer) が構築済みの状態で、レンダラを
     // 経由しない素の DOMPurify 利用者が影響を受けないこと。常駐フックが残っていると
