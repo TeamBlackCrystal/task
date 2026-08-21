@@ -38,12 +38,12 @@
   list-style-type: square;
 }
 
-/* タスクリストは checkbox がマーカー役のため bullet を消す。
-   padding-left: 0 は最上位リストの相殺が目的だが、このセレクタは入れ子の
+/* タスクリストは checkbox がマーカー役のため、子 li 側で bullet を消す。
+   親 ul は disc のままにして子ルール削除時に bullet が復活するようにし、
+   継承による監視の空振りを防ぐ。padding-left: 0 は最上位リストの相殺が目的だが、このセレクタは入れ子の
    ul.contains-task-list にも当たるため、次のルールが入れ子の字下げを戻す
    (無いと親子タスクが同じ横位置に潰れる)。詳細度 (0,3,1) > (0,2,1) で入れ子側が勝つ */
 .kfm-content ul.contains-task-list {
-  list-style: none;
   padding-left: 0;
 }
 
