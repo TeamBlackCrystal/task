@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,8 @@ const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Map<
     'rehype-starry-night',
     { selectorToken: /\.pl-[\w-]/, ownVariablePrefix: '--color-prettylights-syntax-' },
   ],
+  // mermaid のサイドカーは自身が emit する kfm-mermaid 要素を直に指すため器を要さない。
+  ['remark-kfm-mermaid', { selectorToken: new RegExp(`(?:^|[\\s>])${KFM_MERMAID_TAG}(?![\\w-])`) }],
 ]);
 const CONTAINER_SCOPED_CSS_PATHS = SIDECAR_CSS_PATHS.filter((cssPath) =>
   CONTAINER_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),
