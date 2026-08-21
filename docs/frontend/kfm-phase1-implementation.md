@@ -251,6 +251,9 @@ scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同
 - `kfm-starry-night-init-failure.test.ts` — 初期化失敗（poisoned promise）を捨てて次描画で
   作り直す回収経路
 - `kfm-story-fixtures.test.ts` — story fixture の drift 検査・孤立 rendered/*.html の検出
+- `kfm-mermaid.test.ts` — mermaid フェンス変換（remark 層）と custom element（client 層・
+  mermaid mock）の契約固定（strict 固定・.dark テーマ切替・SVG 挿入前検査・error フォールバック）
+- `kfm-mermaid-fixtures.test.ts` — mermaid story fixture（rendered/mermaid-*.html）の drift 検査
 
 セキュリティ上の要点（inline style 禁止・full-text キー・client ガード）はいずれも
 「その規約を破る変更を入れるとテストが落ちる」形で書かれている。
@@ -262,7 +265,9 @@ KFM の Storybook story (`stories/kfm/*`) は本番と同じ「サーバ生成 H
 （`remark-gfm/content-class.ts` の定数を import）で、GFM サイドカー CSS が本番と同じ条件で
 当たる。fixture の運用は次の四点:
 
-- 入力の単一ソースは `src/lib/kfm-story-fixtures/inputs.ts`（キー 1 つ = fixture 1 枚 = story 1 つが基本）
+- 入力の単一ソースは `src/lib/kfm-story-fixtures/inputs.ts` と `inputs-mermaid.ts`
+  （キー 1 つ = fixture 1 枚 = story 1 つが基本。他枝と fixture 名を重ねないため mermaid 分は
+  `mermaid-` 接頭辞の別ファイル・drift 検査は `kfm-mermaid-fixtures.test.ts`）
 - `rendered/*.html` は `renderDescription` の事前生成物で、手で書き換えない
 - 再生成は `pnpm test:unit --update`（`kfm-story-fixtures.test.ts` の `toMatchFileSnapshot` が drift を CI で強制）
 - `vite.config.ts` の `fmt.ignorePatterns` から `rendered/**` を外すと drift 検査が偽陽性で落ちる（生成 HTML の整形差分を formatter が触るため）
