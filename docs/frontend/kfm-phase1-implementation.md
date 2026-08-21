@@ -170,6 +170,11 @@ import '@/lib/rehype-starry-night/style.css';
   class 戦略ダークに追従。OS 設定連動の both.css は使わない — 発火条件を
   `.dark` の一系統に畳み、OS ダーク × アプリライトでコードだけ暗転する継ぎ目を防ぐ）
 
+着色 transformer の初期化・変換が reject した場合、`renderDescription` も reject する。
+未着色コードへ部分フォールバックはせず、`+data.ts` が本文 HTML を await する標準構成では
+ページデータ生成が失敗するため、コードブロックだけでなく本文全体が描画されない。呼出側が
+独自に継続表示させる場合は、失敗を握り潰さず本文全体の明示的なエラー表示へ切り替えること。
+
 器クラスの単一ソースは `remark-gfm/content-class.ts`（`KFM_CONTENT_CLASS`）。CSS との
 scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同じ定数を使う
 （VRT baseline の器 = 本番の器）。

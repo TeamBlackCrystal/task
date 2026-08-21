@@ -33,7 +33,7 @@
  * 本ファイルは composition root であり、プラグイン (remark 層 ＋ sanitize スキーマ) を
  * コアへ注入する。コア実装 (_renderer / _sanitize / _cache) はプラグインを import しない。
  */
-import { createRehypeStarryNight, starryNightSanitizeSchema } from '@/lib/rehype-starry-night';
+import { starryNightSanitizeSchema } from '@/lib/rehype-starry-night/schema';
 import { gfmSanitizeSchema, remarkGfm } from '@/lib/remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
 import { resolveContentConfig } from './_config';
@@ -60,10 +60,23 @@ export type { SanitizeSchema } from './_sanitize';
 /** Phase 1: system 層の上書きなし = コード既定 (github profile) */
 const contentConfig = resolveContentConfig();
 
-// starry-night 実体 (WASM＋文法一式) を renderer スコープで一つ共有するプラグイン。
-// renderer 1 つにつき factory を 1 回呼ぶ — scope 付き描画が processor を都度構築しても
-// 文法初期化は走り直さない (共有と失敗回収の詳細は rehype-starry-night/index.ts)。
-const rehypeStarryNight = createRehypeStarryNight();
+type StarryNightTransformer = ReturnType<
+  ReturnType<(typeof import('@/lib/rehype-starry-night'))['createRehypeStarryNight']>
+>;
+
+// 重量級 starry-night seam は最初の着色 transform まで読み込まない。composition root の
+// 静的 import に戻すと、root を参照するだけの入口へ +417.5 KB raw が再混入する。
+// Promise と seam の factory は renderer スコープで一つだけ保持するため、scope 付き描画が
+// processor を都度構築しても文法初期化は走り直さない。
+let starryNightTransformerPromise: Promise<StarryNightTransformer> | undefined;
+const rehypeStarryNight = () =>
+  async function rehypeStarryNightLazy(...args: Parameters<StarryNightTransformer>) {
+    const transformer = await (starryNightTransformerPromise ??=
+      import('@/lib/rehype-starry-night').then(({ createRehypeStarryNight }) =>
+        createRehypeStarryNight()(),
+      ));
+    return transformer(...args);
+  };
 
 export const renderDescription = createRenderer({
   profiles: {

@@ -1,11 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LRUCache } from 'lru-cache';
 import type { PluggableList } from 'unified';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { buildCacheKey } from '../markup-renderer/_cache';
 import { createRenderer } from '../markup-renderer/_renderer';
 import { createRehypeStarryNight } from '../rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '../remark-koyori-alerts';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function createGithubRenderer(cache: LRUCache<string, string>) {
   return createRenderer({
@@ -92,8 +97,19 @@ describe('buildCacheKey (fingerprint / profile / scope / config 分離)', () => 
 
 describe('pipeline fingerprint (設定変更で旧エントリを拾わない)', () => {
   it('starry-night factory は fingerprint が観測できない options 口を持たない', () => {
-    // 引数を足すなら fingerprint 直列化とキー分離試験を同じ変更で追加すること。
+    // Function.length だけでは `(options = {})` が 0 になり素通りするため、型の引数 tuple
+    // も空であることを固定する。引数を足すなら fingerprint 直列化とキー分離試験を
+    // 同じ変更で追加すること。
     expect(createRehypeStarryNight.length).toBe(0);
+    expectTypeOf(createRehypeStarryNight).parameters.toEqualTypeOf<[]>();
+  });
+
+  it('composition root は重量級 starry-night seam を静的 import しない', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../markup-renderer/index.ts'), 'utf8');
+    expect(source).not.toMatch(
+      /^\s*import(?!\s+type\b)[^;]*from ['"]@\/lib\/rehype-starry-night['"];?$/m,
+    );
+    expect(source).toContain("import('@/lib/rehype-starry-night')");
   });
 
   it('sanitize スキーマが違う renderer は同一本文でも別キャッシュエントリになる', async () => {

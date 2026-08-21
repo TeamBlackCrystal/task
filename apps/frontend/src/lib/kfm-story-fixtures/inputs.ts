@@ -62,11 +62,9 @@ export const KFM_STORY_INPUTS = {
   // cmd_669 (starry-night 着色) の前後で差が見える基準。着色が入ると drift 検査が落ち、
   // 再生成後の絵に pl- span が現れる。
   'gfm-code-fence': [
-    '```ts',
-    'const total: number = items.length; // コメント',
-    'function greet(name: string): string {',
-    '  return `hello ${name}`;',
-    '}',
+    '```js',
+    "const message = 'GFM fence baseline';",
+    'console.log(message);',
     '```',
   ].join('\n'),
 

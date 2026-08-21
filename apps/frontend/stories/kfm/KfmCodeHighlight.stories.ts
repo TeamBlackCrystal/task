@@ -148,6 +148,11 @@ export const LongLine: Story = {
   },
   play: async ({ canvasElement }) => {
     await expectHighlighted(canvasElement);
+    const pre = canvasElement.querySelector('pre');
+    await expect(pre).not.toBeNull();
+    if (!(pre instanceof HTMLElement)) throw new Error('LongLine story に pre が無い');
+    // Story 名や説明だけでなく、狭い器に対する実寸で横溢れを主張する。
+    await expect(pre.scrollWidth).toBeGreaterThan(pre.clientWidth);
   },
 };
 

@@ -5,12 +5,17 @@ import { describe, expect, it } from 'vitest';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REMARK_CSS_PATHS = fs.globSync(path.join(__dirname, '../remark-*/style.css'));
-// 自身が emit する名前空間を直接指す CSS だけを除外する。
-// 新しい remark-* CSS は既定で器 scope の検査対象になり、未登録でも素通りしない。
-const NAMESPACED_REMARK_PLUGINS = new Set(['remark-koyori-alerts']);
-const CONTAINER_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter(
-  (cssPath) => !NAMESPACED_REMARK_PLUGINS.has(path.basename(path.dirname(cssPath))),
+const SIDECAR_CSS_PATHS = [
+  ...fs.globSync(path.join(__dirname, '../remark-*/style.css')),
+  ...fs.globSync(path.join(__dirname, '../rehype-*/style.css')),
+];
+// bare 要素を描画するプラグインだけ器クラスを要する。自身が emit する名前空間を
+// 直接指すサイドカーも明示分類し、remark-* だけを拾って rehype-* が検査網から
+// 抜ける状態を防ぐ。
+const CONTAINER_SCOPED_PLUGINS = new Set(['remark-gfm']);
+const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Set(['remark-koyori-alerts', 'rehype-starry-night']);
+const CONTAINER_SCOPED_CSS_PATHS = SIDECAR_CSS_PATHS.filter((cssPath) =>
+  CONTAINER_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),
 );
 
 /**
@@ -63,7 +68,7 @@ const isScoped = (selector: string): boolean => {
   });
 };
 
-describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () => {
+describe('KFM サイドカー CSS の消費契約 (scope 一致の機構)', () => {
   it('KFM_CONTENT_CLASS は文書化された値 kfm-content である', () => {
     // 器クラスは docs スニペットと消費側 .vue テンプレートに文字列として書かれる。
     // 値を変える = 既存消費側から CSS が黙って外れる破壊的変更なので、
@@ -84,15 +89,24 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     expect(isScoped(`@media print { .${KFM_CONTENT_CLASS} ul`)).toBe(false);
   });
 
-  it('器 scope が必要な remark-*/style.css の全ルールが器クラス子孫限定', () => {
-    const discoveredPlugins = REMARK_CSS_PATHS.map((cssPath) =>
+  it('remark-* / rehype-* の全サイドカーが scope 方式を明示分類される', () => {
+    const discoveredPlugins = SIDECAR_CSS_PATHS.map((cssPath) =>
+      path.basename(path.dirname(cssPath)),
+    ).sort();
+    const classifiedPlugins = [
+      ...CONTAINER_SCOPED_PLUGINS,
+      ...EMITTED_NAMESPACE_SCOPED_PLUGINS,
+    ].sort();
+    expect(discoveredPlugins).toEqual(classifiedPlugins);
+  });
+
+  it('器 scope が必要なサイドカーの全ルールが器クラス子孫限定', () => {
+    const discoveredPlugins = SIDECAR_CSS_PATHS.map((cssPath) =>
       path.basename(path.dirname(cssPath)),
     );
-    const containerScopedPlugins = CONTAINER_SCOPED_CSS_PATHS.map((cssPath) =>
-      path.basename(path.dirname(cssPath)),
-    );
-    const classifiedPlugins = [...NAMESPACED_REMARK_PLUGINS, ...containerScopedPlugins];
-    expect(classifiedPlugins.sort()).toEqual(discoveredPlugins.sort());
+    for (const plugin of CONTAINER_SCOPED_PLUGINS) {
+      expect(discoveredPlugins).toContain(plugin);
+    }
 
     const selectors = CONTAINER_SCOPED_CSS_PATHS.flatMap((cssPath) =>
       extractSelectors(fs.readFileSync(cssPath, 'utf8')).map((selector) => ({
