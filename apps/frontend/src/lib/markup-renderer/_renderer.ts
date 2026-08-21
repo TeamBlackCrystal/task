@@ -113,6 +113,9 @@ function rehypeScopeFootnoteLabel(clobberPrefix: string) {
       // 現行の mdast-util-to-hast は配列で emit するが、rehype 層が文字列を渡す場合も
       // space-separated token 列へ正規化し、以後の置換経路を一つに保つ。
       const describedBy = node.properties.ariaDescribedBy;
+      if (describedBy == null) {
+        return;
+      }
       const describedByTokens = (Array.isArray(describedBy) ? describedBy : [describedBy])
         .flatMap((value) => (typeof value === 'string' ? value.split(/\s+/) : []))
         .filter(Boolean);
