@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -90,6 +90,19 @@ function startImportCooldown() {
 
 onBeforeUnmount(clearImportCooldown);
 
+function resetImportState() {
+  importStarted.value = false;
+  importError.value = null;
+  clearImportCooldown();
+}
+
+// 解除は別タブ・別ユーザーからも起きるので、自分の解除操作ではなく連携状態の変化で捨てる。
+// 表示を隠すだけだと、再連携で connected が true に戻った瞬間に前回の結果表示が戻る
+watch(
+  () => (integration.value?.connected ? repoFullName.value : null),
+  () => resetImportState(),
+);
+
 async function startInstall() {
   installError.value = null;
   installPending.value = true;
@@ -134,10 +147,6 @@ async function confirmDisconnect() {
     await disconnectMutation.mutateAsync({
       params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
     });
-    // 表示を隠すだけだと、再連携で connected が true に戻った瞬間に前回の結果表示が戻る
-    importStarted.value = false;
-    importError.value = null;
-    clearImportCooldown();
     await queryClient.invalidateQueries({ queryKey: ['get', GITHUB_INTEGRATION_PATH] });
     isDisconnectOpen.value = false;
   } catch {

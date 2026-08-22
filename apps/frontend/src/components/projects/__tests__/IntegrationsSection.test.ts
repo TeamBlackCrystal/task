@@ -21,6 +21,8 @@ type MockState = {
   importStatus?: number;
   /** true にすると POST /github/import が解決せず、mutation が pending のままになる */
   hangImport?: boolean;
+  /** 連携先リポジトリ名（差し替えると連携先が変わった状況を作れる） */
+  repoName?: string;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -47,7 +49,7 @@ function stubFetch(state: MockState) {
           ? {
               connected: true,
               repo_owner: 'koyori-app',
-              repo_name: 'koyori',
+              repo_name: state.repoName ?? 'koyori',
               connected_at: '2026-07-01T00:00:00Z',
             }
           : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
@@ -286,6 +288,51 @@ describe('IntegrationsSection', () => {
     await flushPromises();
 
     expect(bodyButton('Issue を取り込む')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+  });
+
+  it('別タブで解除・再連携されても取り込みの結果表示とエラーが戻らない', async () => {
+    // この画面では解除操作をしない。連携状態の変化だけで状態が捨てられることを見る
+    const state: MockState = { connected: true, importStatus: 500 };
+    stubFetch(state);
+    const { queryClient } = mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+
+    // 別タブで解除された
+    state.connected = false;
+    await queryClient.refetchQueries();
+    await flushPromises();
+    expect(bodyButton('連携する')).toBeTruthy();
+
+    // 別タブで再連携された
+    state.connected = true;
+    state.importStatus = undefined;
+    await queryClient.refetchQueries();
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
+  });
+
+  it('連携先のリポジトリが変わったら取り込みの結果表示を引き継がない', async () => {
+    const state: MockState = { connected: true };
+    stubFetch(state);
+    const { queryClient } = mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    state.repoName = 'another-repo';
+    await queryClient.refetchQueries();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('koyori-app/another-repo');
     expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
   });
 
