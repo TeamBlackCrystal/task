@@ -247,13 +247,13 @@ export const DeepQuote: Story = {
 };
 
 export const CodeFence: Story = {
-  name: 'コードフェンス（着色前の素の姿）',
+  name: 'コードフェンス（着色済み）',
   args: { html: codeFenceHtml },
   parameters: {
     docs: {
       description: {
         story:
-          '壊れたら: 着色前の基準。cmd_669 (starry-night) が入ると drift 検査が落ち、fixture 再生成後にトークンが色分かれした絵へ変わる——それがこの story の役目。着色以外で絵が変わったらエスケープか pre/code 構造の変化。',
+          '壊れたら: starry-night のトークン class が消えて色分けが失われる、またはエスケープか pre/code 構造が変わると絵が変わる。',
       },
     },
   },

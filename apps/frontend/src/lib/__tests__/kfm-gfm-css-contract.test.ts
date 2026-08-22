@@ -6,11 +6,15 @@ import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REMARK_CSS_PATHS = fs.globSync(path.join(__dirname, '../remark-*/style.css'));
-// 自身が emit する名前空間を直接指す CSS だけを除外する。
+// 自身が emit する名前空間を直接指す CSS だけを器 scope から除外する。
+// 除外は無検査を意味しないため、プラグインごとに自前 namespace も宣言する。
 // 新しい remark-* CSS は既定で器 scope の検査対象になり、未登録でも素通りしない。
-const NAMESPACED_REMARK_PLUGINS = new Set(['remark-koyori-alerts']);
+const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Map([['remark-koyori-alerts', 'kfm-alert']]);
 const CONTAINER_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter(
-  (cssPath) => !NAMESPACED_REMARK_PLUGINS.has(path.basename(path.dirname(cssPath))),
+  (cssPath) => !EMITTED_NAMESPACE_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),
+);
+const EMITTED_NAMESPACE_SCOPED_CSS_PATHS = REMARK_CSS_PATHS.filter((cssPath) =>
+  EMITTED_NAMESPACE_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),
 );
 
 /**
@@ -63,6 +67,10 @@ const isScoped = (selector: string): boolean => {
   });
 };
 
+/** 任意の dark theme 祖先の後で、自身が emit する namespace class から始まること */
+const isEmittedNamespaceScoped = (selector: string, namespaceClass: string): boolean =>
+  new RegExp(`^(?:\\.dark\\s+)?\\.${namespaceClass}(?=$|--|__|[\\s.:#>+~\\[])`).test(selector);
+
 describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () => {
   it('KFM_CONTENT_CLASS は文書化された値 kfm-content である', () => {
     // 器クラスは docs スニペットと消費側 .vue テンプレートに文字列として書かれる。
@@ -84,6 +92,15 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     expect(isScoped(`@media print { .${KFM_CONTENT_CLASS} ul`)).toBe(false);
   });
 
+  it('名前空間検査器の陽性対照: 自前 class で始まる selector だけを許す', () => {
+    expect(isEmittedNamespaceScoped('.kfm-alert', 'kfm-alert')).toBe(true);
+    expect(isEmittedNamespaceScoped('.kfm-alert--note .kfm-alert__title', 'kfm-alert')).toBe(true);
+    expect(isEmittedNamespaceScoped('.dark .kfm-alert--note', 'kfm-alert')).toBe(true);
+    expect(isEmittedNamespaceScoped('.kfm-alert-like', 'kfm-alert')).toBe(false);
+    expect(isEmittedNamespaceScoped('blockquote .kfm-alert', 'kfm-alert')).toBe(false);
+    expect(isEmittedNamespaceScoped('.dark blockquote .kfm-alert', 'kfm-alert')).toBe(false);
+  });
+
   it('器 scope が必要な remark-*/style.css の全ルールが器クラス子孫限定', () => {
     const discoveredPlugins = REMARK_CSS_PATHS.map((cssPath) =>
       path.basename(path.dirname(cssPath)),
@@ -91,7 +108,10 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     const containerScopedPlugins = CONTAINER_SCOPED_CSS_PATHS.map((cssPath) =>
       path.basename(path.dirname(cssPath)),
     );
-    const classifiedPlugins = [...NAMESPACED_REMARK_PLUGINS, ...containerScopedPlugins];
+    const classifiedPlugins = [
+      ...EMITTED_NAMESPACE_SCOPED_PLUGINS.keys(),
+      ...containerScopedPlugins,
+    ];
     expect(classifiedPlugins.sort()).toEqual(discoveredPlugins.sort());
 
     const selectors = CONTAINER_SCOPED_CSS_PATHS.flatMap((cssPath) =>
@@ -104,5 +124,19 @@ describe('GFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     expect(selectors.length).toBeGreaterThanOrEqual(1);
     const unscoped = selectors.filter(({ selector }) => !isScoped(selector));
     expect(unscoped).toEqual([]);
+  });
+
+  it('器 scope 免除サイドカーの全ルールが自身の namespace class から始まる', () => {
+    for (const cssPath of EMITTED_NAMESPACE_SCOPED_CSS_PATHS) {
+      const plugin = path.basename(path.dirname(cssPath));
+      const namespaceClass = EMITTED_NAMESPACE_SCOPED_PLUGINS.get(plugin);
+      expect(namespaceClass).toBeDefined();
+      const selectors = extractSelectors(fs.readFileSync(cssPath, 'utf8'));
+      expect(selectors.length).toBeGreaterThanOrEqual(1);
+      const unscoped = selectors.filter(
+        (selector) => !namespaceClass || !isEmittedNamespaceScoped(selector, namespaceClass),
+      );
+      expect(unscoped).toEqual([]);
+    }
   });
 });
