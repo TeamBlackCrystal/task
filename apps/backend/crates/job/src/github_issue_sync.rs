@@ -76,9 +76,17 @@ pub async fn process(job: GithubIssueSyncJob, state: Data<JobState>) -> Result<(
 
     match job {
         GithubIssueSyncJob::Import { project_id } => {
-            let imported =
+            let result =
                 service::github::import_project(&state.db, &state.http_client, github, project_id)
-                    .await?;
+                    .await;
+            // 成否によらず取り込み枠を返す（失敗のまま塞ぐと、ユーザー自身の
+            // やり直しまで TTL のあいだ弾かれる）
+            if let Err(e) =
+                service::github::release_import_slot(&state.redis_client, project_id).await
+            {
+                tracing::warn!(error = %e, %project_id, "release github import lock failed");
+            }
+            let imported = result?;
             tracing::info!(%project_id, imported, "github issue import finished");
         }
         GithubIssueSyncJob::Push { task_id } => {

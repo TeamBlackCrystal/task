@@ -513,12 +513,38 @@ pub async fn import_github_issues(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    github_issue_sync::enqueue(
+    // 同じプロジェクトの取り込みが待機中・実行中なら積み直さない。
+    // Redis に触れない場合は握り潰して従来どおり積む（重複防止は最適化であって
+    // 認可ではないため、ここで API を落とさない）
+    let acquired = match service::github::try_acquire_import_slot(&state.redis_client, project_id)
+        .await
+    {
+        Ok(acquired) => acquired,
+        Err(e) => {
+            tracing::warn!(error = %e, %project_id, "github import lock unavailable; enqueueing anyway");
+            true
+        }
+    };
+
+    if !acquired {
+        tracing::info!(%project_id, "github import already queued; skipping duplicate enqueue");
+        return Ok(StatusCode::ACCEPTED);
+    }
+
+    if let Err(e) = github_issue_sync::enqueue(
         &state.github_issue_sync_storage,
         GithubIssueSyncJob::Import { project_id },
     )
     .await
-    .map_err(AppError::Internal)?;
+    {
+        // 積めなかったのにロックだけ残ると、TTL のあいだやり直せなくなる
+        if let Err(release_err) =
+            service::github::release_import_slot(&state.redis_client, project_id).await
+        {
+            tracing::warn!(error = %release_err, %project_id, "release github import lock failed");
+        }
+        return Err(AppError::Internal(e));
+    }
 
     Ok(StatusCode::ACCEPTED)
 }

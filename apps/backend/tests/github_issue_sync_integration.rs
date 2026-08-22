@@ -7,7 +7,8 @@ use backend::utils::github::sync::{
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, github_issue_links, project_statuses, tasks};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait,
+    QueryFilter, QueryOrder, Statement,
 };
 use uuid::Uuid;
 use wiremock::matchers::{method, path, path_regex};
@@ -21,6 +22,27 @@ fn import_path(tp: &TestTenantProject) -> String {
         "/v1/tenants/{}/projects/{}/github/import",
         tp.tenant_id, tp.project_id
     )
+}
+
+/// 積まれている取り込みジョブの件数。ペイロードは JSON なので project_id で絞る
+/// （apalis.jobs.job は bytea。SeaORM の生 SQL では `?` ではなく `$N` を使う）。
+async fn queued_import_jobs(app: &TestApp, project_id: Uuid) -> i64 {
+    let row = app
+        .state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT COUNT(*) AS count FROM apalis.jobs \
+             WHERE job_type = $1 AND convert_from(job, 'UTF8') LIKE $2",
+            [
+                backend::jobs::github_issue_sync::QUEUE_NAME.into(),
+                format!("%{project_id}%").into(),
+            ],
+        ))
+        .await
+        .expect("count import jobs")
+        .expect("count row");
+    row.try_get::<i64>("", "count").expect("count column")
 }
 
 fn unique_installation_id() -> i64 {
@@ -228,6 +250,46 @@ async fn github_issue_sync_suite() {
             accepted.status(),
             StatusCode::ACCEPTED,
             "オーナーのインポートは 202（過剰拒否でないこと）"
+        );
+
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            1,
+            "202 を返したら取り込みジョブが 1 件積まれている"
+        );
+
+        // 連打しても、取り込み中のあいだは積み直さない（GitHub API のレート制限と
+        // ワーカー時間を無駄に食わせない）。API は 202 のまま
+        let repeated = app
+            .post_json_with_session(&import_path(&tp), serde_json::json!({}))
+            .await;
+        assert_eq!(
+            repeated.status(),
+            StatusCode::ACCEPTED,
+            "連打しても 202（取り込みは開始済みなのでエラーにしない）"
+        );
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            1,
+            "連打しても取り込みジョブは増えない"
+        );
+
+        // 取り込みが終われば（ジョブ側が枠を返せば）また積める
+        backend::utils::github::release_import_slot(&app.state.redis_client, tp.project_id)
+            .await
+            .expect("release import slot");
+        let after_release = app
+            .post_json_with_session(&import_path(&tp), serde_json::json!({}))
+            .await;
+        assert_eq!(
+            after_release.status(),
+            StatusCode::ACCEPTED,
+            "枠が返っていれば再実行できる"
+        );
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            2,
+            "枠が返っていれば取り込みジョブが積まれる"
         );
 
         app.reset_session_client();
