@@ -188,6 +188,13 @@ describe('KFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     ]);
   });
 
+  it.each([...EMITTED_NAMESPACE_SCOPED_PLUGINS])(
+    '%s の免除検査は違反セレクタを拒む',
+    (_plugin, spec) => {
+      expect(emittedNamespaceViolations('body { color: red }', spec)).toEqual(['body']);
+    },
+  );
+
   it('免除サイドカーの全ルールが自身の emit 名前空間限定 (theme ブリッジは自変数のみ)', () => {
     const discoveredPlugins = new Map(
       SIDECAR_CSS_PATHS.map((cssPath) => [path.basename(path.dirname(cssPath)), cssPath]),
