@@ -64,6 +64,8 @@ export type RenderOptions = {
    * 脚注 id の衝突回避 scope。同一ページへ複数の KFM 断片 (タスク本文＋コメント等) を
    * 並べる場合、断片ごとに決定的な scope (例: `comment-42`) を渡す。remark-rehype の
    * clobberPrefix へ `user-content-<scope>-` として反映され、キャッシュキーにも載る。
+   * `footnote-label` とそれを指す `aria-describedby` も core の rehype 層が同じ prefix で
+   * scope 化する。
    * random ではなく呼び出し側の決定的識別子である理由: 同一入力→同一 HTML を保たないと
    * L1 キャッシュ前提 (SSR/CSR 同一性) が崩れるため。[A-Za-z0-9_-]+ 以外は throw。
    * fn / fnref を `-` 区切りセグメントとして含む scope も throw
