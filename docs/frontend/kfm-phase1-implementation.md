@@ -204,7 +204,7 @@ import '@/lib/remark-kfm-mermaid/style.css';
 <div class="kfm-content" v-html="descriptionHtml" />
 ```
 
-三つのサイドカー CSS は消費契約の前提が異なる:
+四つのサイドカー CSS は消費契約の前提が異なる:
 
 - **alerts CSS は import のみで当たる** — レンダラ自身が名前空間クラス
   （`.kfm-alert` 等）を emit し、CSS がそれを直接指すため器は不要

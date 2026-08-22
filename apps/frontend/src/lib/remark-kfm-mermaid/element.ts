@@ -9,7 +9,7 @@
  *   モジュール評価が落ちない)。
  * - securityLevel は strict 固定 (緩める変更は禁止)。suppressErrorRendering で
  *   構文エラー時に mermaid が DOM へエラー図を注入するのも止め、失敗は状態値で表す。
- * - 挿入前の最終防御 (parseSafeSvg) は sink と同じ HTML パースで検査し、href 系の
+ * - 挿入前の最終防御 (parseSafeSvg) は sink と同じ HTML パースで検査し、href / src 系の
  *   危険スキームを要素種別ごとに拒否する (遷移 sink は実行可能スキーム全拒否・
  *   画像は data:image/ のみ許可)。XML パーサを使わない理由はその関数のコメントを正とする。
  *
@@ -78,7 +78,7 @@ function parseSafeSvg(svg: string): DocumentFragment {
       if (name.startsWith('on')) {
         throw new Error('mermaid returned an unsafe SVG attribute');
       }
-      if (name === 'href' || name === 'xlink:href') {
+      if (name === 'href' || name === 'xlink:href' || name === 'src') {
         // HTML パースで実体参照は復号済み。URL parser が scheme 判定前に無視する
         // ASCII 制御・空白も除いてから判定し、java\nscript: 等の難読化を通さない。
         const normalized = attribute.value.replace(/[\u0000-\u0020\u007f-\u009f]/g, '');

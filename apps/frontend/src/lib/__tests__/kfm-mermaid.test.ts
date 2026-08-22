@@ -237,12 +237,23 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     expect(element.shadowRoot?.querySelector('image')).not.toBeNull();
   });
 
+  it('image の src="data:image/…" も rendered (src 系画像 sink も同じ data:image 方針)', async () => {
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg><image width="48" height="48" src="data:image/png;base64,iVBORw0KGgo="></image></svg>',
+    });
+    const element = await mount('C4Context\n  Person(customer, "顧客")');
+    expect(element.dataset.kfmMermaid).toBe('rendered');
+    expect(element.shadowRoot?.querySelector('image')).not.toBeNull();
+  });
+
   it.each([
     [
       'image の data:text/html (画像でない data:)',
       '<image href="data:text/html,<script>alert(1)</script>">',
     ],
     ['image の javascript:', '<image xlink:href="javascript:alert(1)">'],
+    ['image src の data:text/html', '<image src="data:text/html,<script>alert(1)</script>">'],
+    ['image src の javascript:', '<image src="javascript:alert(1)">'],
     [
       'a の data:image (遷移 sink は data: 全拒否)',
       '<a href="data:image/svg+xml,<svg onload=alert(1)>"><text>x</text></a>',
