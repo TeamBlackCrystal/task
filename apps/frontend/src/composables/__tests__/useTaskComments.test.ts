@@ -221,6 +221,20 @@ describe('useTaskComments', () => {
     expect(comments.submitError.value).toBe(null);
   });
 
+  it('clearReplyError は返信失敗の表示を消す', async () => {
+    control.threads = [sampleThread('c-1', '親コメント')];
+    control.rejectPost = { status: 400, message: 'thread deleted' };
+    mountHost();
+    await flushPromises();
+
+    await comments.submitComment('返信です', 'c-1');
+    expect(comments.replyError.value).not.toBe(null);
+
+    comments.clearReplyError();
+    expect(comments.replyError.value).toBe(null);
+    expect(comments.replyErrorThreadId.value).toBe(null);
+  });
+
   it('編集は PUT body を送り、成功で true を返して一覧を取り直す', async () => {
     control.threads = [sampleThread('c-1', '元の本文')];
     mountHost();

@@ -166,8 +166,21 @@ describe('TaskComments', () => {
     });
 
     expect(wrapper.text()).toContain('削除されたコメント');
+    expect(wrapper.text()).not.toContain('(編集済み)');
     expect(wrapper.find('button[aria-label="コメントを編集"]').exists()).toBe(false);
     expect(wrapper.find('button[aria-label="コメントを削除"]').exists()).toBe(false);
+  });
+
+  it('削除済みでも updated_at が異なっていても (編集済み) は出さない', () => {
+    const wrapper = mountComments({
+      threads: [
+        thread('c-1', null, {
+          is_deleted: true,
+          updated_at: '2026-08-19T02:00:00Z',
+        }),
+      ],
+    });
+    expect(wrapper.text()).not.toContain('(編集済み)');
   });
 
   it('編集済みコメントには (編集済み) を出す', () => {
@@ -216,6 +229,25 @@ describe('TaskComments', () => {
     const replyForm = wrapper.find('textarea[aria-label="返信"]');
     expect(replyForm.exists()).toBe(true);
     expect(wrapper.text()).toContain('返信を投稿できませんでした（bad-request）');
+  });
+
+  it('返信フォームを開き直すとき前回の失敗表示を消す', async () => {
+    const onClearReplyError = vi.fn();
+    const wrapper = mountComments({
+      threads: [thread('c-1', '親コメント')],
+      onClearReplyError,
+      replyError: '返信を投稿できませんでした（bad-request）',
+      replyErrorThreadId: 'c-1',
+    });
+
+    const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
+    await replyOpenButton!.trigger('click');
+    expect(onClearReplyError).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ replyError: null, replyErrorThreadId: null });
+    const cancelButton = wrapper.findAll('button').find((button) => button.text() === 'キャンセル');
+    await cancelButton!.trigger('click');
+    expect(onClearReplyError).toHaveBeenCalledTimes(2);
   });
 
   it('更新・削除の失敗は対象コメントの中に出す', async () => {

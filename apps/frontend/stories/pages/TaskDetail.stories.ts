@@ -260,6 +260,9 @@ function createMockFetch(overrides: MockOptions = {}) {
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
     }
+    if (url.includes('/labels')) {
+      return jsonResponse(sampleLabels);
+    }
     // /tasks/{id}/comments は /tasks/ の分岐より先に受ける
     if (url.includes('/comments')) {
       if (method === 'GET') {

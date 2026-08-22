@@ -46,6 +46,8 @@ const props = defineProps<{
   onUpdate: (commentId: string, body: string) => Promise<boolean>;
   /** 削除の確定（useTaskComments.deleteComment） */
   onDelete: (commentId: string) => Promise<boolean>;
+  /** 返信フォームを開き直すときに前回の失敗表示を消す（useTaskComments.clearReplyError） */
+  onClearReplyError?: () => void;
 }>();
 
 const newDraft = ref('');
@@ -61,11 +63,13 @@ async function submitNewComment() {
 }
 
 function openReply(threadId: string) {
+  props.onClearReplyError?.();
   replyTargetId.value = threadId;
   replyDraft.value = '';
 }
 
 function cancelReply() {
+  props.onClearReplyError?.();
   replyTargetId.value = null;
   replyDraft.value = '';
 }

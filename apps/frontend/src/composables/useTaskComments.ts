@@ -122,6 +122,12 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     };
   }
 
+  /** 返信フォームを開き直すときに前回の失敗表示を消す */
+  function clearReplyError() {
+    replyError.value = null;
+    replyErrorThreadId.value = null;
+  }
+
   /**
    * 投稿。parentCommentId を渡すとそのスレッドへの返信になる。
    * 成功で true（呼び出し側が下書きを消してよい）、失敗で false（下書きを残す）。
@@ -219,6 +225,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     deletingCommentId,
     deleteError,
     deleteErrorCommentId,
+    clearReplyError,
     submitComment,
     updateComment,
     deleteComment,

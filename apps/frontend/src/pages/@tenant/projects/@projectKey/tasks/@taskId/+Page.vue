@@ -107,6 +107,7 @@ const {
   deletingCommentId,
   deleteError: commentDeleteError,
   deleteErrorCommentId,
+  clearReplyError,
   submitComment,
   updateComment,
   deleteComment,
@@ -215,6 +216,7 @@ function onDeleteDialogCancel(event: Event) {
         :on-submit="submitComment"
         :on-update="updateComment"
         :on-delete="deleteComment"
+        :on-clear-reply-error="clearReplyError"
       />
     </template>
     <template #footer>

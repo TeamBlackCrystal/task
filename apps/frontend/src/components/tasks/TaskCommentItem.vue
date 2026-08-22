@@ -79,7 +79,9 @@ async function confirmDelete() {
       <span>{{ formatTaskDate(comment.created_at) }}</span>
       <!-- backend が作成時に created_at と updated_at へ同一の now を入れるため、
            不一致は「編集された」と等価（create_comment の now 一回化とペア） -->
-      <span v-if="comment.updated_at !== comment.created_at">(編集済み)</span>
+      <span v-if="!comment.is_deleted && comment.updated_at !== comment.created_at">
+        (編集済み)
+      </span>
       <span v-if="updating || deleting" class="inline-flex items-center">
         <Loader2 class="size-3 animate-spin" aria-hidden="true" />
       </span>
