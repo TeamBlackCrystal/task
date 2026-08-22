@@ -35,10 +35,10 @@
  * 本ファイルは composition root であり、プラグイン (remark 層 ＋ sanitize スキーマ) を
  * コアへ注入する。コア実装 (_renderer / _sanitize / _cache) はプラグインを import しない。
  */
-import { starryNightSanitizeSchema } from '@/lib/rehype-starry-night/schema';
-import { gfmSanitizeSchema, remarkGfm } from '@/lib/remark-gfm';
-import { kfmMermaidSanitizeSchema, remarkKfmMermaid } from '@/lib/remark-kfm-mermaid';
-import { koyoriAlertsSanitizeSchema, remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
+import { remarkGfm } from '@/lib/remark-gfm';
+import { remarkKfmMermaid } from '@/lib/remark-kfm-mermaid';
+import { remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
+import { kfmSanitizeSchemas } from './_schemas';
 import { resolveContentConfig } from './_config';
 import { createRenderer } from './_renderer';
 
@@ -101,12 +101,7 @@ export const renderDescription = createRenderer({
     },
     // Phase 2 seam: kfm profile はここへ remark / rehype 層を足す (コアは不変)。
   },
-  sanitizeSchemas: [
-    gfmSanitizeSchema,
-    koyoriAlertsSanitizeSchema,
-    starryNightSanitizeSchema,
-    kfmMermaidSanitizeSchema,
-  ],
+  sanitizeSchemas: kfmSanitizeSchemas,
   contentConfig,
   // config の既定 profile を描画既定へ実際に接続する (contentConfig はキャッシュキー用の
   // 不透明値でしかないため、ここで渡さない限り defaultProfile は描画に効かない)

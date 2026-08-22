@@ -4,6 +4,8 @@ import classSpoofHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-class-spo
 import inlineStyleHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-inline-style.html?raw';
 import scriptHtml from '@/lib/kfm-story-fixtures/rendered/sanitize-script.html?raw';
 import { createSanitizer } from '@/lib/markup-renderer/_sanitize';
+// 本番と同じスキーマ一覧の単一ソース (_schemas.ts)。story 側で一覧を組み直さない
+import { kfmSanitizeSchemas } from '@/lib/markup-renderer/_schemas';
 // class-spoof story は正規 alert を含むため、消費側として CSS サイドカーを明示 import。
 // 本番消費側は alerts / GFM の両サイドカーを import するため story も両方揃える
 // (現 fixture に GFM 対象要素は無いが、器の CSS 条件は本番と常に一致させる)
@@ -11,14 +13,14 @@ import '@/lib/remark-koyori-alerts/style.css';
 import '@/lib/remark-gfm/style.css';
 // 器は本番と同じ .kfm-content (単一ソース = content-class.ts)
 import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
-import { gfmSanitizeSchema } from '@/lib/remark-gfm';
-import { koyoriAlertsSanitizeSchema } from '@/lib/remark-koyori-alerts';
 
 /*
  * KFM サニタイズの story 群。「通すべきものが通り、通してはならぬものが通らない」の
  * 両側を同じ絵に並べる (消えたことが絵で見える)。
  * fixture は renderDescription の事前生成 HTML (単一ソース = kfm-story-fixtures/inputs.ts、
- * drift 検査 = kfm-story-fixtures.test.ts)。v-html のみの同期描画で VRT が決定的になる。
+ * drift 検査 = kfm-story-fixtures.test.ts)。本 story 群は fixture に加えて攻撃 probe を
+ * module 評価時に同期サニタイズして足す (下の sanitizeStoryProbe)。描画自体は v-html の
+ * 同期描画のままで、probe 生成も同期ゆえ VRT の決定性は保たれる。
  */
 
 type KfmStoryArgs = { html: string };
@@ -26,7 +28,7 @@ type KfmStoryArgs = { html: string };
 // fixture は本番レンダラ全体の出力を固定する一方、生 Markdown の HTML は DOMPurify より
 // 前に remark-rehype が落とす。防御層の story が前段の挙動だけを見ないよう、攻撃 probe は
 // 本番と同じ sanitizer 設定へ直接通して fixture に足す。
-const sanitizeStoryProbe = createSanitizer([gfmSanitizeSchema, koyoriAlertsSanitizeSchema]);
+const sanitizeStoryProbe = createSanitizer(kfmSanitizeSchemas);
 
 const kfmRender = (args: KfmStoryArgs) => ({
   setup: () => ({ args }),
@@ -35,7 +37,7 @@ const kfmRender = (args: KfmStoryArgs) => ({
 
 const meta = {
   title: 'KFM/Sanitize',
-  tags: ['autodocs', 'sanitize-contract'],
+  tags: ['autodocs'],
   render: kfmRender,
 } satisfies Meta<KfmStoryArgs>;
 
