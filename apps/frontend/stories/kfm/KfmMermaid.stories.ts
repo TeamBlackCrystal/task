@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { expect, waitFor } from 'storybook/test';
 import brokenHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-broken.html?raw';
+import c4Html from '@/lib/kfm-story-fixtures/rendered/mermaid-c4.html?raw';
 import clickHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-click.html?raw';
 import flowchartHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-flowchart.html?raw';
 import noneHtml from '@/lib/kfm-story-fixtures/rendered/mermaid-none.html?raw';
@@ -96,6 +97,27 @@ export const State: Story = {
   },
   play: async ({ canvasElement }) => {
     await expectRendered(canvasElement);
+  },
+};
+
+export const C4Context: Story = {
+  name: 'C4（data:image アイコン付き・正常出力の回帰）',
+  args: { html: c4Html },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          '壊れたら: C4 は Person アイコンを <image xlink:href="data:image/png;base64,…"> で埋める唯一の図種。error へ倒れたら、挿入前検査 (element.ts) が data: を画像 sink まで一律拒否へ戻った崩れ——実 mermaid 出力を通すこの story がその回帰アンカー。',
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const element = await expectRendered(canvasElement);
+    // 検査を通って挿入された実出力に data:image の Person アイコンが実在することまで測る
+    const icon = element.shadowRoot?.querySelector('image');
+    await expect(icon).not.toBeNull();
+    const href = icon?.getAttribute('xlink:href') ?? icon?.getAttribute('href') ?? '';
+    await expect(href.startsWith('data:image/')).toBe(true);
   },
 };
 

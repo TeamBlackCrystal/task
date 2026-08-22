@@ -224,6 +224,72 @@ describe('KfmMermaidElement (client 層・mermaid は mock)', () => {
     consoleError.mockRestore();
   });
 
+  it('C4 の Person アイコン (<image xlink:href="data:image/…">) は rendered (画像 sink の data:image 許可)', async () => {
+    // mermaid@11.16.1 の C4 実出力形 (c4Diagram chunk の drawImage): Person は
+    // <image xlink:href="data:image/png;base64,…"> で描かれる。data: 一律拒否へ
+    // 戻すとこのテストが落ちる (C4 図全滅の回帰アンカー。実 mermaid 出力を通す
+    // 本物の回帰は stories/kfm/KfmMermaid.stories.ts の C4Context story)
+    mermaidMock.render.mockResolvedValueOnce({
+      svg: '<svg><g><image width="48" height="48" xlink:href="data:image/png;base64,iVBORw0KGgo="></image></g></svg>',
+    });
+    const element = await mount('C4Context\n  Person(customer, "顧客")');
+    expect(element.dataset.kfmMermaid).toBe('rendered');
+    expect(element.shadowRoot?.querySelector('image')).not.toBeNull();
+  });
+
+  it.each([
+    [
+      'image の data:text/html (画像でない data:)',
+      '<image href="data:text/html,<script>alert(1)</script>">',
+    ],
+    ['image の javascript:', '<image xlink:href="javascript:alert(1)">'],
+    [
+      'a の data:image (遷移 sink は data: 全拒否)',
+      '<a href="data:image/svg+xml,<svg onload=alert(1)>"><text>x</text></a>',
+    ],
+  ])('%s を含む SVG は error へ倒す', async (_label, inner) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mermaidMock.render.mockResolvedValueOnce({ svg: `<svg>${inner}</svg>` });
+    const element = await mount('flowchart TD\n  A --> B');
+    expect(element.dataset.kfmMermaid).toBe('error');
+    expect(element.shadowRoot).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it('描画中に再接続しても、一時コンテナの中身が二度目の描画ソースへ混入しない', async () => {
+    // 一度目の render が一時コンテナへ中間 DOM を書いたまま解決しない状況を作り、
+    // その間に切断→再接続する。二度目の render が textContent 経由でコンテナの
+    // 中身を拾うと、ソースが「元ソース＋中間 DOM のテキスト」に化ける
+    let resolveFirstRender!: (value: { svg: string }) => void;
+    mermaidMock.render.mockImplementationOnce(async (_id, _source, container) => {
+      const staging = document.createElement('div');
+      staging.textContent = '一時コンテナの中間テキスト';
+      container?.append(staging);
+      return await new Promise<{ svg: string }>((resolve) => {
+        resolveFirstRender = resolve;
+      });
+    });
+
+    const source = 'flowchart TD\n  A --> B';
+    const element = document.createElement(KFM_MERMAID_TAG);
+    element.textContent = source;
+    document.body.append(element);
+    await vi.waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(1));
+    element.remove();
+    // 再接続: 二度目の #render はこの時点 (一時コンテナがまだ自要素内に残っている)
+    // でソースを読む。render の実呼び出し自体は直列化キューにより一度目の解決後
+    document.body.append(element);
+    resolveFirstRender({ svg: '<svg><g></g></svg>' });
+    await vi.waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(2));
+    // 二度目のソースは light DOM の text node のみから組まれ、元ソースと一致する
+    expect(mermaidMock.render).toHaveBeenLastCalledWith(
+      expect.stringContaining('kfm-mermaid-'),
+      source,
+      expect.any(HTMLElement),
+    );
+    await vi.waitFor(() => expect(element.dataset.kfmMermaid).toBe('rendered'));
+  });
+
   it('描画待ち中に切断された要素は、再接続時に描画を再試行する', async () => {
     let resolveFirstRender!: (value: { svg: string }) => void;
     mermaidMock.render.mockImplementationOnce(

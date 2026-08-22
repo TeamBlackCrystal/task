@@ -39,6 +39,19 @@ export const KFM_MERMAID_STORY_INPUTS = {
     '```',
   ].join('\n'),
 
+  // C4 図: Person アイコンを <image xlink:href="data:image/png;base64,…"> で埋める
+  // 唯一の図種 (mermaid@11.16.1 c4Diagram chunk の drawImage/personImg。実測)。
+  // 挿入前検査 (element.ts) が data: を一律拒否へ戻ると図全体が error へ倒れる回帰アンカー
+  'mermaid-c4': [
+    '```mermaid',
+    'C4Context',
+    '  title 注文システムの文脈図',
+    '  Person(customer, "顧客", "注文を行う人")',
+    '  System(ordering, "注文システム", "注文を受け付ける")',
+    '  Rel(customer, ordering, "利用する")',
+    '```',
+  ].join('\n'),
+
   // click 付き flowchart: mermaid の正常出力が XML 非適格になりうる代表例。
   // 検査 (element.ts) が sink と同じ HTML パースであることの回帰アンカー
   'mermaid-click': [
