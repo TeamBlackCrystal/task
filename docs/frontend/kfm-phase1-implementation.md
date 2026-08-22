@@ -24,7 +24,8 @@ apps/frontend/src/lib/
     style.css                  サイドカー CSS（アイコンは名前空間クラス・inline style 不使用）
   rehype-starry-night/         コードブロック着色 (rehype-starry-night の薄いラッパ)
     index.ts                   createRehypeStarryNight（starry-night 実体の renderer
-                               スコープ共有・失敗回収）＋ pl-* class の sanitize スキーマ
+                               スコープ共有・失敗回収）
+    schema.ts                  pl-* class の sanitize スキーマ
     style.css                  サイドカー CSS（light シート固定 ＋ .dark ブリッジ）
   markup-renderer/             KFM コア
     index.ts                   composition root（renderDescription singleton・公開 API）
@@ -42,6 +43,9 @@ composition root が remark 層と sanitize スキーマを注入する。
 ただし client registry は例外で、composition root から再エクスポートしてはならない。
 `+client.ts` は `_client-registry.ts` を直接 import し、サーバ用レンダラ一式が client bundle へ
 混入するのを防ぐ。この非再エクスポート規約は bundle 境界であり、公開 API の整理ではない。
+同じ bundle 境界として、composition root は starry-night seam を `import()` で遅延ロードする。
+静的 import / re-export に戻すと common 文法一式を含む約 417.5 KB raw が root の静的グラフへ
+加わるため、`kfm-cache.test.ts` が副作用 import を含む静的参照の不在と実行時 import を固定する。
 
 ## パイプライン
 
@@ -202,7 +206,8 @@ scope 一致は `kfm-gfm-css-contract.test.ts` が強制し、story の器も同
 - `kfm-sanitize.test.ts` — FORBID style・class 完全一致・XSS 基本・カスタム要素 registry
 - `kfm-cache.test.ts` — djb2 衝突ペアの実衝突証明つき full-text キー検証・fingerprint 分離
 - `kfm-client-registry.test.ts` — SSR ガード（customElements 不在で no-op）・二重 define 安全
-- `kfm-gfm-css-contract.test.ts` — GFM サイドカー CSS の scope が器クラス単一ソースと一致
+- `kfm-gfm-css-contract.test.ts` — KFM サイドカー CSS（remark-* / rehype-*）を scope 方式で
+  全件分類し、器クラスまたは各プラグインの emit 名前空間から逸脱しないことを固定
 - `kfm-code-highlight.test.ts` — 着色の境界仕様（言語別 pl-*・style 属性禁止・未知言語
   フォールバック・注入ペイロード封じ・sanitize 整合）
 - `kfm-starry-night-init-count.test.ts` — 文法初期化「回数」の機械計数（N scope 描画で

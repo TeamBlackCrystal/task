@@ -106,8 +106,13 @@ describe('pipeline fingerprint (設定変更で旧エントリを拾わない)',
 
   it('composition root は重量級 starry-night seam を静的 import しない', () => {
     const source = fs.readFileSync(path.join(__dirname, '../markup-renderer/index.ts'), 'utf8');
+    // named/default import だけでなく、副作用 import と static re-export も重量級 seam を
+    // 静的グラフへ戻す。同じ specifier の静的構文を三形とも塞ぐ。
     expect(source).not.toMatch(
-      /^\s*import(?!\s+type\b)[^;]*from ['"]@\/lib\/rehype-starry-night['"];?$/m,
+      /^\s*import\s+(?!type\b)(?:(?:[^;]*\sfrom\s+)?['"]@\/lib\/rehype-starry-night['"])/m,
+    );
+    expect(source).not.toMatch(
+      /^\s*export\s+(?:\*|\{[^}]*\})\s+from\s+['"]@\/lib\/rehype-starry-night['"]/m,
     );
     // 型位置の `typeof import(...)` だけ残って実行時 import が消えても通らないよう、
     // type query を除去したソースで dynamic import の実在を固定する。
