@@ -103,6 +103,18 @@ GitHub 完全互換の境界仕様をテストで固定している:
   XML パーサでの検査は、mermaid の正常出力（click 付き flowchart の
   `<a xlink:href>` は `xmlns:xlink` 宣言なし）を偽陽性で落とし、逆に HTML 再パースで
   構造が変わる mXSS を素通しする。検査を通った同一ノードをそのまま挿入する
+- **href スキーム拒否は要素種別で分ける** — `<a>`（遷移 sink）と画像以外の href は
+  実行可能スキーム（`javascript:` / `vbscript:` / `data:` 全体）を拒否。
+  `<image>` / `<img>` は画像として解釈される sink であり `data:image/` だけを許す。
+  `data:` 一律拒否は不可: C4 図は Person アイコンを
+  `<image xlink:href="data:image/png;base64,…">` で埋める（mermaid@11.16.1 実測）ため、
+  一律拒否は C4 図全体を error へ倒す（DOMPurify 側の「data: は画像系のみ」既定とも整合）
+- **一時描画コンテナは自要素内の不可視ノード** — render 第三引数を省くと mermaid が
+  一時ノードを document.body 末尾へ置き図が一瞬露出するため、接続中の自要素内へ置いて
+  成否にかかわらず撤去する。副作用が二つあり両方に手当て済み: 描画ソースは textContent
+  でなく直下 text node のみから組む（描画中の再接続でコンテナ中身がソースへ混入しない）。
+  テキスト計測は祖先 CSS を継承するため、非 rendered 状態専用サイドカー CSS の
+  `white-space: pre` だけはコンテナ側で明示的に打ち消す（計測と表示の非対称を断つ）
 - **テーマは描画時スナップショット** — `.dark` ancestor を描画時に一度だけ見る。
   描画後のテーマ切替に追従はしない（Phase 1 の割り切り）
 
