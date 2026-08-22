@@ -176,6 +176,10 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
   `v-html` へ流し、不一致（保存直後・reload 失敗・他者更新で HTML が古い）は
   プレーンテキスト表示へフォールバックする。descriptionHtml を単独で受けて
   無条件に `v-html` する消費側を作ってはならない
+- 編集保存後に KFM 表示へ戻す手段は、同一 URL へ
+  `navigate(href, { keepScrollPosition: true, overwriteLastHistoryEntry: true })` で
+  `+data.ts` を再実行すること（`reload()` はスクロール位置を維持できないため使わない）。
+  失敗時は descriptionSource 照合不一致によりプレーンテキスト表示のまま残る
 - **入力長の上限は 65536 文字**（GitHub issue 本文の上限と同値。KFM Phase 1 =
   github profile の複製レンダラ）。上限は消費側の `+data.ts` が `renderDescription`
   を呼ぶ**前**に敷き、超過は `descriptionHtml: null` = プレーンテキスト表示へ倒す
