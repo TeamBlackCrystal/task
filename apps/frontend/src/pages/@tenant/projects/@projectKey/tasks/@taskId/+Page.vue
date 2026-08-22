@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
-import { navigate, reload } from 'vike/client/router';
+import { navigate } from 'vike/client/router';
 import { useData } from 'vike-vue/useData';
 import { usePageContext } from 'vike-vue/usePageContext';
 
@@ -8,6 +8,7 @@ import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
 import { useTaskDetail } from '@/composables/useTaskDetail';
 import type { Data } from './+data';
+import { refreshTaskDescription } from './task-description-navigation';
 
 const pageContext = usePageContext();
 // サーバ (+data.ts) が renderDescription した説明 HTML。クライアントは受けて v-html
@@ -69,15 +70,15 @@ const {
   },
   // 説明の保存直後、クライアントは生テキストしか持たない。クライアントで KFM を
   // 描画せず (バンドル退行 +417.5 KB の再来防止)、+data.ts をサーバで再実行して
-  // 描画済み HTML を取り直す。reload は保存確定後にのみ呼ばれるため、backend は
-  // 既に新しい本文を返す。
-  // reload 失敗は黙殺しない: 失敗しても保存済みデータは失われず、descriptionSource の
+  // 描画済み HTML を取り直す。保存確定後に同じ URL へ再ナビゲートするため、backend は
+  // 既に新しい本文を返す。keepScrollPosition を付け、長い本文の編集位置を維持する。
+  // 再ナビゲート失敗は黙殺しない: 保存済みデータは失われず、descriptionSource の
   // 照合不一致でプレーンテキスト表示へ倒れる (SSR 契約) ため UI エラーにはしないが、
   // 「KFM 表示に戻らない」調査の手がかりとして記録は残す。
   onAfterFieldSaved: (field) => {
     if (field === 'description') {
-      reload().catch((error: unknown) => {
-        console.error('説明保存後の reload に失敗 (プレーンテキスト表示のまま):', error);
+      refreshTaskDescription().catch((error: unknown) => {
+        console.error('説明保存後の再読み込みに失敗 (プレーンテキスト表示のまま):', error);
       });
     }
   },

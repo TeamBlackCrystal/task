@@ -39,7 +39,7 @@ const EMPTY: Data = { descriptionHtml: null, descriptionSource: null };
 // 65536 文字に合わせる (KFM Phase 1 = github profile の複製レンダラ)。
 const MAX_DESCRIPTION_LENGTH = 65_536;
 
-// 遅い backend で SSR 全体を止めない: 3 連続 GET で共有する 1 本の予算。
+// 遅い backend の取得を有界にする: 3 連続 GET で共有する 1 本の予算。
 // 各 GET に個別 timeout を付けると直列で合算 (~9s) になるため、
 // data() 開始時点から SSR_FETCH_BUDGET_MS の単一 AbortSignal を全 fetch へ渡す。
 const SSR_FETCH_BUDGET_MS = 3000;
@@ -78,9 +78,9 @@ export async function data(pageContext: PageContextServer): Promise<Data> {
   // 3 連続 GET が要るのは、URL が表示用 id (tenant display_id / project key / seq key)
   // しか持たない一方で backend の各エンドポイントが UUID 階層でしか引けないため:
   // display_id → tenant UUID → project UUID → task の順にしか解決できない。
-  // SSR_FETCH_BUDGET_MS の単一 signal を全 GET で共有するので、SSR 全体の待ちは
+  // SSR_FETCH_BUDGET_MS の単一 signal を全 GET で共有するので、backend の取得待ちは
   // 最悪 SSR_FETCH_BUDGET_MS で打ち切られ、タイムアウト後はプレーン表示へ倒れる
-  // (KFM 表示は次の reload で回復する)。
+  // (KFM 表示は次の再読み込みで回復する)。
   // 短縮するには backend に表示用 id で直接引ける口が要る (別途検討)。
   const fetchBudget = AbortSignal.timeout(SSR_FETCH_BUDGET_MS);
   try {
