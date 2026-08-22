@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,6 +18,9 @@ const GITHUB_INTEGRATION_PATH =
 const GITHUB_INSTALL_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/install' as const;
 const GITHUB_IMPORT_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/import' as const;
 
+/** 取り込み開始が成功したあと、再度押せるようになるまでの待ち時間（ミリ秒） */
+const IMPORT_COOLDOWN_MS = 60_000;
+
 const props = defineProps<{
   tenantId: string;
   projectId: string;
@@ -30,6 +33,8 @@ const installError = ref<string | null>(null);
 const installPending = ref(false);
 const importError = ref<string | null>(null);
 const importStarted = ref(false);
+const importCoolingDown = ref(false);
+let importCooldownTimer: ReturnType<typeof setTimeout> | null = null;
 
 const integrationQuery = apiClient.useQuery('get', GITHUB_INTEGRATION_PATH, {
   params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
@@ -39,6 +44,14 @@ const disconnectMutation = apiClient.useMutation('delete', GITHUB_INTEGRATION_PA
 const importMutation = apiClient.useMutation('post', GITHUB_IMPORT_PATH);
 
 const integration = computed(() => integrationQuery.data.value);
+
+const importDisabled = computed(() => importMutation.isPending.value || importCoolingDown.value);
+
+const importLabel = computed(() => {
+  if (importMutation.isPending.value) return '開始中…';
+  if (importCoolingDown.value) return '取り込み中…';
+  return 'Issue を取り込む';
+});
 
 const repoFullName = computed(() => {
   const data = integration.value;
@@ -55,6 +68,27 @@ const connectedAtLabel = computed(() => {
     day: 'numeric',
   });
 });
+
+function clearImportCooldown() {
+  if (importCooldownTimer !== null) {
+    clearTimeout(importCooldownTimer);
+    importCooldownTimer = null;
+  }
+  importCoolingDown.value = false;
+}
+
+// 202 は「ジョブを積んだ」だけなので、連打すると同じ全 Issue クロールが
+// その回数だけ積まれる。成功後は一定時間ボタンを塞ぐ
+function startImportCooldown() {
+  clearImportCooldown();
+  importCoolingDown.value = true;
+  importCooldownTimer = setTimeout(() => {
+    importCooldownTimer = null;
+    importCoolingDown.value = false;
+  }, IMPORT_COOLDOWN_MS);
+}
+
+onBeforeUnmount(clearImportCooldown);
 
 async function startInstall() {
   installError.value = null;
@@ -81,6 +115,7 @@ async function startImport() {
     });
     // 取り込みはジョブなので、完了は待たずに開始だけを伝える
     importStarted.value = true;
+    startImportCooldown();
   } catch {
     importError.value = 'Issue の取り込みを開始できませんでした';
   }
@@ -99,6 +134,10 @@ async function confirmDisconnect() {
     await disconnectMutation.mutateAsync({
       params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
     });
+    // 表示を隠すだけだと、再連携で connected が true に戻った瞬間に前回の結果表示が戻る
+    importStarted.value = false;
+    importError.value = null;
+    clearImportCooldown();
     await queryClient.invalidateQueries({ queryKey: ['get', GITHUB_INTEGRATION_PATH] });
     isDisconnectOpen.value = false;
   } catch {
@@ -148,10 +187,10 @@ async function confirmDisconnect() {
             type="button"
             variant="outline"
             size="sm"
-            :disabled="importMutation.isPending.value"
+            :disabled="importDisabled"
             @click="startImport"
           >
-            {{ importMutation.isPending.value ? '開始中…' : 'Issue を取り込む' }}
+            {{ importLabel }}
           </Button>
           <Button type="button" variant="outline" size="sm" @click="onDisconnectOpenChange(true)">
             連携を解除
