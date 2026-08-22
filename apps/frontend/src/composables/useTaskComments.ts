@@ -128,6 +128,18 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     replyErrorThreadId.value = null;
   }
 
+  /** 編集 UI を開閉するときに前回の失敗表示を消す（clearReplyError と同型） */
+  function clearUpdateError() {
+    updateError.value = null;
+    updateErrorCommentId.value = null;
+  }
+
+  /** 削除確認を開閉するときに前回の失敗表示を消す（clearReplyError と同型） */
+  function clearDeleteError() {
+    deleteError.value = null;
+    deleteErrorCommentId.value = null;
+  }
+
   /**
    * 投稿。parentCommentId を渡すとそのスレッドへの返信になる。
    * 成功で true（呼び出し側が下書きを消してよい）、失敗で false（下書きを残す）。
@@ -226,6 +238,8 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     deleteError,
     deleteErrorCommentId,
     clearReplyError,
+    clearUpdateError,
+    clearDeleteError,
     submitComment,
     updateComment,
     deleteComment,

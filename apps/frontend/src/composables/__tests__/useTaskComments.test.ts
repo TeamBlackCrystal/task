@@ -76,6 +76,22 @@ const { control, requestLog, fetchMock } = vi.hoisted(() => {
       if (control.rejectDelete) {
         return jsonResponse({ message: control.rejectDelete.message }, control.rejectDelete.status);
       }
+      // 本番の delete_comment は soft-delete: 行は残り、一覧では
+      // is_deleted=true / body=null になる（comment_body が None を返す）。
+      // モックも同じ形に倒し、削除済み表示経路を invalidate 後の一覧で踏めるようにする
+      const cid = url.split('/').pop();
+      for (const thread of control.threads) {
+        if (thread.id === cid) {
+          thread.is_deleted = true;
+          thread.body = null;
+        }
+        for (const reply of (thread.replies as Record<string, unknown>[] | undefined) ?? []) {
+          if (reply.id === cid) {
+            reply.is_deleted = true;
+            reply.body = null;
+          }
+        }
+      }
       return new Response(null, { status: 204 });
     }
     return jsonResponse({ message: 'not found' }, 404);
@@ -267,12 +283,39 @@ describe('useTaskComments', () => {
     expect(comments.updateErrorCommentId.value).toBe('c-1');
   });
 
-  it('削除は DELETE を送り、成功で true を返して一覧を取り直す', async () => {
+  it('clearUpdateError は編集失敗の表示を消す（clearReplyError と同型）', async () => {
+    control.threads = [sampleThread('c-1', '元の本文')];
+    control.rejectPut = { status: 403, message: 'not your comment' };
+    mountHost();
+    await flushPromises();
+
+    await comments.updateComment('c-1', '直した本文');
+    expect(comments.updateError.value).not.toBe(null);
+
+    comments.clearUpdateError();
+    expect(comments.updateError.value).toBe(null);
+    expect(comments.updateErrorCommentId.value).toBe(null);
+  });
+
+  it('clearDeleteError は削除失敗の表示を消す（clearReplyError と同型）', async () => {
+    control.threads = [sampleThread('c-1', '消せないコメント')];
+    control.rejectDelete = { status: 403, message: 'forbidden' };
+    mountHost();
+    await flushPromises();
+
+    await comments.deleteComment('c-1');
+    expect(comments.deleteError.value).not.toBe(null);
+
+    comments.clearDeleteError();
+    expect(comments.deleteError.value).toBe(null);
+    expect(comments.deleteErrorCommentId.value).toBe(null);
+  });
+
+  it('削除は DELETE を送り、成功で true を返して一覧を取り直す（soft-delete の形で残る）', async () => {
     control.threads = [sampleThread('c-1', '消すコメント')];
     mountHost();
     await flushPromises();
 
-    control.threads = [];
     const deleted = await comments.deleteComment('c-1');
     await flushPromises();
 
@@ -280,7 +323,11 @@ describe('useTaskComments', () => {
     expect(comments.deletingCommentId.value).toBe(null);
     const del = requestLog.find((r) => r.method === 'DELETE');
     expect(del?.url.endsWith('/comments/c-1')).toBe(true);
-    expect(comments.threads.value).toEqual([]);
+    // 本番は行を消さず soft-delete するため、取り直した一覧にも
+    // is_deleted=true / body=null の形で残る（削除済み表示経路の前提）
+    expect(comments.threads.value).toHaveLength(1);
+    expect(comments.threads.value[0].is_deleted).toBe(true);
+    expect(comments.threads.value[0].body).toBe(null);
   });
 
   it('削除が API に拒否されたら false を返し、サーバの message を見せる', async () => {

@@ -48,6 +48,10 @@ const props = defineProps<{
   onDelete: (commentId: string) => Promise<boolean>;
   /** 返信フォームを開き直すときに前回の失敗表示を消す（useTaskComments.clearReplyError） */
   onClearReplyError?: () => void;
+  /** 編集 UI の開閉で前回の失敗表示を消す（useTaskComments.clearUpdateError） */
+  onClearUpdateError?: () => void;
+  /** 削除確認の開閉で前回の失敗表示を消す（useTaskComments.clearDeleteError） */
+  onClearDeleteError?: () => void;
 }>();
 
 const newDraft = ref('');
@@ -72,6 +76,14 @@ function cancelReply() {
   props.onClearReplyError?.();
   replyTargetId.value = null;
   replyDraft.value = '';
+}
+
+async function deleteThread(threadId: string) {
+  const deleted = await props.onDelete(threadId);
+  // 削除済みスレッドへは返信できない（backend が 400 で弾く）ため、
+  // 開いたままの返信フォームは削除成功と同時に閉じる
+  if (deleted && replyTargetId.value === threadId) cancelReply();
+  return deleted;
 }
 
 async function submitReply(threadId: string) {
@@ -120,7 +132,9 @@ async function submitReply(threadId: string) {
               :update-error="updateErrorCommentId === thread.id ? updateError : null"
               :delete-error="deleteErrorCommentId === thread.id ? deleteError : null"
               :on-update="(body) => onUpdate(thread.id, body)"
-              :on-delete="() => onDelete(thread.id)"
+              :on-delete="() => deleteThread(thread.id)"
+              :on-clear-update-error="onClearUpdateError"
+              :on-clear-delete-error="onClearDeleteError"
             />
 
             <div v-if="thread.replies.length" class="flex flex-col gap-2 border-l pl-4">
@@ -135,6 +149,8 @@ async function submitReply(threadId: string) {
                 :delete-error="deleteErrorCommentId === reply.id ? deleteError : null"
                 :on-update="(body) => onUpdate(reply.id, body)"
                 :on-delete="() => onDelete(reply.id)"
+                :on-clear-update-error="onClearUpdateError"
+                :on-clear-delete-error="onClearDeleteError"
               />
             </div>
 

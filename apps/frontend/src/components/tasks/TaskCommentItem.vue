@@ -32,6 +32,10 @@ const props = defineProps<{
   onUpdate: (body: string) => Promise<boolean>;
   /** 削除の確定。成功で true。 */
   onDelete: () => Promise<boolean>;
+  /** 編集 UI を開閉するときに前回の失敗表示を消す（返信の onClearReplyError と同型） */
+  onClearUpdateError?: () => void;
+  /** 削除確認を開閉するときに前回の失敗表示を消す（返信の onClearReplyError と同型） */
+  onClearDeleteError?: () => void;
 }>();
 
 const editing = ref(false);
@@ -41,9 +45,10 @@ const editControlRef = ref<HTMLElement | ComponentPublicInstance | null>(null);
 
 async function startEditing() {
   if (props.updating || props.deleting) return;
+  props.onClearUpdateError?.();
   editDraft.value = props.comment.body ?? '';
   editing.value = true;
-  confirmingDelete.value = false;
+  closeDeleteConfirm();
   await nextTick();
   const control = editControlRef.value;
   const element =
@@ -52,8 +57,19 @@ async function startEditing() {
 }
 
 function cancelEditing() {
+  props.onClearUpdateError?.();
   editing.value = false;
   editDraft.value = '';
+}
+
+function openDeleteConfirm() {
+  props.onClearDeleteError?.();
+  confirmingDelete.value = true;
+}
+
+function closeDeleteConfirm() {
+  props.onClearDeleteError?.();
+  confirmingDelete.value = false;
 }
 
 async function commitEditing() {
@@ -106,7 +122,7 @@ async function confirmDelete() {
           class="size-6"
           aria-label="コメントを削除"
           :disabled="updating || deleting"
-          @click="confirmingDelete = true"
+          @click="openDeleteConfirm"
         >
           <Trash2 class="size-3.5" aria-hidden="true" />
         </Button>
@@ -160,7 +176,7 @@ async function confirmDelete() {
         size="sm"
         class="h-7 px-2"
         :disabled="deleting"
-        @click="confirmingDelete = false"
+        @click="closeDeleteConfirm"
       >
         キャンセル
       </Button>

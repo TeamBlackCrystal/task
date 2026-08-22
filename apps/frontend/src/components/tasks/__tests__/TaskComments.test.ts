@@ -158,6 +158,84 @@ describe('TaskComments', () => {
     await flushPromises();
 
     expect(onDelete).toHaveBeenCalledTimes(1);
+    // 成功（backend が許可）したら確認 UI を閉じる
+    expect(wrapper.text()).not.toContain('このコメントを削除しますか？');
+  });
+
+  it('削除が backend に拒否されたら確認 UI を残し、拒否理由を対象コメントの中に出す', async () => {
+    const onDelete = vi.fn(async () => false);
+    const wrapper = mountComments({ threads: [thread('c-1', '消せないコメント')], onDelete });
+
+    await wrapper.get('button[aria-label="コメントを削除"]').trigger('click');
+    const confirmButton = wrapper.findAll('button').find((button) => button.text() === '削除する');
+    await confirmButton!.trigger('click');
+    await flushPromises();
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    // 失敗時は確認 UI を残す（成功系の「閉じる」との対照）
+    expect(wrapper.text()).toContain('このコメントを削除しますか？');
+
+    await wrapper.setProps({
+      deleteError: 'コメントを削除できませんでした（forbidden）',
+      deleteErrorCommentId: 'c-1',
+    });
+    expect(wrapper.get('[data-task-comment]').text()).toContain(
+      'コメントを削除できませんでした（forbidden）',
+    );
+  });
+
+  it('返信フォームを開いたままスレッド削除に成功したらフォームを閉じる', async () => {
+    const onDelete = vi.fn(async () => true);
+    const wrapper = mountComments({ threads: [thread('c-1', '消すスレッド')], onDelete });
+
+    const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
+    await replyOpenButton!.trigger('click');
+    expect(wrapper.find('textarea[aria-label="返信"]').exists()).toBe(true);
+
+    await wrapper.get('button[aria-label="コメントを削除"]').trigger('click');
+    const confirmButton = wrapper.findAll('button').find((button) => button.text() === '削除する');
+    await confirmButton!.trigger('click');
+    await flushPromises();
+
+    // 削除済みスレッドへは返信できない（backend が 400 で弾く）ため、フォームは残さない
+    expect(wrapper.find('textarea[aria-label="返信"]').exists()).toBe(false);
+  });
+
+  it('編集 UI の開閉で前回の失敗表示を消す（返信フォームと同型）', async () => {
+    const onClearUpdateError = vi.fn();
+    const wrapper = mountComments({
+      threads: [thread('c-1', '本文')],
+      currentUserId: user.id,
+      onClearUpdateError,
+      updateError: 'コメントを更新できませんでした（forbidden）',
+      updateErrorCommentId: 'c-1',
+    });
+
+    await wrapper.get('button[aria-label="コメントを編集"]').trigger('click');
+    expect(onClearUpdateError).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ updateError: null, updateErrorCommentId: null });
+    const cancelButton = wrapper.findAll('button').find((button) => button.text() === 'キャンセル');
+    await cancelButton!.trigger('click');
+    expect(onClearUpdateError).toHaveBeenCalledTimes(2);
+  });
+
+  it('削除確認の開閉で前回の失敗表示を消す（返信フォームと同型）', async () => {
+    const onClearDeleteError = vi.fn();
+    const wrapper = mountComments({
+      threads: [thread('c-1', '本文')],
+      onClearDeleteError,
+      deleteError: 'コメントを削除できませんでした（forbidden）',
+      deleteErrorCommentId: 'c-1',
+    });
+
+    await wrapper.get('button[aria-label="コメントを削除"]').trigger('click');
+    expect(onClearDeleteError).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ deleteError: null, deleteErrorCommentId: null });
+    const cancelButton = wrapper.findAll('button').find((button) => button.text() === 'キャンセル');
+    await cancelButton!.trigger('click');
+    expect(onClearDeleteError).toHaveBeenCalledTimes(2);
   });
 
   it('削除済みコメントはプレースホルダを出し、編集・削除ボタンを出さない', () => {
