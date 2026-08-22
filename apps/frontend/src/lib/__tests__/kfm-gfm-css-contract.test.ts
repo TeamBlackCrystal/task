@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
+import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SIDECAR_CSS_PATHS = fs.globSync(path.join(__dirname, '../*/style.css'));
