@@ -29,21 +29,23 @@ export { starryNightSanitizeSchema } from './schema';
 type UpstreamTransformer = ReturnType<typeof upstreamRehypeStarryNight>;
 
 /**
- * starry-night 実体を renderer スコープで一つに共有するプラグイン factory。
+ * starry-night 実体を本 factory が返すプラグインのスコープで一つに共有する。
  *
- * composition root が renderer 1 つにつき本 factory を 1 回呼び、戻り値のプラグインを
- * rehypePlugins へ渡す。scope 付き描画は clobberPrefix が異なるため processor を都度
- * 構築する (_renderer.ts getProcessor) が、高いのは processor ではなく createStarryNight
- * (WASM ＋ 文法登録) — 共有しないとコメント N 件のページ 1 リクエストで N 回初期化が走る。
+ * production composition root は最初の transform で本 factory を 1 回呼び、戻り値を
+ * singleton renderer の全 processor で共有する。独自 renderer の利用者は renderer ごとに
+ * 本 factory を呼んで rehypePlugins へ渡す。scope 付き描画は clobberPrefix が異なるため
+ * processor を都度構築する (_renderer.ts getProcessor) が、高いのは processor ではなく
+ * createStarryNight (WASM ＋ 文法登録) — 共有しないとコメント N 件のページ 1 リクエストで
+ * N 回初期化が走る。
  * 着色は profile / clobberPrefix と無関係なので、transformer が抱える starry-night
  * Promise を全 processor で共有しても出力は変わらない。upstream closure の可変状態
  * `checked` も共有されるため missingScopes 警告は renderer につき初回の 1 度だけになるが、
  * renderDescription は vfile message を返さないので描画結果への影響はない
  * (rehype-starry-night@2.2.0 lib/index.js 実物確認)。
  *
- * 共有はモジュールレベルではなく renderer スコープ (factory closure) に置く。プロセス
- * 共有にすると renderer を作り直しても実体が残り、テスト間の隔離と寿命の所有権
- * (renderer と共に捨てられること) が崩れるため。
+ * 本 seam 自身の共有はモジュールレベルではなく factory closure に置く。したがって独自
+ * renderer は factory を呼び直せば隔離できる。production composition root だけは、その
+ * singleton renderer と同じモジュール寿命で lazy import Promise と本 closure を保持する。
  *
  * 失敗回収: createStarryNight が一度失敗すると upstream transformer は poisoned promise
  * を抱えて以後の全描画で reject し続ける。共有はこれを単一障害点に昇格させるため、

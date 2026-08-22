@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import upstreamRehypeStarryNight from 'rehype-starry-night';
-import { createRenderer } from '../markup-renderer';
+import { createRenderer, renderDescription } from '../markup-renderer';
 import { createRehypeStarryNight, starryNightSanitizeSchema } from '../rehype-starry-night';
 import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
 
@@ -10,8 +10,8 @@ import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
  * createStarryNight (onig.wasm ＋ common 文法一式の登録) を同期的に開始するため
  * (rehype-starry-night@2.2.0 lib/index.js 実物確認)、factory 呼び出し回数 =
  * 文法初期化回数。時間や体感ではなく回数そのものを数える。
- * seam (../rehype-starry-night) も本 mock 経由で upstream を掴むため、
- * 共有配線・旧配線の両方が同じ計器で数えられる。
+ * production composition root と seam (../rehype-starry-night) は共に本 mock 経由で
+ * upstream を掴むため、本番配線・独自 renderer・旧配線を同じ計器で数えられる。
  */
 const upstreamFactory = vi.hoisted(() => ({ calls: 0 }));
 
@@ -46,7 +46,17 @@ beforeEach(() => {
   upstreamFactory.calls = 0;
 });
 
-describe('starry-night 初期化回数 (renderer スコープ共有)', () => {
+describe('starry-night 初期化回数 (production composition root)', () => {
+  it('本番 renderDescription は異なる scope の N 回描画でも初期化が 1 回', async () => {
+    const scopes = ['production-1', 'production-2', 'production-3'];
+    for (const scope of scopes) {
+      expect(await renderDescription(fixtureFor(scope), { scope })).toContain('class="pl-');
+    }
+    expect(upstreamFactory.calls).toBe(1);
+  });
+});
+
+describe('starry-night 初期化回数 (factory closure を独自 renderer へ注入)', () => {
   it('異なる scope で N 回描画しても文法初期化は 1 回だけ走る', async () => {
     const render = createHighlightRenderer(createRehypeStarryNight());
     const scopes = ['comment-1', 'comment-2', 'comment-3', 'comment-4', 'comment-5'];
@@ -69,9 +79,9 @@ describe('starry-night 初期化回数 (renderer スコープ共有)', () => {
     expect(upstreamFactory.calls).toBe(1);
   });
 
-  it('共有は renderer スコープ — renderer を作り直すと実体も作り直される (プロセス共有ではない)', async () => {
-    // 実体の寿命は renderer に束縛される。プロセス共有にするとテスト間の隔離と
-    // 「renderer と共に捨てられる」所有権が崩れるため、renderer ごとに 1 回で正しい。
+  it('factory を呼び直した独自 renderer 同士は実体を共有しない', async () => {
+    // seam の共有単位は factory closure。production singleton の module-level lazy Promise
+    // とは別契約であり、独自 renderer は factory を呼び直せば隔離できる。
     const first = createHighlightRenderer(createRehypeStarryNight());
     const second = createHighlightRenderer(createRehypeStarryNight());
     expect(await first(fixtureFor('first'), { scope: 'a' })).toContain('class="pl-');

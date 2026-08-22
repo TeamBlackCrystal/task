@@ -13,7 +13,10 @@ const SIDECAR_CSS_PATHS = [
 // 直接指すサイドカーも明示分類し、remark-* だけを拾って rehype-* が検査網から
 // 抜ける状態を防ぐ。
 const CONTAINER_SCOPED_PLUGINS = new Set(['remark-gfm']);
-const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Set(['remark-koyori-alerts', 'rehype-starry-night']);
+const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Map<string, RegExp>([
+  ['remark-koyori-alerts', /\.kfm-alert(?:\b|[_-])/],
+  ['rehype-starry-night', /\.pl-(?:[a-z0-9-]+)/],
+]);
 const CONTAINER_SCOPED_CSS_PATHS = SIDECAR_CSS_PATHS.filter((cssPath) =>
   CONTAINER_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),
 );
@@ -95,9 +98,29 @@ describe('KFM サイドカー CSS の消費契約 (scope 一致の機構)', () =
     ).sort();
     const classifiedPlugins = [
       ...CONTAINER_SCOPED_PLUGINS,
-      ...EMITTED_NAMESPACE_SCOPED_PLUGINS,
+      ...EMITTED_NAMESPACE_SCOPED_PLUGINS.keys(),
     ].sort();
     expect(discoveredPlugins).toEqual(classifiedPlugins);
+  });
+
+  it('器 scope 免除サイドカーは自身が emit する名前空間クラスを実際に指す', () => {
+    for (const [plugin, namespaceClass] of EMITTED_NAMESPACE_SCOPED_PLUGINS) {
+      const cssPath = SIDECAR_CSS_PATHS.find(
+        (candidate) => path.basename(path.dirname(candidate)) === plugin,
+      );
+      expect(cssPath, `${plugin} のサイドカーが存在すること`).toBeDefined();
+
+      let source = fs.readFileSync(cssPath!, 'utf8');
+      // starry-night の名前空間規則はローカルサイドカーが import する upstream light.css
+      // にある。import 宣言だけを見て免除せず、実体の .pl-* セレクタまで検査する。
+      if (plugin === 'rehype-starry-night') {
+        source += fs.readFileSync(
+          fileURLToPath(import.meta.resolve('@wooorm/starry-night/style/light')),
+          'utf8',
+        );
+      }
+      expect(extractSelectors(source).some((selector) => namespaceClass.test(selector))).toBe(true);
+    }
   });
 
   it('器 scope が必要なサイドカーの全ルールが器クラス子孫限定', () => {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LRUCache } from 'lru-cache';
 import type { PluggableList } from 'unified';
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { buildCacheKey } from '../markup-renderer/_cache';
 import { createRenderer } from '../markup-renderer/_renderer';
 import { createRehypeStarryNight } from '../rehype-starry-night';
@@ -109,7 +109,31 @@ describe('pipeline fingerprint (設定変更で旧エントリを拾わない)',
     expect(source).not.toMatch(
       /^\s*import(?!\s+type\b)[^;]*from ['"]@\/lib\/rehype-starry-night['"];?$/m,
     );
-    expect(source).toContain("import('@/lib/rehype-starry-night')");
+    // 型位置の `typeof import(...)` だけ残って実行時 import が消えても通らないよう、
+    // type query を除去したソースで dynamic import の実在を固定する。
+    const sourceWithoutTypeQueries = source.replace(/typeof\s+import\([^)]*\)/g, '');
+    expect(sourceWithoutTypeQueries).toContain("import('@/lib/rehype-starry-night')");
+  });
+
+  it('starry-night の import/factory Promise が reject したら次の描画で再試行する', async () => {
+    vi.resetModules();
+    let moduleLoads = 0;
+    vi.doMock('@/lib/rehype-starry-night', () => {
+      moduleLoads += 1;
+      if (moduleLoads === 1) throw new Error('poisoned dynamic import (injected)');
+      return { createRehypeStarryNight: () => () => async (tree: unknown) => tree };
+    });
+
+    const { renderDescription: isolatedRenderDescription } = await import('../markup-renderer');
+    // Vitest は mock module factory の例外を import 失敗としてラップするため、ここでは
+    // reject 自体と、次行の再 import 成功・moduleLoads === 2 を機構として確認する。
+    await expect(isolatedRenderDescription('first import attempt')).rejects.toThrow();
+    await expect(isolatedRenderDescription('second import attempt')).resolves.toContain(
+      'second import attempt',
+    );
+    expect(moduleLoads).toBe(2);
+
+    vi.doUnmock('@/lib/rehype-starry-night');
   });
 
   it('sanitize スキーマが違う renderer は同一本文でも別キャッシュエントリになる', async () => {

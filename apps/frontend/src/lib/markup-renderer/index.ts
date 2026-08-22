@@ -66,16 +66,24 @@ type StarryNightTransformer = ReturnType<
 
 // 重量級 starry-night seam は最初の着色 transform まで読み込まない。composition root の
 // 静的 import に戻すと、root を参照するだけの入口へ +417.5 KB raw が再混入する。
-// Promise と seam の factory は renderer スコープで一つだけ保持するため、scope 付き描画が
-// processor を都度構築しても文法初期化は走り直さない。
+// Promise と seam の factory はこの composition root の singleton renderer と同じ
+// モジュール寿命で一つだけ保持するため、scope 付き描画が processor を都度構築しても
+// 文法初期化は走り直さない。import または factory が reject した Promise は保持せず、
+// 次の描画で seam の読み込みから再試行する。
 let starryNightTransformerPromise: Promise<StarryNightTransformer> | undefined;
 const rehypeStarryNight = () =>
   async function rehypeStarryNightLazy(...args: Parameters<StarryNightTransformer>) {
-    const transformer = await (starryNightTransformerPromise ??=
-      import('@/lib/rehype-starry-night').then(({ createRehypeStarryNight }) =>
-        createRehypeStarryNight()(),
-      ));
-    return transformer(...args);
+    const pending = (starryNightTransformerPromise ??= import('@/lib/rehype-starry-night').then(
+      ({ createRehypeStarryNight }) => createRehypeStarryNight()(),
+    ));
+    try {
+      const transformer = await pending;
+      return transformer(...args);
+    } catch (error) {
+      // 遅れて reject した旧 Promise が、別描画の据えた再試行 Promise を消さない。
+      if (starryNightTransformerPromise === pending) starryNightTransformerPromise = undefined;
+      throw error;
+    }
   };
 
 export const renderDescription = createRenderer({
