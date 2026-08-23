@@ -1,0 +1,200 @@
+<script setup lang="ts">
+import { Loader2, Pencil, Trash2 } from '@lucide/vue';
+import { nextTick, ref } from 'vue';
+import type { ComponentPublicInstance } from 'vue';
+
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { formatTaskDate } from '@/lib/task-display';
+import type { CommentReply, CommentThread } from '@/composables/useTaskComments';
+
+const props = defineProps<{
+  /** スレッド先頭・返信のどちらも同じ形で表示する */
+  comment: CommentThread | CommentReply;
+  /** このコメントの更新リクエストが進行中 */
+  updating?: boolean;
+  /** このコメントの削除リクエストが進行中 */
+  deleting?: boolean;
+  /**
+   * ログイン中ユーザーの ID（/v1/auth/me）。未取得なら null。
+   * 編集は backend が投稿者本人以外を必ず 403 にするため、編集ボタンは
+   * comment.user.id が一致するときだけ出す。削除は backend が投稿者本人に
+   * 加えテナントオーナーにも許していて、frontend からはオーナーかどうかを
+   * 確実に判定できないため、削除ボタンは全コメントに出したままにする —
+   * 可否は backend が判定し、拒否されたら deleteError を拒まれた通りに表示する。
+   */
+  currentUserId?: string | null;
+  /** このコメントの更新失敗メッセージ（対象コメントの中に出す） */
+  updateError?: string | null;
+  /** このコメントの削除失敗メッセージ（対象コメントの中に出す） */
+  deleteError?: string | null;
+  /** 編集の確定。成功で true を返したら編集 UI を閉じる（失敗時は下書きを残す）。 */
+  onUpdate: (body: string) => Promise<boolean>;
+  /** 削除の確定。成功で true。 */
+  onDelete: () => Promise<boolean>;
+  /** 編集 UI を開閉するときに前回の失敗表示を消す（返信の onClearReplyError と同型） */
+  onClearUpdateError?: () => void;
+  /** 削除確認を開閉するときに前回の失敗表示を消す（返信の onClearReplyError と同型） */
+  onClearDeleteError?: () => void;
+}>();
+
+const editing = ref(false);
+const editDraft = ref('');
+const confirmingDelete = ref(false);
+const editControlRef = ref<HTMLElement | ComponentPublicInstance | null>(null);
+
+async function startEditing() {
+  if (props.updating || props.deleting) return;
+  props.onClearUpdateError?.();
+  editDraft.value = props.comment.body ?? '';
+  editing.value = true;
+  closeDeleteConfirm();
+  await nextTick();
+  const control = editControlRef.value;
+  const element =
+    control instanceof HTMLElement ? control : (control?.$el as HTMLElement | undefined);
+  element?.focus();
+}
+
+function cancelEditing() {
+  props.onClearUpdateError?.();
+  editing.value = false;
+  editDraft.value = '';
+}
+
+function openDeleteConfirm() {
+  props.onClearDeleteError?.();
+  confirmingDelete.value = true;
+}
+
+function closeDeleteConfirm() {
+  props.onClearDeleteError?.();
+  confirmingDelete.value = false;
+}
+
+async function commitEditing() {
+  const next = editDraft.value.trim();
+  if (!next || next === (props.comment.body ?? '')) {
+    cancelEditing();
+    return;
+  }
+  const saved = await props.onUpdate(next);
+  if (saved) cancelEditing();
+}
+
+async function confirmDelete() {
+  const deleted = await props.onDelete();
+  if (deleted) confirmingDelete.value = false;
+}
+</script>
+
+<template>
+  <article class="flex flex-col gap-1" data-task-comment :data-comment-id="comment.id">
+    <header class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+      <span class="font-medium text-foreground">{{ comment.user.name }}</span>
+      <span>{{ formatTaskDate(comment.created_at) }}</span>
+      <!-- backend が作成時に created_at と updated_at へ同一の now を入れるため、
+           不一致は「編集された」と等価（create_comment の now 一回化とペア） -->
+      <span v-if="!comment.is_deleted && comment.updated_at !== comment.created_at">
+        (編集済み)
+      </span>
+      <span v-if="updating || deleting" class="inline-flex items-center">
+        <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+      </span>
+      <span v-if="!comment.is_deleted && !editing" class="ml-auto inline-flex items-center gap-1">
+        <Button
+          v-if="comment.user.id === currentUserId"
+          type="button"
+          variant="ghost"
+          size="icon"
+          class="size-6"
+          aria-label="コメントを編集"
+          :disabled="updating || deleting"
+          @click="startEditing"
+        >
+          <Pencil class="size-3.5" aria-hidden="true" />
+        </Button>
+        <Button
+          v-if="!confirmingDelete"
+          type="button"
+          variant="ghost"
+          size="icon"
+          class="size-6"
+          aria-label="コメントを削除"
+          :disabled="updating || deleting"
+          @click="openDeleteConfirm"
+        >
+          <Trash2 class="size-3.5" aria-hidden="true" />
+        </Button>
+      </span>
+    </header>
+
+    <p v-if="comment.is_deleted" class="text-sm text-muted-foreground italic">削除されたコメント</p>
+
+    <div v-else-if="editing" class="flex flex-col gap-2">
+      <Textarea
+        v-model="editDraft"
+        ref="editControlRef"
+        class="min-h-20 text-sm"
+        :disabled="updating"
+        aria-label="コメントを編集"
+      />
+      <div class="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          class="h-7 px-2"
+          :disabled="updating"
+          @click="cancelEditing"
+        >
+          キャンセル
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          class="h-7 px-2"
+          :disabled="updating || !editDraft.trim()"
+          @click="commitEditing"
+        >
+          {{ updating ? '保存中…' : '保存' }}
+        </Button>
+      </div>
+    </div>
+
+    <!-- コメント本文は素テキスト表示（whitespace-pre-wrap）。v-html は使わない -->
+    <p v-else class="whitespace-pre-wrap text-sm leading-relaxed">{{ comment.body }}</p>
+
+    <div
+      v-if="confirmingDelete && !comment.is_deleted && !editing"
+      class="flex items-center justify-end gap-2 text-xs"
+    >
+      <span class="text-muted-foreground">このコメントを削除しますか？</span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        class="h-7 px-2"
+        :disabled="deleting"
+        @click="closeDeleteConfirm"
+      >
+        キャンセル
+      </Button>
+      <Button
+        type="button"
+        variant="destructive"
+        size="sm"
+        class="h-7 px-2"
+        :disabled="deleting"
+        @click="confirmDelete"
+      >
+        {{ deleting ? '削除中…' : '削除する' }}
+      </Button>
+    </div>
+
+    <!-- 失敗は失敗したコメントの中に出す。一覧末尾にまとめると、どの操作が
+         失敗したのか分からない -->
+    <p v-if="updateError" class="text-xs text-destructive">{{ updateError }}</p>
+    <p v-if="deleteError" class="text-xs text-destructive">{{ deleteError }}</p>
+  </article>
+</template>

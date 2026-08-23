@@ -7,7 +7,9 @@ use sea_orm::{
 use std::sync::LazyLock;
 
 use crate::error::AppError;
-use entity::{project_statuses, projects, task_activities, tasks, tenants, users};
+use entity::{
+    labels, project_statuses, projects, task_activities, task_labels, tasks, tenants, users,
+};
 
 static MENTION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([a-zA-Z0-9_-]+)").expect("mention regex"));
@@ -38,6 +40,65 @@ pub async fn status_name<C: ConnectionTrait>(db: &C, status_id: Uuid) -> Result<
         .await?
         .map(|s| s.name)
         .ok_or(AppError::NotFound)
+}
+
+/// タスクに現在付与されているラベルの (id, 名前) 一覧（名前・ID 順ソート済み）。
+/// label_added / label_removed アクティビティの前後スナップショットに使う。
+pub async fn task_label_entries<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, AppError> {
+    let label_ids: Vec<Uuid> = task_labels::Entity::find()
+        .filter(task_labels::Column::TaskId.eq(task_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|tl| tl.label_id)
+        .collect();
+    let mut entries: Vec<(Uuid, String)> = labels::Entity::find()
+        .filter(labels::Column::Id.is_in(label_ids))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|l| (l.id, l.name))
+        .collect();
+    entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    Ok(entries)
+}
+
+/// 前後スナップショットの差分から label_added / label_removed を 1 ラベルにつき
+/// 1 件ずつ記録する（docs/features/tasks/4.collaboration.md の event_type 定義に対応）。
+/// 集合に変化が無ければ何も記録しない。
+pub async fn record_label_diff<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+    user_id: Option<Uuid>,
+    before: &[(Uuid, String)],
+    after: &[(Uuid, String)],
+) -> Result<(), AppError> {
+    let before_ids: std::collections::HashSet<Uuid> = before.iter().map(|(id, _)| *id).collect();
+    let after_ids: std::collections::HashSet<Uuid> = after.iter().map(|(id, _)| *id).collect();
+    for (id, name) in after.iter().filter(|(id, _)| !before_ids.contains(id)) {
+        record_activity(
+            db,
+            task_id,
+            user_id,
+            "label_added",
+            serde_json::json!({ "label_id": id, "name": name }),
+        )
+        .await?;
+    }
+    for (id, name) in before.iter().filter(|(id, _)| !after_ids.contains(id)) {
+        record_activity(
+            db,
+            task_id,
+            user_id,
+            "label_removed",
+            serde_json::json!({ "label_id": id, "name": name }),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 pub fn priority_label(priority: tasks::TaskPriority) -> &'static str {

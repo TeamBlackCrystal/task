@@ -15,7 +15,7 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 use crate::AppState;
-use crate::error::AppError;
+use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
 use crate::settings::GithubAppSettings;
@@ -931,6 +931,15 @@ pub async fn delete_github_integration(
     };
 
     let mut installation_id = row.installation_id;
+    // 再連携と競合して後続のロックを消さないよう、解除処理より前の所有権を控える。
+    let import_lock_token =
+        match service::github::get_import_slot_token(&state.redis_client, project_id).await {
+            Ok(token) => token,
+            Err(e) => {
+                tracing::warn!(error = %e, %project_id, "read github import lock failed");
+                None
+            }
+        };
 
     loop {
         let txn = state.db.begin().await?;
@@ -1000,6 +1009,19 @@ pub async fn delete_github_integration(
         tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
     }
 
+    // 解除前のリポジトリに対応する取り込み枠を残すと、再連携後の取り込みが
+    // 実行中と誤判定される。後片付けの失敗で解除自体は失敗させない。
+    if let Some(import_lock_token) = import_lock_token
+        && let Err(e) = service::github::release_import_slot(
+            &state.redis_client,
+            project_id,
+            &import_lock_token,
+        )
+        .await
+    {
+        tracing::warn!(error = %e, %project_id, "release github import lock on disconnect failed");
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1034,6 +1056,7 @@ pub(crate) async fn enqueue_issue_push(state: &AppState, task_id: Uuid) {
     ),
     responses(
         (status = 202, description = "取り込みジョブを登録しました"),
+        (status = 409, description = "取り込みは既に実行中です", body = ServerError),
         CrudErrors,
     )
 )]
@@ -1053,12 +1076,42 @@ pub async fn import_github_issues(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    github_issue_sync::enqueue(
+    // 同じプロジェクトの取り込みが待機中・実行中なら積み直さない。
+    // Redis に触れない場合は握り潰して従来どおり積む（重複防止は最適化であって
+    // 認可ではないため、ここで API を落とさない）
+    let lock_token = match service::github::try_acquire_import_slot(&state.redis_client, project_id)
+        .await
+    {
+        Ok(Some(token)) => Some(token),
+        Ok(None) => {
+            tracing::info!(%project_id, "github import already queued; rejecting duplicate enqueue");
+            return Err(AppError::Conflict);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, %project_id, "github import lock unavailable; enqueueing anyway");
+            None
+        }
+    };
+
+    if let Err(e) = github_issue_sync::enqueue(
         &state.github_issue_sync_storage,
-        GithubIssueSyncJob::Import { project_id },
+        GithubIssueSyncJob::Import {
+            project_id,
+            lock_token: lock_token.clone(),
+        },
     )
     .await
-    .map_err(AppError::Internal)?;
+    {
+        // 積めなかったのにロックだけ残ると、TTL のあいだやり直せなくなる
+        if let Some(lock_token) = lock_token
+            && let Err(release_err) =
+                service::github::release_import_slot(&state.redis_client, project_id, &lock_token)
+                    .await
+        {
+            tracing::warn!(error = %release_err, %project_id, "release github import lock failed");
+        }
+        return Err(AppError::Internal(e));
+    }
 
     Ok(StatusCode::ACCEPTED)
 }

@@ -1,0 +1,76 @@
+/*
+ * remark-gfm サイドカー CSS。
+ * Tailwind preflight が list-style / blockquote 縦線 / リンク装飾を消すため、
+ * GFM 出力 (ul/ol/blockquote/a/del) に当てる。
+ *
+ * 消費契約 — import だけでは一行も当たらない:
+ *   1. 消費側 (+Layout.vue 等) で本ファイルを明示 import する
+ *      (SSR 副作用回避のためライブラリ側では import しない)
+ *   2. renderDescription の HTML を v-html する器に class="kfm-content" を付ける
+ *      (単一ソース = ./content-class.ts の KFM_CONTENT_CLASS)
+ *
+ * alert サイドカー (remark-koyori-alerts/style.css) と前提が違う理由:
+ * alerts はレンダラ自身が名前空間クラス (.kfm-alert 等) を emit し CSS がそれを
+ * 直接指すため import だけで当たる。GFM 出力には掴む class が無く、bare 要素へ
+ * 当てるとアプリ全体へ漏れるため、全ルールを .kfm-content 子孫限定で書く。
+ * この scope 一致は kfm-gfm-css-contract.test.ts が機構として強制する。
+ */
+
+.kfm-content ul,
+.kfm-content ol {
+  margin: 0.5rem 0;
+  padding-left: 2em;
+}
+
+.kfm-content ul {
+  list-style-type: disc;
+}
+
+.kfm-content ol {
+  list-style-type: decimal;
+}
+
+.kfm-content ul ul {
+  list-style-type: circle;
+}
+
+.kfm-content ul ul ul {
+  list-style-type: square;
+}
+
+/* タスクリストは checkbox がマーカー役のため、子 li 側で bullet を消す。
+   親 ul は disc のままにして子ルール削除時に bullet が復活するようにし、
+   継承による監視の空振りを防ぐ。padding-left: 0 は最上位リストの相殺が目的だが、このセレクタは入れ子の
+   ul.contains-task-list にも当たるため、次のルールが入れ子の字下げを戻す
+   (無いと親子タスクが同じ横位置に潰れる)。詳細度 (0,3,1) > (0,2,1) で入れ子側が勝つ */
+.kfm-content ul.contains-task-list {
+  padding-left: 0;
+}
+
+.kfm-content .task-list-item > ul.contains-task-list {
+  padding-left: 2em;
+}
+
+.kfm-content .task-list-item {
+  list-style: none;
+}
+
+.kfm-content blockquote {
+  margin: 0.5rem 0;
+  padding: 0 1em;
+  border-left: 0.25rem solid var(--border, #d0d7de);
+  color: inherit;
+}
+
+.kfm-content a {
+  color: #0969da;
+  text-decoration: underline;
+}
+
+.kfm-content del {
+  text-decoration: line-through;
+}
+
+.dark .kfm-content a {
+  color: #4493f8;
+}

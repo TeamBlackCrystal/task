@@ -7,7 +7,8 @@ use backend::utils::github::sync::{
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, github_issue_links, project_statuses, tasks};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait,
+    QueryFilter, QueryOrder, Statement,
 };
 use uuid::Uuid;
 use wiremock::matchers::{method, path, path_regex};
@@ -21,6 +22,27 @@ fn import_path(tp: &TestTenantProject) -> String {
         "/v1/tenants/{}/projects/{}/github/import",
         tp.tenant_id, tp.project_id
     )
+}
+
+/// 積まれている取り込みジョブの件数。ペイロードは JSON なので project_id で絞る
+/// （apalis.jobs.job は bytea。SeaORM の生 SQL では `?` ではなく `$N` を使う）。
+async fn queued_import_jobs(app: &TestApp, project_id: Uuid) -> i64 {
+    let row = app
+        .state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT COUNT(*) AS count FROM apalis.jobs \
+             WHERE job_type = $1 AND convert_from(job, 'UTF8') LIKE $2",
+            [
+                backend::jobs::github_issue_sync::QUEUE_NAME.into(),
+                format!("%{project_id}%").into(),
+            ],
+        ))
+        .await
+        .expect("count import jobs")
+        .expect("count row");
+    row.try_get::<i64>("", "count").expect("count column")
 }
 
 fn unique_installation_id() -> i64 {
@@ -204,6 +226,45 @@ async fn github_issue_sync_suite() {
         .clone()
         .expect("github app settings");
 
+    // 所有者でないトークンでは現在のロックを消せず、所有者だけが解放できる。
+    {
+        let project_id = Uuid::new_v4();
+        let current_token =
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, project_id)
+                .await
+                .expect("acquire import slot")
+                .expect("current import slot should be available");
+        let stale_token = Uuid::new_v4().to_string();
+
+        assert!(
+            !backend::utils::github::release_import_slot(
+                &app.state.redis_client,
+                project_id,
+                &stale_token,
+            )
+            .await
+            .expect("release stale import slot"),
+            "古いトークンでは後続ロックを削除しない"
+        );
+        assert!(
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, project_id,)
+                .await
+                .expect("check current import slot")
+                .is_none(),
+            "後続ロックは保持されている"
+        );
+        assert!(
+            backend::utils::github::release_import_slot(
+                &app.state.redis_client,
+                project_id,
+                &current_token,
+            )
+            .await
+            .expect("release current import slot"),
+            "現在の所有者はロックを解放できる"
+        );
+    }
+
     // 1. POST /import — 未連携なら 404、非オーナーは 403、オーナーは 202
     {
         let owner = app.insert_user(false, false).await;
@@ -228,6 +289,55 @@ async fn github_issue_sync_suite() {
             accepted.status(),
             StatusCode::ACCEPTED,
             "オーナーのインポートは 202（過剰拒否でないこと）"
+        );
+
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            1,
+            "202 を返したら取り込みジョブが 1 件積まれている"
+        );
+
+        // 連打しても、取り込み中のあいだは積み直さない（GitHub API のレート制限と
+        // ワーカー時間を無駄に食わせない）。既に実行中であることは 409 で伝える
+        let repeated = app
+            .post_json_with_session(&import_path(&tp), serde_json::json!({}))
+            .await;
+        assert_eq!(
+            repeated.status(),
+            StatusCode::CONFLICT,
+            "連打は 409（取り込みは開始済み）"
+        );
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            1,
+            "連打しても取り込みジョブは増えない"
+        );
+
+        // 取り込みが終われば（ジョブ側が枠を返せば）また積める
+        let lock_token =
+            backend::utils::github::get_import_slot_token(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("get import slot")
+                .expect("import slot token should exist");
+        backend::utils::github::release_import_slot(
+            &app.state.redis_client,
+            tp.project_id,
+            &lock_token,
+        )
+        .await
+        .expect("release import slot");
+        let after_release = app
+            .post_json_with_session(&import_path(&tp), serde_json::json!({}))
+            .await;
+        assert_eq!(
+            after_release.status(),
+            StatusCode::ACCEPTED,
+            "枠が返っていれば再実行できる"
+        );
+        assert_eq!(
+            queued_import_jobs(&app, tp.project_id).await,
+            2,
+            "枠が返っていれば取り込みジョブが積まれる"
         );
 
         app.reset_session_client();

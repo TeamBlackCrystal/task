@@ -1,5 +1,5 @@
-import type { paths as GeneratedPaths } from "./openapi";
-import type { ApiPaths } from "./paths";
+import type { components, paths as GeneratedPaths } from "./openapi";
+import type { ApiPaths, BulkUpdateFields } from "./paths";
 
 type HttpMethod =
   | "get"
@@ -35,3 +35,14 @@ type AssertNoMissingOperations<Missing extends never> = Missing;
 // This type fails compilation when a path or HTTP method used by the CLI is
 // removed from the canonical OpenAPI contract.
 export type CliOpenApiContract = AssertNoMissingOperations<MissingOperations>;
+
+type AssertNoMissingFields<Missing extends never> = Missing;
+
+// This type fails compilation when the canonical OpenAPI schema gains a field
+// that the hand-written CLI request type does not declare.
+export type BulkUpdateFieldsContract = AssertNoMissingFields<
+  Exclude<
+    keyof components["schemas"]["BulkUpdateFields"],
+    keyof BulkUpdateFields
+  >
+>;

@@ -6,12 +6,16 @@
 //! という前提に基づくリポジトリ選定。
 
 pub mod client;
+pub mod import_lock;
 pub mod install_state;
 pub mod issues;
 pub mod repositories;
 pub mod sync;
 
 pub use client::github_app;
+pub use import_lock::{
+    IMPORT_LOCK_TTL_SECS, get_import_slot_token, release_import_slot, try_acquire_import_slot,
+};
 pub use install_state::{
     GithubOAuthStatePayload, RepoSelectPayload, TTL_SECS, consume_state,
     delete_pending_installation_if, new_state_token, peek_pending_installation, peek_select_token,

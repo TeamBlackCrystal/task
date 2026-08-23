@@ -16,7 +16,7 @@ const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' 
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
-type MutatingField = EditableField | 'status_id' | 'labels';
+export type MutatingField = EditableField | 'status_id' | 'labels';
 
 /**
  * コードポイント順の文字列比較。
@@ -48,6 +48,13 @@ export interface UseTaskDetailParams {
    * 分割ビューのペインでは「ペインを閉じる」を渡す。
    */
   onAfterDelete?: (listHref: string) => void;
+  /**
+   * フィールド保存がサーバへ確定した後に呼ばれる (mutateAsync 成功時)。
+   * フルページ詳細はこれを description の保存に使い、+data.ts (サーバの
+   * renderDescription) を再実行して描画済み HTML を取り直す —— クライアントで
+   * KFM を描画しないための取り直し導線。
+   */
+  onAfterFieldSaved?: (field: MutatingField) => void;
 }
 
 /**
@@ -301,6 +308,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       .then((data: TaskDetail) => {
         applyMutationSuccess(field, revision, data, queryKey);
         void invalidateTaskListCaches();
+        params.onAfterFieldSaved?.(field);
       })
       .catch(() => {
         rollbackOptimistic(field, revision);

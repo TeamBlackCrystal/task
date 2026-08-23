@@ -502,6 +502,12 @@ async fn github_http_integration_suite() {
             "callback status={cb_status}"
         );
 
+        let lock_token =
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("acquire import slot before disconnect")
+                .expect("import slot should be available");
+
         let delete = app.delete_with_session(&integration_path(&tp)).await;
         assert_eq!(delete.status(), StatusCode::NO_CONTENT);
 
@@ -511,6 +517,30 @@ async fn github_http_integration_suite() {
             .await
             .expect("query integration");
         assert!(remaining.is_none());
+
+        let reacquired =
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("reacquire import slot after disconnect");
+        assert!(reacquired.is_some(), "連携解除時に取り込み枠を破棄する");
+        assert!(
+            !backend::utils::github::release_import_slot(
+                &app.state.redis_client,
+                tp.project_id,
+                &lock_token,
+            )
+            .await
+            .expect("release disconnected import slot"),
+            "解除前のトークンは無効になっている"
+        );
+        let reacquired = reacquired.expect("reacquired import slot token");
+        backend::utils::github::release_import_slot(
+            &app.state.redis_client,
+            tp.project_id,
+            &reacquired,
+        )
+        .await
+        .expect("release reacquired import slot");
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();

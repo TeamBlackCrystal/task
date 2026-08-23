@@ -24,6 +24,14 @@ import {
   isoToLocalDateInput,
   taskSeqKey,
 } from '@/lib/task-display';
+// KFM サイドカー CSS の消費契約 (@/lib/markup-renderer/index.ts): v-html する消費側が
+// 明示 import する。GFM は器の kfm-content (KFM_CONTENT_CLASS) が無いと一行も当たらない。
+// content-class.ts は leaf module なので、この import で KFM コアが client へ載ることはない。
+import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
+import '@/lib/remark-gfm/style.css';
+import '@/lib/remark-koyori-alerts/style.css';
+import '@/lib/rehype-starry-night/style.css';
+import '@/lib/remark-kfm-mermaid/style.css';
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type StatusOption = components['schemas']['ProjectStatusResponse'];
@@ -52,6 +60,22 @@ const props = defineProps<{
    * 'pane' は分割ビューの狭い右ペイン用に常に 1 カラムで縦積みにする。
    */
   layout?: 'page' | 'pane';
+  /**
+   * サーバ (+data.ts) の renderDescription 出力。descriptionSource が最新の
+   * task.description と厳密一致するときだけ KFM HTML として v-html 表示する。
+   * null / 未指定・不一致はプレーンテキスト表示へフォールバックする
+   * (分割ビューのペイン等、サーバ生成 HTML を持たない消費側)。
+   * v-html に入れてよいのはこの prop だけ — task.description (生テキスト) を
+   * v-html へ流す経路を作ってはならない (SSR/sanitize 契約: @/lib/markup-renderer)。
+   */
+  descriptionHtml?: string | null;
+  /**
+   * descriptionHtml の描画元テキスト (+data.ts の descriptionSource)。
+   * descriptionHtml を渡す消費側は必ず対で渡す。task.description との厳密一致を
+   * 下の freshDescriptionHtml が照合し、古い HTML (保存直後の reload 完了前・
+   * reload 失敗・他者更新) が v-html に出る経路をコンポーネント側で塞ぐ。
+   */
+  descriptionSource?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -68,6 +92,15 @@ const emit = defineEmits<{
 const resolvedStatus = computed(() =>
   props.statuses.find((status) => status.id === props.statusId),
 );
+
+// 古い HTML の遮断: 描画元 (descriptionSource) がクライアントの最新 task.description と
+// 厳密一致しない descriptionHtml は捨て、プレーンテキスト表示へ倒す。v-html の直前で
+// 照合するのは、消費側の渡し忘れ・渡し間違いでも stale HTML が漏れないようにするため。
+const freshDescriptionHtml = computed(() => {
+  if (!props.descriptionHtml || !props.task?.description) return null;
+  if (props.descriptionSource !== props.task.description) return null;
+  return props.descriptionHtml;
+});
 const editingField = ref<EditableField | null>(null);
 const draftValue = ref('');
 const editingControlRef = ref<HTMLElement | ComponentPublicInstance | null>(null);
@@ -293,6 +326,18 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               >
                 クリア
               </Button>
+              <Button
+                v-else-if="editingField !== 'description' && freshDescriptionHtml"
+                type="button"
+                variant="ghost"
+                size="icon"
+                class="size-7"
+                aria-label="説明を編集"
+                :disabled="isFieldUpdating('description')"
+                @click="startEditing('description')"
+              >
+                <Pencil class="size-4" aria-hidden="true" />
+              </Button>
             </div>
 
             <Textarea
@@ -305,6 +350,20 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               aria-label="説明"
               @keydown="onEditKeydown($event, 'description')"
               @blur="commitEditing('description')"
+            />
+            <!--
+              KFM 表示は非対話の div にする: 描画 HTML はリンク等の対話要素を含みうるため、
+              プレーン表示のような button で包むと入れ子の対話要素になる。編集導線は
+              上の鉛筆ボタン。freshDescriptionHtml は task.description との厳密一致を
+              照合済みで、説明が空・不一致 (stale) のときは null になり
+              下のプレーン分岐へ倒れる。
+            -->
+            <div
+              v-else-if="freshDescriptionHtml"
+              :class="KFM_CONTENT_CLASS"
+              class="text-sm leading-relaxed"
+              data-task-description-html
+              v-html="freshDescriptionHtml"
             />
             <button
               v-else

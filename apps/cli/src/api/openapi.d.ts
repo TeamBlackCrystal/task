@@ -2149,6 +2149,11 @@ export interface components {
             /** Format: uuid */
             assignee_id?: string | null;
             clear_sprint_id?: boolean;
+            /**
+             * @description 既存ラベルから外す ID 一覧。未付与・プロジェクト外の ID は単に無視される。
+             *     add_label_ids と同じ ID を含む場合は 400
+             */
+            remove_label_ids?: string[] | null;
             /** Format: uuid */
             sprint_id?: string | null;
             /** Format: uuid */
@@ -9357,6 +9362,15 @@ export interface operations {
                         /** @example internal-error */
                         message: string;
                     };
+                };
+            };
+            /** @description 取り込みは既に実行中です */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
                 };
             };
             /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */

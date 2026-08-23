@@ -1,0 +1,57 @@
+/*
+ * KFM コードブロック着色のサイドカー CSS (alerts と同じ方式)。
+ * renderer は CSS を import しない — 消費側 (SSR HTML を v-html で受けるページ) が
+ * 本ファイルを明示 import する。実体は @wooorm/starry-night 同梱の light シート
+ * (:root にライトパレット固定・media query なし) ＋ 下の .dark ブリッジ。specifier は
+ * exports map ("./style/*" → "./style/*.css") に合わせて拡張子なしで書く。
+ *
+ * both.css (prefers-color-scheme 切替) を使わない理由: 本アプリのテーマ所有権は
+ * .dark ancestor class にあり OS 設定に連動しない。both.css だと OS ダーク ×
+ * アプリライトでコードブロックだけが暗転する継ぎ目が生じる。light 固定 ＋ .dark
+ * ブリッジなら発火条件が .dark の一系統に畳まれ、この継ぎ目が消える
+ * (light.css のセレクタ集合は both.css と同一であることを機械照合済)。
+ */
+@import '@wooorm/starry-night/style/light';
+
+/*
+ * .dark ブリッジ (アプリの class 戦略ダークへの追従)。
+ * 本アプリのダークは tailwind.css の .dark ancestor class 戦略 (@custom-variant dark)。
+ * ブリッジが無いと .dark 配下でもコードがライト配色のまま沈む——alerts が cmd_668 で
+ * 踏んだ「CSS ライト固定」と同型。alerts と同じ前例 (.dark で実値上書き・理由明記) に
+ * 倣い、dark パレットの変数値を .dark 配下へ複写する。
+ * 値の出典: @wooorm/starry-night@3.10.0 style/dark.css の :root ブロック
+ * (upstream 更新時は同期が必要。機械照合済)。
+ * 変数は継承ゆえ、light.css の :root 宣言より対象に近い .dark 祖先の宣言が常に勝つ。
+ */
+.dark {
+  --color-prettylights-syntax-brackethighlighter-angle: #9198a1;
+  --color-prettylights-syntax-brackethighlighter-unmatched: #f85149;
+  --color-prettylights-syntax-carriage-return-bg: #b62324;
+  --color-prettylights-syntax-carriage-return-text: #f0f6fc;
+  --color-prettylights-syntax-comment: #9198a1;
+  --color-prettylights-syntax-constant: #79c0ff;
+  --color-prettylights-syntax-constant-other-reference-link: #a5d6ff;
+  --color-prettylights-syntax-entity: #d2a8ff;
+  --color-prettylights-syntax-entity-tag: #7ee787;
+  --color-prettylights-syntax-invalid-illegal-bg: #8e1519;
+  --color-prettylights-syntax-invalid-illegal-text: #f0f6fc;
+  --color-prettylights-syntax-keyword: #ff7b72;
+  --color-prettylights-syntax-markup-bold: #f0f6fc;
+  --color-prettylights-syntax-markup-changed-bg: #5a1e02;
+  --color-prettylights-syntax-markup-changed-text: #ffdfb6;
+  --color-prettylights-syntax-markup-deleted-bg: #67060c;
+  --color-prettylights-syntax-markup-deleted-text: #ffdcd7;
+  --color-prettylights-syntax-markup-heading: #1f6feb;
+  --color-prettylights-syntax-markup-ignored-bg: #1158c7;
+  --color-prettylights-syntax-markup-ignored-text: #f0f6fc;
+  --color-prettylights-syntax-markup-inserted-bg: #033a16;
+  --color-prettylights-syntax-markup-inserted-text: #aff5b4;
+  --color-prettylights-syntax-markup-italic: #f0f6fc;
+  --color-prettylights-syntax-markup-list: #f2cc60;
+  --color-prettylights-syntax-meta-diff-range: #d2a8ff;
+  --color-prettylights-syntax-storage-modifier-import: #f0f6fc;
+  --color-prettylights-syntax-string: #a5d6ff;
+  --color-prettylights-syntax-string-regexp: #7ee787;
+  --color-prettylights-syntax-sublimelinter-gutter-mark: #3d444d;
+  --color-prettylights-syntax-variable: #ffa657;
+}

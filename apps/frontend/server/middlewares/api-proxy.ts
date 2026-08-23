@@ -2,12 +2,14 @@ import arkenv from 'arkenv';
 import dotenv from 'dotenv';
 import { Elysia } from 'elysia';
 
+// API_BASE の検証と既定値は ../api-base (単一ソース) に寄せてある。
+import { API_BASE } from '../api-base';
+
 // The production SSR entry runs independently of Vite, so load runtime values
 // before arkenv validates process.env. Existing process variables still win.
 dotenv.config({ quiet: true });
 
 const env = arkenv({
-  API_BASE: "string.url = 'http://localhost:3400'",
   UPLOAD_MAX_SIZE_MB: 'number > 0 = 100',
 });
 
@@ -36,7 +38,7 @@ class BodyTooLargeError extends Error {
 function buildBackendUrl(request: Request): string {
   const url = new URL(request.url);
   const backendPath = url.pathname.replace(/^\/api/, '') + url.search;
-  return `${env.API_BASE}${backendPath}`;
+  return `${API_BASE}${backendPath}`;
 }
 
 function copyHeaders(source: Headers, skipHopByHop = true): Headers {
