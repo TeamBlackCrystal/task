@@ -9,6 +9,7 @@ import HydrationSafeForm from '@/components/HydrationSafeForm.vue';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { meQueryOptions, useUpdateProfileMutation } from '@/lib/api-vue-query';
+import { avatarInitials } from '@/lib/initials';
 import type { components } from '@/generated/api';
 
 const props = defineProps<{ user: components['schemas']['UserResponse'] }>();
@@ -92,7 +93,7 @@ const form = useForm({
   },
 });
 
-const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCase());
+const avatarFallback = computed(() => avatarInitials(props.user.username));
 
 function resetSubmitFeedback() {
   saved.value = false;

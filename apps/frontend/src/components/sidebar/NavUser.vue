@@ -25,6 +25,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { computed } from 'vue';
+import { avatarInitials } from '@/lib/initials';
 
 const props = defineProps<{
   user: {
@@ -36,7 +37,7 @@ const props = defineProps<{
 }>();
 
 const { isMobile } = useSidebar();
-const initials = computed(() => props.user.name.slice(0, 2).toUpperCase());
+const initials = computed(() => avatarInitials(props.user.name));
 </script>
 
 <template>

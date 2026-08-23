@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { avatarInitials } from '@/lib/initials';
 import type { components } from '@/generated/api';
 
 type UserSummary = components['schemas']['UserSummary'];
@@ -26,7 +27,7 @@ const overflowCount = computed(() => Math.max(0, props.users.length - props.maxD
 const firstUser = computed(() => props.users[0]);
 
 function initials(username: string) {
-  return username.slice(0, 1).toUpperCase();
+  return avatarInitials(username, 1);
 }
 </script>
 
