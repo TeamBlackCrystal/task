@@ -4761,7 +4761,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
+                };
             };
             /** @description ログインまたはセッションが必要です */
             401: {

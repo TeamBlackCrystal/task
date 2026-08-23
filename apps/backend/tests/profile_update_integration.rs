@@ -2,6 +2,8 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
+use entity::audit_logs;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 async fn me_json(app: &TestApp) -> serde_json::Value {
     app.get_me()
@@ -45,6 +47,25 @@ async fn updates_editable_fields_and_persists() {
     assert_eq!(after["username"], "renamed", "DB に永続化されている");
     assert_eq!(after["bio"], "プロフィールの説明");
     assert_eq!(after["avatar_url"], "https://example.com/a.png");
+
+    let audit = audit_logs::Entity::find()
+        .filter(audit_logs::Column::Action.eq("user.profile.update"))
+        .filter(audit_logs::Column::ActorId.eq(Some(user.id)))
+        .filter(audit_logs::Column::ResourceId.eq(user.id.to_string()))
+        .one(&app.state.db)
+        .await
+        .expect("query profile audit log")
+        .expect("profile audit log row");
+    let metadata = audit.metadata.expect("profile audit metadata");
+    assert_eq!(
+        metadata["username"]["before"],
+        format!("test_{}", &user.id.to_string()[..8])
+    );
+    assert_eq!(metadata["username"]["after"], "renamed");
+    assert_eq!(
+        metadata["changed_fields"],
+        serde_json::json!(["username", "bio", "avatar_url"])
+    );
 
     app.cleanup_user(user.id).await;
 }
@@ -137,9 +158,9 @@ async fn empty_patch_is_a_no_op() {
     app.cleanup_user(user.id).await;
 }
 
-/// `<img src>` に流し込む avatar_url は http/https 以外を受け付けない。
+/// `<img src>` に流し込む avatar_url は HTTPS 以外を受け付けない。
 #[tokio::test]
-async fn rejects_non_http_avatar_url() {
+async fn rejects_non_https_avatar_url() {
     let mut app = TestApp::new().await;
 
     let user = app.insert_user(false, false).await;
@@ -148,6 +169,7 @@ async fn rejects_non_http_avatar_url() {
         .await;
 
     for bad in [
+        "http://example.com/a.png",
         "javascript:alert(1)",
         "data:text/html;base64,PHN2Zz4=",
         "/relative/path.png",
@@ -162,17 +184,44 @@ async fn rejects_non_http_avatar_url() {
         );
     }
 
-    // 対照: http/https は通る（過剰な拒否になっていないこと）。
+    // 対照: HTTPS は通る（過剰な拒否になっていないこと）。
     let ok = app
         .patch_json_with_session(
             "/v1/auth/me",
-            serde_json::json!({ "avatar_url": "http://example.com/a.png" }),
+            serde_json::json!({ "avatar_url": "https://example.com/a.png" }),
         )
         .await;
-    assert_eq!(ok.status(), StatusCode::OK, "http は通る");
+    assert_eq!(ok.status(), StatusCode::OK, "HTTPS は通る");
 
     let after = me_json(&app).await;
-    assert_eq!(after["avatar_url"], "http://example.com/a.png");
+    assert_eq!(after["avatar_url"], "https://example.com/a.png");
+
+    app.cleanup_user(user.id).await;
+}
+
+/// avatar_url の設定と削除を同時に要求する曖昧な payload は拒否する。
+#[tokio::test]
+async fn rejects_conflicting_avatar_update() {
+    let mut app = TestApp::new().await;
+
+    let user = app.insert_user(false, false).await;
+    app.reset_session_client();
+    app.login_session_no_content(&user.email, &user.password)
+        .await;
+
+    let res = app
+        .patch_json_with_session(
+            "/v1/auth/me",
+            serde_json::json!({
+                "avatar_url": "https://example.com/a.png",
+                "clear_avatar_url": true,
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let after = me_json(&app).await;
+    assert!(after["avatar_url"].is_null(), "競合 payload では更新しない");
 
     app.cleanup_user(user.id).await;
 }

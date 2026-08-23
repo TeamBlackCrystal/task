@@ -2196,7 +2196,14 @@
             }
           },
           "400": {
-            "description": "入力内容が制約を満たしていません"
+            "description": "入力内容が制約を満たしていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
           },
           "401": {
             "description": "ログインまたはセッションが必要です",

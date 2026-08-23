@@ -28,11 +28,8 @@ const meQuery = useMeQuery();
           </p>
         </div>
 
-        <p v-if="meQuery.isPending.value" class="text-muted-foreground text-sm">読み込み中…</p>
-        <p v-else-if="!meQuery.data.value" class="text-destructive text-sm">
-          プロフィールを読み込めませんでした。
-        </p>
-        <ProfileForm v-else :user="meQuery.data.value" />
+        <!-- 親レイアウトが /me の成功後だけページを描画する。 -->
+        <ProfileForm :user="meQuery.data.value!" />
       </section>
     </div>
   </div>

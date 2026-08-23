@@ -1,4 +1,9 @@
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use axum_session::Session;
 use axum_session_redispool::SessionRedisPool;
 use axum_valid::Valid;
@@ -6,12 +11,12 @@ use sea_orm::prelude::Uuid;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use sea_orm::{ColumnTrait, QueryFilter};
 
-use crate::AppState;
 use crate::extractors::{AuthUser, CurrentUser};
 use crate::openapi::{
     CredentialErrors, RegisterErrors, ResendVerificationErrors, SessionAuthErrors,
     UnauthorizedErrors, VerifyEmailErrors,
 };
+use crate::{AppState, error::ServerError, handlers::admin_audit::record_audit};
 use entity::{system_settings, users};
 use job::AlreadyRegisteredEmailJob;
 use job::VerificationEmailJob;
@@ -304,13 +309,14 @@ pub async fn me(
     request_body = UpdateProfileRequest,
     responses(
         (status = 200, description = "更新後のアカウント情報", body = UserResponse),
-        (status = 400, description = "入力内容が制約を満たしていません"),
+        (status = 400, description = "入力内容が制約を満たしていません", body = ServerError),
         SessionAuthErrors,
     )
 )]
 pub async fn update_me(
     State(state): State<AppState>,
     user: CurrentUser,
+    headers: HeaderMap,
     Valid(Json(payload)): Valid<Json<UpdateProfileRequest>>,
 ) -> Result<Json<UserResponse>, AuthError> {
     let UpdateProfileRequest {
@@ -321,6 +327,10 @@ pub async fn update_me(
     } = payload;
 
     let current = user.0;
+    let before_username = current.username.clone();
+    let before_bio = current.bio.clone();
+    let before_avatar_url = current.avatar_url.clone();
+    let user_id = current.id;
     let mut active: users::ActiveModel = current.clone().into();
 
     if let Some(username) = username {
@@ -340,7 +350,36 @@ pub async fn update_me(
         return Ok(Json(current.into()));
     }
 
-    Ok(Json(active.update(&state.db).await?.into()))
+    let updated = active.update(&state.db).await?;
+    let mut changed_fields = Vec::new();
+    if updated.username != before_username {
+        changed_fields.push("username");
+    }
+    if updated.bio != before_bio {
+        changed_fields.push("bio");
+    }
+    if updated.avatar_url != before_avatar_url {
+        changed_fields.push("avatar_url");
+    }
+    record_audit(
+        &state.db,
+        user_id,
+        "user.profile.update",
+        "user",
+        &user_id.to_string(),
+        None,
+        Some(serde_json::json!({
+            "changed_fields": changed_fields,
+            "username": {
+                "before": before_username,
+                "after": updated.username.clone(),
+            },
+        })),
+        &headers,
+    )
+    .await?;
+
+    Ok(Json(updated.into()))
 }
 
 #[axum::debug_handler]

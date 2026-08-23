@@ -33,6 +33,7 @@ icon: lucide:user-cog
 
 `users.username` に一意制約は無く、この API も重複を確認しない。したがって、既存の利用者と
 同じ `username` に変更できる。登録 API（`POST /v1/auth/register`）も同様に重複を許す。
+本人によるプロフィール更新は監査ログに記録し、ユーザー名の変更前後を追跡できる。
 
 これはメンションの宛先に影響する。コメント本文の `@ユーザー名` は
 `service::task_activities` の `resolve_mentions` が `username` の完全一致で解決し、
@@ -91,8 +92,11 @@ icon: lucide:user-cog
 |---|---|---|---|
 | `username` | `string?` | 3〜255 文字 | 変更しない |
 | `bio` | `string?` | 1000 文字以内 | 変更しない |
-| `avatar_url` | `string?` | 2048 文字以内、`http://` または `https://` で始まる | 変更しない |
+| `avatar_url` | `string?` | 2048 文字以内、`https://` で始まる | 変更しない |
 | `clear_avatar_url` | `bool` | | `false` |
+
+文字数は UTF-16 コードユニットではなく Unicode コードポイント単位で数える。
+`avatar_url` と `clear_avatar_url: true` は同時に指定できず、競合時は `400 Bad Request` を返す。
 
 **レスポンス**: `200 OK` / `UserResponse`（更新後の値）
 
@@ -107,7 +111,7 @@ icon: lucide:user-cog
 { "clear_avatar_url": true }
 ```
 
-空文字（`""`）では消せない。`avatar_url` は `http://` / `https://` で始まることを要求するため、
+空文字（`""`）では消せない。`avatar_url` は `https://` で始まることを要求するため、
 空文字は入力チェックで弾かれるからである。既存の `PATCH .../tasks/{id}`（`UpdateTaskRequest`）
 が nullable な項目に `clear_*` を持たせているのと同じ形にした。
 
@@ -134,8 +138,8 @@ PAT で自分のプロフィールを書き換えられないことは、
 ### `avatar_url` のスキーム制限
 
 `avatar_url` はフロントエンドで `<img src>` に流し込む。`javascript:` や `data:` を保存できると
-そのまま描画経路に載るため、`http://` / `https://` 以外を保存段階で弾く
-（`payload::users::validate_avatar_url`）。相対パスも受け付けない。
+そのまま描画経路に載るため、`https://` 以外を保存段階で弾く
+（`payload::users::validate_avatar_url`）。HTTP は mixed content で表示できないため、相対パスと同様に受け付けない。
 
 同じ判定をフロントエンドの `ProfileForm.vue` にも置いている。**片方だけ変えると、
 画面では通るのに保存で 400 になる**（またはその逆）ので、変更するときは両方を直すこと。

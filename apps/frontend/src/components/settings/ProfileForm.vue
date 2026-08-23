@@ -19,19 +19,25 @@ const BIO_MAX = 1000;
 const AVATAR_URL_MAX = 2048;
 
 /** backend の `validate_avatar_url` と同じ判定。ずれると保存時まで気づけない。 */
-function isHttpUrl(value: string) {
+function isHttpsUrl(value: string) {
   const lowered = value.toLowerCase();
-  return lowered.startsWith('https://') || lowered.startsWith('http://');
+  return lowered.startsWith('https://');
 }
 
-function validateUsername(value: string) {
-  if (value.length < USERNAME_MIN) return `${USERNAME_MIN}文字以上で入力してください。`;
-  if (value.length > USERNAME_MAX) return `${USERNAME_MAX}文字以内で入力してください。`;
+/** backend の `chars().count()` と同じく、UTF-16 ではなくコードポイント単位で数える。 */
+function codePointLength(value: string) {
+  return Array.from(value).length;
+}
+
+function validateUsername(raw: string) {
+  const length = codePointLength(raw.trim());
+  if (length < USERNAME_MIN) return `${USERNAME_MIN}文字以上で入力してください。`;
+  if (length > USERNAME_MAX) return `${USERNAME_MAX}文字以内で入力してください。`;
   return undefined;
 }
 
 function validateBio(value: string) {
-  return value.length > BIO_MAX ? `${BIO_MAX}文字以内で入力してください。` : undefined;
+  return codePointLength(value) > BIO_MAX ? `${BIO_MAX}文字以内で入力してください。` : undefined;
 }
 
 function validateAvatarUrl(raw: string) {
@@ -39,8 +45,9 @@ function validateAvatarUrl(raw: string) {
   // 画面で弾いておいて送信では通る（またはその逆）というずれを作らない。
   const value = raw.trim();
   if (value === '') return undefined;
-  if (value.length > AVATAR_URL_MAX) return `${AVATAR_URL_MAX}文字以内で入力してください。`;
-  if (!isHttpUrl(value)) return 'http:// または https:// で始まる URL を入力してください。';
+  if (codePointLength(value) > AVATAR_URL_MAX)
+    return `${AVATAR_URL_MAX}文字以内で入力してください。`;
+  if (!isHttpsUrl(value)) return 'https:// で始まる URL を入力してください。';
   return undefined;
 }
 
@@ -58,11 +65,12 @@ const form = useForm({
   onSubmit: async ({ value }) => {
     submitError.value = null;
     saved.value = false;
+    const username = value.username.trim();
     const avatarUrl = value.avatarUrl.trim();
     try {
       await updateProfile.mutateAsync({
         body: {
-          username: value.username,
+          username,
           bio: value.bio,
           ...(avatarUrl === '' ? { clear_avatar_url: true } : { avatar_url: avatarUrl }),
         },
@@ -80,13 +88,18 @@ const form = useForm({
 });
 
 const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCase());
+
+function resetSubmitFeedback() {
+  saved.value = false;
+  submitError.value = null;
+}
 </script>
 
 <template>
   <HydrationSafeForm
     v-slot="{ isHydrated }"
     @submit="() => form.handleSubmit()"
-    @input="saved = false"
+    @input="resetSubmitFeedback"
   >
     <FieldGroup>
       <form.Field
@@ -103,7 +116,7 @@ const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCas
               <Avatar class="size-14 rounded-lg">
                 <AvatarImage
                   v-if="validateAvatarUrl(field.state.value) === undefined && field.state.value"
-                  :src="field.state.value"
+                  :src="field.state.value.trim()"
                   :alt="user.username"
                 />
                 <AvatarFallback class="rounded-lg">{{ avatarFallback }}</AvatarFallback>
@@ -127,7 +140,7 @@ const avatarFallback = computed(() => props.user.username.slice(0, 2).toUpperCas
                     :disabled="!field.state.value"
                     @click="
                       field.handleChange('');
-                      saved = false;
+                      resetSubmitFeedback();
                     "
                   >
                     削除

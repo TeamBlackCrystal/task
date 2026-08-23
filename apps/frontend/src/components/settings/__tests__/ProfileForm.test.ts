@@ -85,17 +85,40 @@ describe('ProfileForm', () => {
     });
   });
 
-  it('http/https でない URL は送信せずエラーを出す', async () => {
+  it.each(['http://example.com/a.png', 'javascript:alert(1)'])(
+    'HTTPS でない URL (%s) は送信せずエラーを出す',
+    async (avatarUrl) => {
+      const bodies = stubPatchMe();
+      const wrapper = mountForm();
+      await flushPromises();
+
+      await wrapper.find('#avatarUrl').setValue(avatarUrl);
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+
+      expect(bodies).toHaveLength(0);
+      expect(wrapper.text()).toContain('https:// で始まる URL');
+    },
+  );
+
+  it('サロゲートペアを Unicode コードポイント単位で数える', async () => {
     const bodies = stubPatchMe();
     const wrapper = mountForm();
     await flushPromises();
 
-    await wrapper.find('#avatarUrl').setValue('javascript:alert(1)');
+    await wrapper.find('#username').setValue('😀😀');
     await wrapper.find('form').trigger('submit');
     await flushPromises();
 
     expect(bodies).toHaveLength(0);
-    expect(wrapper.text()).toContain('http:// または https:// で始まる URL');
+    expect(wrapper.text()).toContain('3文字以上で入力してください。');
+
+    await wrapper.find('#username').setValue('😀😀😀');
+    await wrapper.find('#bio').setValue('😀'.repeat(600));
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(bodies).toHaveLength(1);
   });
 
   it('3 文字未満のユーザー名は送信せずエラーを出す', async () => {
@@ -116,12 +139,32 @@ describe('ProfileForm', () => {
     const wrapper = mountForm();
     await flushPromises();
 
+    await wrapper.find('#username').setValue('  renamed  ');
     await wrapper.find('#avatarUrl').setValue('  https://example.com/b.png  ');
+    expect(wrapper.find('[data-slot="avatar-image"]').attributes('src')).toBe(
+      'https://example.com/b.png',
+    );
     await wrapper.find('form').trigger('submit');
     await flushPromises();
 
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]).toMatchObject({ avatar_url: 'https://example.com/b.png' });
+    expect(bodies[0]).toMatchObject({
+      username: 'renamed',
+      avatar_url: 'https://example.com/b.png',
+    });
+  });
+
+  it('空白だけのユーザー名は送信しない', async () => {
+    const bodies = stubPatchMe();
+    const wrapper = mountForm();
+    await flushPromises();
+
+    await wrapper.find('#username').setValue('   ');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(bodies).toHaveLength(0);
+    expect(wrapper.text()).toContain('3文字以上で入力してください。');
   });
 
   it('保存に失敗したらエラーを表示する', async () => {
@@ -133,6 +176,11 @@ describe('ProfileForm', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('保存できませんでした。');
+
+    await wrapper.find('#bio').setValue('再編集');
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('保存できませんでした。');
   });
 
   it('400 のときは入力内容の確認を促す', async () => {
