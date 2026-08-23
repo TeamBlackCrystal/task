@@ -4,7 +4,21 @@ use axum::http::StatusCode;
 use common::TestApp;
 use serde_json::Value;
 
-async fn setup_task(app: &mut TestApp) -> (common::TestTenantProject, String, String) {
+/// テナントに所属させたうえでログインし直す。
+///
+/// 所属させないユーザーの 403 は `ensure_tenant_access`（テナント境界）で
+/// 止まり、update の投稿者判定・delete の投稿者/オーナー判定まで届かない。
+/// 認可の細かい経路を検める試験は必ずこちらを通すこと。
+async fn login_as_tenant_member(app: &mut TestApp, project_id: uuid::Uuid) -> common::TestUser {
+    let member = app.insert_user(false, false).await;
+    common::ensure_tenant_member_for_project(&app.state.db, project_id, member.id).await;
+    app.reset_session_client();
+    app.login_session_no_content(&member.email, &member.password)
+        .await;
+    member
+}
+
+async fn setup_task(app: &mut TestApp) -> (common::TestTenantProject, String, common::TestUser) {
     let user = app.insert_user(true, false).await;
     app.login_session_no_content(&user.email, &user.password)
         .await;
@@ -46,13 +60,13 @@ async fn setup_task(app: &mut TestApp) -> (common::TestTenantProject, String, St
     let task: Value = task_resp.json().await.expect("task json");
     let task_id = task["id"].as_str().expect("task id").to_string();
 
-    (tp, task_id, user.email)
+    (tp, task_id, user)
 }
 
 #[tokio::test]
 async fn task_comments_integration_suite() {
     let mut app = TestApp::new().await;
-    let (tp, task_id, _email) = setup_task(&mut app).await;
+    let (tp, task_id, owner) = setup_task(&mut app).await;
 
     let comments_base = format!(
         "/v1/tenants/{}/projects/{}/tasks/{}/comments",
@@ -140,12 +154,61 @@ async fn task_comments_integration_suite() {
         1
     );
 
-    let other = app.insert_user(false, false).await;
+    // --- 認可: テナント境界（ensure_tenant_access で止まる経路） ---
+    let outsider = app.insert_user(false, false).await;
     app.reset_session_client();
-    app.login_session_no_content(&other.email, &other.password)
+    app.login_session_no_content(&outsider.email, &outsider.password)
         .await;
+    let outsider_update = app
+        .put_json_with_session(&update_path, serde_json::json!({ "body": "部外者の編集" }))
+        .await;
+    assert_eq!(
+        outsider_update.status(),
+        StatusCode::FORBIDDEN,
+        "テナント非メンバーはテナント境界で 403"
+    );
+
+    // --- 認可: 投稿者判定（テナントには入れる = 境界を通過した先の 403） ---
+    login_as_tenant_member(&mut app, tp.project_id).await;
+
+    // 正の対照: メンバーはコメントを作れる。ここが通るので、続く 403 は
+    // テナント境界ではなく投稿者判定・オーナー判定によるものだと言える
+    let member_comment = app
+        .post_json_with_session(
+            &comments_base,
+            serde_json::json!({ "body": "メンバーのコメント", "parent_comment_id": null }),
+        )
+        .await;
+    assert_eq!(member_comment.status(), StatusCode::CREATED);
+    let member_comment: Value = member_comment.json().await.expect("member comment json");
+    let member_comment_id = member_comment["id"].as_str().expect("member comment id");
+
     let forbidden_update = app
         .put_json_with_session(&update_path, serde_json::json!({ "body": "他人の編集" }))
         .await;
-    assert_eq!(forbidden_update.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        forbidden_update.status(),
+        StatusCode::FORBIDDEN,
+        "テナントメンバーでも投稿者本人以外は編集できない"
+    );
+
+    // --- 認可: 削除の拒否系（投稿者でもオーナーでもないメンバー） ---
+    let forbidden_delete = app.delete_with_session(&update_path).await;
+    assert_eq!(
+        forbidden_delete.status(),
+        StatusCode::FORBIDDEN,
+        "投稿者でもテナントオーナーでもないメンバーは削除できない"
+    );
+    // --- 認可: 削除の成功系（テナントオーナーは他人のコメントを消せる） ---
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+    let owner_delete = app
+        .delete_with_session(&format!("{comments_base}/{member_comment_id}"))
+        .await;
+    assert_eq!(
+        owner_delete.status(),
+        StatusCode::NO_CONTENT,
+        "テナントオーナーは投稿者でなくても削除できる"
+    );
 }
