@@ -59,7 +59,7 @@ export const KFM_STORY_INPUTS = {
     '\n',
   ),
 
-  // cmd_669 (starry-night 着色) の前後で差が見える基準。着色が入ると drift 検査が落ち、
+  // コードハイライト (starry-night 着色) 導入の前後で差が見える基準。着色が入ると drift 検査が落ち、
   // 再生成後の絵に pl- span が現れる。
   'gfm-code-fence': [
     '```js',
@@ -130,8 +130,8 @@ export const KFM_STORY_INPUTS = {
     '> 危険の callout。',
   ].join('\n'),
 
-  // cmd_668 で直した箇所: マーカー行末に半角スペース 2 つ (hard break) があっても
-  // alert 化し、本文先頭へ <br> が漏れない。直った状態を絵で固定する。
+  // マーカー行末に半角スペース 2 つ (hard break) があっても alert 化し、
+  // 本文先頭へ <br> が漏れない。この修正済み挙動を絵で固定する。
   'alerts-hard-break-marker': [
     `> [!WARNING]${TWO_TRAILING_SPACES}`,
     '> 行末スペース 2 つ付きマーカーの本文。',

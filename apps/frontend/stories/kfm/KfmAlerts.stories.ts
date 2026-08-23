@@ -112,7 +112,7 @@ export const AllFiveDark: Story = {
     docs: {
       description: {
         story:
-          '壊れたら: .dark 上書き (style.css の GitHub ダークパレット) が失われるとライト用の濃色がダーク地に沈み、絵が変わる——yupix 殿指摘 4 件目 (CSS ライト固定) の再発をこの絵で検知する。',
+          '壊れたら: .dark 上書き (style.css の GitHub ダークパレット) が失われるとライト用の濃色がダーク地に沈み、絵が変わる——種別アクセント色がライト実色のまま固定される退行の再発をこの絵で検知する。',
       },
     },
   },
@@ -120,14 +120,14 @@ export const AllFiveDark: Story = {
     await expect(canvasElement.querySelectorAll('.kfm-alert')).toHaveLength(5);
     // ダーク切替の実体 (.dark ancestor) が絵の前提として存在していること
     await expect(canvasElement.querySelector('.dark .kfm-alert')).not.toBeNull();
-    // .dark 上書きの実効。ライト色のままダーク地に沈む再発 (yupix 殿指摘 4 件目) を
+    // .dark 上書きの実効。種別アクセント色がライト実色のままダーク地に沈む退行を
     // ダークパレット実色の computed で固定する
     await expectAlertAccents(canvasElement, ALERT_ACCENTS_DARK);
   },
 };
 
 export const HardBreakMarker: Story = {
-  name: 'マーカー行末スペース 2 つ（cmd_668 修正の固定）',
+  name: 'マーカー行末スペース 2 つ（hard break 耐性の固定）',
   args: { html: hardBreakHtml },
   parameters: {
     docs: {
