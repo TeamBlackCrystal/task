@@ -180,6 +180,9 @@ describe('AccessTokensSection', () => {
     clickBodyButton('トークンを発行');
     await flushPromises();
 
+    // トークン 0 件でフォームを開いている間、空の一覧ボックスを描画しない
+    expect(wrapper.find('[data-testid="token-list"]').exists()).toBe(false);
+
     await wrapper.find('#token-name').setValue('CI deploy');
     clickScopeCheckbox('read:task');
     clickScopeCheckbox('write:task');

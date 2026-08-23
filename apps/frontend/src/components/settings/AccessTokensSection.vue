@@ -348,7 +348,11 @@ async function onRevokeConfirm() {
         トークンはまだありません。
       </p>
 
-      <ul v-else class="divide-y rounded-lg border" data-testid="token-list">
+      <ul
+        v-else-if="tokensQuery.data.value!.length > 0"
+        class="divide-y rounded-lg border"
+        data-testid="token-list"
+      >
         <li
           v-for="token in tokensQuery.data.value"
           :key="token.id"
