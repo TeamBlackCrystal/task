@@ -92,6 +92,28 @@ export function useOAuthProvidersQuery() {
   });
 }
 
+export const personalTokensQueryOptions = () =>
+  apiClient.queryOptions('get', '/v1/personal_tokens', undefined, { retry: false });
+
+export function usePersonalTokensQuery() {
+  return apiClient.useQuery('get', '/v1/personal_tokens', undefined, { retry: false });
+}
+
+export function useCreatePersonalTokenMutation() {
+  return apiClient.useMutation('post', '/v1/personal_tokens');
+}
+
+export function useRevokePersonalTokenMutation() {
+  return apiClient.useMutation('delete', '/v1/personal_tokens/{id}');
+}
+
+export function useTenantsQuery() {
+  return apiClient.useQuery('get', '/v1/tenants', undefined, {
+    staleTime: AUTH_ME_STALE_TIME_MS,
+    retry: false,
+  });
+}
+
 export function useLoginMutation() {
   return apiClient.useMutation('post', '/v1/auth/login');
 }

@@ -39,6 +39,7 @@
 | URL | 説明 |
 |-----|------|
 | `/settings/profile` | プロフィール編集（[仕様](../features/account-settings.md)） |
+| `/settings/tokens` | パーソナルアクセストークンの発行・取り消し（[仕様](../features/account-settings.md)） |
 
 ### テナントスコープ
 
@@ -88,7 +89,8 @@ apps/frontend/src/pages/
 ├── reset-password/+Page.vue             # /reset-password
 │
 ├── settings/
-│   └── profile/+Page.vue                # /settings/profile
+│   ├── profile/+Page.vue                # /settings/profile
+│   └── tokens/+Page.vue                 # /settings/tokens
 │
 ├── @tenant/
 │   ├── +Page.vue                        # /{tenant}
@@ -146,6 +148,7 @@ apps/frontend/src/pages/
 | `/forgot-password` | `forgot-password/+Page.vue` |
 | `/reset-password` | `reset-password/+Page.vue` |
 | `/settings/profile` | `settings/profile/+Page.vue` |
+| `/settings/tokens` | `settings/tokens/+Page.vue` |
 | `/{tenant}` | `@tenant/+Page.vue` |
 | `/{tenant}/settings` | `@tenant/settings/+Page.vue` |
 | `/{tenant}/members` | `@tenant/members/+Page.vue` |
