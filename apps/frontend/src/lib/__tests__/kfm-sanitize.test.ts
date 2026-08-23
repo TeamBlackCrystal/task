@@ -4,7 +4,7 @@ import { buildRegistry, createSanitizer } from '../markup-renderer/_sanitize';
 import { gfmSanitizeSchema } from '../remark-gfm';
 import { koyoriAlertsSanitizeSchema } from '../remark-koyori-alerts';
 
-// Phase 1 本番構成と同じ registry
+// mermaid を含まない sanitize registry の単体検査用構成
 const sanitize = createSanitizer([gfmSanitizeSchema, koyoriAlertsSanitizeSchema]);
 
 describe('createSanitizer (🔴 FORBID_ATTR: style)', () => {
@@ -108,7 +108,7 @@ describe('createSanitizer (XSS 基本)', () => {
   });
 });
 
-describe('createSanitizer (フックの有効範囲は sanitizer 内に閉じる)', () => {
+describe('createSanitizer (フックは sanitize() 呼び出しごとに据え付けて撤去する)', () => {
   it('sanitizer 構築後も素の DOMPurify.sanitize は class を保持する (グローバル汚染なし)', () => {
     // 本番構成 sanitizer (module top の createSanitizer) が構築済みの状態で、レンダラを
     // 経由しない素の DOMPurify 利用者が影響を受けないこと。常駐フックが残っていると
@@ -132,7 +132,7 @@ describe('createSanitizer (フックの有効範囲は sanitizer 内に閉じる
 });
 
 describe('createSanitizer (カスタム要素 registry)', () => {
-  it('未登録カスタム要素タグは除去する (Phase 1 は登録タグ空 = kfm-animation も通らない)', () => {
+  it('未登録カスタム要素タグは除去する (kfm-animation は未登録)', () => {
     const html = sanitize('<kfm-animation fn="spin" speed="3s">子テキスト</kfm-animation>');
     expect(html).not.toContain('kfm-animation');
     expect(html).toContain('子テキスト');

@@ -33,9 +33,10 @@ describe('registerKfmCustomElements (🔴 client ガード)', () => {
     expect(second).toEqual({ skipped: false, defined: 0 });
   });
 
-  it('既定 (Phase 1) の登録タグは空 = seam のみ', () => {
+  it('既定の登録タグは kfm-mermaid の 1 件 (Phase 2 第一号)', () => {
     const result = registerKfmCustomElements();
-    expect(result).toEqual({ skipped: false, defined: 0 });
+    expect(result).toEqual({ skipped: false, defined: 1 });
+    expect(customElements.get('kfm-mermaid')).toBeTypeOf('function');
   });
 });
 

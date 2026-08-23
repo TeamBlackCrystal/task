@@ -247,13 +247,13 @@ export const DeepQuote: Story = {
 };
 
 export const CodeFence: Story = {
-  name: 'コードフェンス（着色前の素の姿）',
+  name: '着色済みコードフェンス（GFM 側の基準）',
   args: { html: codeFenceHtml },
   parameters: {
     docs: {
       description: {
         story:
-          '壊れたら: 着色前の基準。cmd_669 (starry-night) が入ると drift 検査が落ち、fixture 再生成後にトークンが色分かれした絵へ変わる——それがこの story の役目。着色以外で絵が変わったらエスケープか pre/code 構造の変化。',
+          '壊れたら: starry-night 適用後も GFM のコードフェンスが pre/code 構造とエスケープを保ち、トークンが色分けされる基準。着色以外で絵が変わったらエスケープか pre/code 構造の変化。',
       },
     },
   },

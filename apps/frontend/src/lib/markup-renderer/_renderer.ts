@@ -1,20 +1,22 @@
 /**
  * _renderer.ts — controlled pipeline のコア (createRenderer)。
  *
- * pipeline: remark-parse → (profile 別 remark 層) → remark-rehype → rehype-stringify
- *           → DOMPurify (構造専任) → HTML 文字列。
+ * pipeline: remark-parse → (profile 別 remark 層) → remark-rehype → (profile 別 rehype 層)
+ *           → rehype-stringify → DOMPurify (構造専任) → HTML 文字列。
  * - allowDangerousHtml は使わない。mdast の生 html ノードは remark-rehype 既定で黙って
  *   消えるため、プラグインは data.hName / hProperties の型付き emit のみ行う契約。
- * - コアはプラグインを import しない。profile ごとの remark 層と sanitize スキーマは
+ * - コアはプラグインを import しない。profile ごとの remark / rehype 層と sanitize スキーマは
  *   composition root (index.ts) が注入する。
  * - processor は profile ごとに 1 回だけ build して memoize する (N 重初期化回避)。
  */
+import type { Root } from 'hast';
 import type { LRUCache } from 'lru-cache';
 import rehypeStringify from 'rehype-stringify';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import type { PluggableList } from 'unified';
 import { unified } from 'unified';
+import { visit } from 'unist-util-visit';
 import { buildCacheKey, createL1Cache } from './_cache';
 import type { SanitizeSchema } from './_sanitize';
 import { createSanitizer } from './_sanitize';
@@ -27,6 +29,17 @@ export type KfmProfile = 'github';
 export type ProfileDefinition = {
   /** 共有 core (remark-parse → remark-rehype → rehype-stringify) に挿す remark 層 */
   readonly remarkPlugins: PluggableList;
+  /**
+   * remark-rehype と rehype-stringify の間に挿す rehype 層 (省略 = なし)。
+   * async transformer を持つプラグイン (rehype-starry-night 等) も可 — process() が
+   * await する。プラグイン factory 自体は同期である前提 (unified の use() 契約どおり)
+   * のため、processor 構築 (getProcessor) は同期のまま。
+   * 注意: scope 付き描画は processor を都度構築する (getProcessor 参照) ため、attach の
+   * たびに高い初期化を始めるプラグインをそのまま渡すと初期化が描画回数ぶん走る。
+   * 重い async 初期化は factory 側で共有・自己回収すること
+   * (実例: rehype-starry-night/index.ts の createRehypeStarryNight)。
+   */
+  readonly rehypePlugins?: PluggableList;
 };
 
 export type CreateRendererOptions = {
@@ -51,6 +64,8 @@ export type RenderOptions = {
    * 脚注 id の衝突回避 scope。同一ページへ複数の KFM 断片 (タスク本文＋コメント等) を
    * 並べる場合、断片ごとに決定的な scope (例: `comment-42`) を渡す。remark-rehype の
    * clobberPrefix へ `user-content-<scope>-` として反映され、キャッシュキーにも載る。
+   * `footnote-label` とそれを指す `aria-describedby` も core の rehype 層が同じ prefix で
+   * scope 化する。
    * random ではなく呼び出し側の決定的識別子である理由: 同一入力→同一 HTML を保たないと
    * L1 キャッシュ前提 (SSR/CSR 同一性) が崩れるため。[A-Za-z0-9_-]+ 以外は throw。
    * fn / fnref を `-` 区切りセグメントとして含む scope も throw
@@ -77,11 +92,55 @@ const SCOPE_RE = /^[A-Za-z0-9_-]+$/;
 // fn / fnref トークンが必ずマーカー由来となり、scope 境界が一意に復元できて衝突は起きない。
 const SCOPE_RESERVED_SEGMENT_RE = /(^|-)(fn|fnref)(-|$)/;
 
+// remark-rehype (mdast-util-to-hast) が脚注 footer 見出しへ焼き込む固定 id。
+// clobberPrefix は fn-* / fnref-* にしか効かず、この id と脚注参照側の
+// aria-describedby は scope を渡しても固定のまま残る。scope 契約 (1 ページ複数断片で
+// 全 id 一意) の一部としてコアが書き換える — プラグインへ出すと scope を知る層が
+// 二つに割れるため、clobberPrefix と同じ場所 (core) で完結させる。
+const FOOTNOTE_LABEL_ID = 'footnote-label';
+
+/**
+ * scope 付き描画専用の rehype 層。footnote-label の id と、それを指す
+ * aria-describedby の双方を `${clobberPrefix}footnote-label` へ書き換える。
+ * 片方だけでは aria の参照が切れる。scope 無し (既定) はこの層自体を挿さず、
+ * GitHub 互換の固定 footnote-label を保つ。
+ */
+function rehypeScopeFootnoteLabel(clobberPrefix: string) {
+  const scopedId = `${clobberPrefix}${FOOTNOTE_LABEL_ID}`;
+  return function transform(tree: Root): void {
+    visit(tree, 'element', (node) => {
+      if (node.properties.id === FOOTNOTE_LABEL_ID) {
+        node.properties.id = scopedId;
+      }
+      // 現行の mdast-util-to-hast は配列で emit するが、rehype 層が文字列を渡す場合も
+      // space-separated token 列へ正規化し、以後の置換経路を一つに保つ。
+      const describedBy = node.properties.ariaDescribedBy;
+      if (describedBy == null) {
+        return;
+      }
+      const describedByTokens = (Array.isArray(describedBy) ? describedBy : [describedBy])
+        .flatMap((value) => (typeof value === 'string' ? value.split(/\s+/) : []))
+        .filter(Boolean);
+      if (describedByTokens.includes(FOOTNOTE_LABEL_ID)) {
+        node.properties.ariaDescribedBy = describedByTokens.map((token) =>
+          token === FOOTNOTE_LABEL_ID ? scopedId : token,
+        );
+      }
+    });
+  };
+}
+
 function buildProcessor(definition: ProfileDefinition, clobberPrefix: string) {
+  // footnote-label の scope 書き換えは remark-rehype 直後 (他 rehype 層より前) に挿し、
+  // 後段プラグインには書き換え済みの id しか見せない
+  const scopeLayer: PluggableList =
+    clobberPrefix === DEFAULT_CLOBBER_PREFIX ? [] : [[rehypeScopeFootnoteLabel, clobberPrefix]];
   return unified()
     .use(remarkParse)
     .use(definition.remarkPlugins)
     .use(remarkRehype, { clobberPrefix })
+    .use(scopeLayer)
+    .use(definition.rehypePlugins ?? [])
     .use(rehypeStringify)
     .freeze();
 }
@@ -94,18 +153,27 @@ type BuiltProcessor = ReturnType<typeof buildProcessor>;
  * プロセス内 (L1) 専用 —— 関数名は minify で変わり得るため、永続 L2 を導入する際は
  * ビルドを跨いで安定な名前へ置き換えること。
  */
+function describePluggableList(plugins: PluggableList): string[] {
+  return plugins.map((plugin) => {
+    if (Array.isArray(plugin)) {
+      const [fn, ...settings] = plugin;
+      const name = typeof fn === 'function' ? fn.name : JSON.stringify(fn);
+      return `${name}(${JSON.stringify(settings)})`;
+    }
+    return typeof plugin === 'function' ? plugin.name : JSON.stringify(plugin);
+  });
+}
+
 function buildPipelineFingerprint(options: CreateRendererOptions): string {
+  // remark 層と rehype 層を別キーで焼き込む。rehype 層を見ないと、rehypePlugins だけが
+  // 違う renderer が同一キーを作り、旧規則で通った HTML を返す (kfm-cache テストで固定)。
   const pluginNames = Object.fromEntries(
     Object.entries(options.profiles).map(([profile, definition]) => [
       profile,
-      definition.remarkPlugins.map((plugin) => {
-        if (Array.isArray(plugin)) {
-          const [fn, ...settings] = plugin;
-          const name = typeof fn === 'function' ? fn.name : JSON.stringify(fn);
-          return `${name}(${JSON.stringify(settings)})`;
-        }
-        return typeof plugin === 'function' ? plugin.name : JSON.stringify(plugin);
-      }),
+      {
+        remark: describePluggableList(definition.remarkPlugins),
+        rehype: describePluggableList(definition.rehypePlugins ?? []),
+      },
     ]),
   );
   const sanitizeShape = options.sanitizeSchemas.map((schema) => ({
@@ -115,7 +183,7 @@ function buildPipelineFingerprint(options: CreateRendererOptions): string {
     classPatterns: (schema.classPatterns ?? []).map(String),
   }));
   return JSON.stringify({
-    core: ['remark-parse', 'remark-rehype', 'rehype-stringify'],
+    core: ['remark-parse', 'remark-rehype', 'rehype-scope-footnote-label', 'rehype-stringify'],
     plugins: pluginNames,
     sanitize: sanitizeShape,
   });
@@ -139,8 +207,11 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
   function getProcessor(profile: KfmProfile, clobberPrefix: string): BuiltProcessor {
     // memoize は既定 prefix のみ。scope の値空間は非有界 (comment id 等) で、singleton
     // の SSR プロセスに scope ごとの processor を溜めるとメモリが漏れる。scope 付きは
-    // 都度構築する — 構築はプラグイン合成のみで、cache miss 時に必ず走る
-    // parse＋sanitize に比べ無視できる。
+    // 都度構築する — この「構築 = プラグイン合成のみで軽い」が成り立つのは、rehype 層の
+    // 高い初期化 (starry-night の WASM＋文法登録) がプラグイン factory の closure に
+    // 共有されている前提 (rehype-starry-night/index.ts)。attach ごとに初期化を
+    // 始めるプラグインを直接渡すとこの前提が崩れる (ProfileDefinition.rehypePlugins の
+    // 注意書きを参照)。
     if (clobberPrefix !== DEFAULT_CLOBBER_PREFIX) {
       return buildProcessor(getDefinition(profile), clobberPrefix);
     }
@@ -178,7 +249,27 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     const key = buildCacheKey(fingerprint, profile, scope ?? '', contentConfigJson, normalized);
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const html = sanitize(String(await getProcessor(profile, clobberPrefix).process(normalized)));
+    const processor = getProcessor(profile, clobberPrefix);
+    let rendered: string;
+    try {
+      rendered = String(await processor.process(normalized));
+    } catch (error) {
+      // process 失敗は「捨てて再試行」。renderDescription はプロセス全体で共有される
+      // singleton のため、失敗した実体を永久保持するとプロセス再起動まで復旧不能になる。
+      // 回収は二層:
+      // (1) 共有される starry-night 実体はプラグイン factory 側が transformer の reject
+      //     時に自分で捨てて作り直す。初期化 reject だけを識別する upstream の口が無く、
+      //     transform 例外も対象になる点は同モジュールの契約コメントを参照。
+      // (2) コア側は失敗した processor の memoize を破棄し、次回 render に再構築させる
+      //     (再構築は失敗時のみ発生し、成功するまで cache.set に到達しないので誤った
+      //     HTML が残ることはない)。
+      // instance guard は、遅れて reject した旧 processor が別 render の据えた新しい
+      // memoize を巻き添えで破棄するのを防ぐ。scope 付き描画の processor は
+      // memoize されないので、この guard は自然に空振りする (削除対象がない)。
+      if (processorCache.get(profile) === processor) processorCache.delete(profile);
+      throw error;
+    }
+    const html = sanitize(rendered);
     cache.set(key, html);
     return html;
   };

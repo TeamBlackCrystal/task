@@ -186,7 +186,11 @@ describe('renderDescription (改行コード不変条件: LF と CRLF は同一 
 
   it('コードフェンス内容は CR 正規化で壊れない (中身が LF で完全に残る)', async () => {
     const html = await renderDescription('```ts\r\nconst x = 1;\r\nconst y = 2;\r\n```');
-    expect(html).toContain('const x = 1;\nconst y = 2;\n');
+    // 着色層 (starry-night) が入るとトークンが span へ分割され、本文は連続した
+    // 文字列として現れない。この試験の主眼は CR 正規化であって着色の有無ではないので、
+    // タグを外した本文で比べる (着色が有っても無くても成り立つ形)。
+    const text = html.replace(/<[^>]+>/g, '');
+    expect(text).toContain('const x = 1;\nconst y = 2;\n');
     expect(html).not.toContain('\r');
   });
 
@@ -356,13 +360,19 @@ describe('renderDescription (脚注 fn-* / fnref-* id の scope)', () => {
     expect(second).not.toContain('user-content-task-1-');
   });
 
-  it('scope 違いでも footnote-label は同一 id になる現状を固定する (#588 で解消予定)', async () => {
+  // この試験は元は「footnote-label は scope が効かず断片間で重複する」という
+  // 当時の現状を固定するものだった。本層 (rehype-scope-footnote-label) がその穴を
+  // 塞いだため、赤くなることで更新を強制する形で働いた。いまは塞がった後を固定する。
+  it('scope 違いなら footnote-label の id と aria-describedby も分かれる', async () => {
     const first = await renderDescription(FOOTNOTE, { scope: 'task-1' });
     const second = await renderDescription(FOOTNOTE, { scope: 'comment-2' });
-    expect(first).toContain('id="footnote-label"');
-    expect(second).toContain('id="footnote-label"');
-    expect(first).toContain('aria-describedby="footnote-label"');
-    expect(second).toContain('aria-describedby="footnote-label"');
+    expect(first).toContain('id="user-content-task-1-footnote-label"');
+    expect(second).toContain('id="user-content-comment-2-footnote-label"');
+    expect(first).toContain('aria-describedby="user-content-task-1-footnote-label"');
+    expect(second).toContain('aria-describedby="user-content-comment-2-footnote-label"');
+    // 素の footnote-label が残っていれば書き換えの取り零しである
+    expect(first).not.toContain('"footnote-label"');
+    expect(second).not.toContain('"footnote-label"');
   });
 
   it('同一 scope は決定的 (独立 renderer 間で同一 HTML = L1 キャッシュ前提を壊さない)', async () => {
@@ -409,5 +419,73 @@ describe('renderDescription (ユーザーリンクの現状契約)', () => {
     expect(html).toContain('<a href="https://example.com/">');
     expect(html).not.toContain('target=');
     expect(html).not.toContain('rel=');
+  });
+});
+
+describe('renderDescription (scope 不変条件: 断片連結で全 id 一意)', () => {
+  // 脚注に限らず「id を出しうる要素」を広く含む入力。見出し・タスクリスト・コード
+  // フェンス・mermaid・テーブル・alert は今は id を出さないが、将来 id を出す層
+  // (rehype-slug 等) が固定 id のまま合流したらこの不変条件が赤くなる。
+  const RICH = [
+    '# 見出し anchor 候補',
+    '本文[^1] と別脚注[^note] を参照',
+    '- [x] 済みタスク\n- [ ] 未了タスク',
+    '```ts\nconst x = 1;\n```',
+    '```mermaid\ngraph TD; A-->B\n```',
+    '| a |\n| - |\n| 1 |',
+    '> [!NOTE]\n> alert 本文',
+    '[^1]: 一つ目の脚注',
+    '[^note]: 二つ目の脚注',
+  ].join('\n\n');
+
+  function extractIds(html: string): string[] {
+    return [...html.matchAll(/ id="([^"]*)"/g)].map((m) => m[1]);
+  }
+
+  function extractAriaDescribedBy(html: string): string[] {
+    return [...html.matchAll(/ aria-describedby="([^"]*)"/g)].flatMap((m) => m[1].split(' '));
+  }
+
+  it('異なる scope で描画した出力を連結しても全 id が一意 (footnote-label 含む)', async () => {
+    const fragments = await Promise.all([
+      renderDescription(RICH, { scope: 'task-1' }),
+      renderDescription(RICH, { scope: 'comment-2' }),
+      renderDescription(RICH, { scope: 'comment-3' }),
+    ]);
+    const ids = fragments.flatMap(extractIds);
+    // 陽性対照: sanitize が id を落とすと「id ゼロ→重複ゼロ」で偽の緑になるため、
+    // 断片ごとに fn-1 / fn-note / fnref-1 / fnref-note / footnote-label の 5 個以上を要求
+    expect(ids.length).toBeGreaterThanOrEqual(fragments.length * 5);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('断片内で aria-describedby と href="#..." の参照が閉じる (片側書き換えの取り零し検知)', async () => {
+    const html = await renderDescription(RICH, { scope: 'task-9' });
+    const ids = new Set(extractIds(html));
+    const describedBy = extractAriaDescribedBy(html);
+    // 陽性対照: sanitize が aria-describedby を落とすと空集合で偽の緑になる
+    expect(describedBy.length).toBeGreaterThan(0);
+    for (const token of describedBy) {
+      expect(ids).toContain(token);
+    }
+    const fragmentRefs = [...html.matchAll(/ href="#([^"]+)"/g)].map((m) => m[1]);
+    expect(fragmentRefs.length).toBeGreaterThan(0);
+    for (const ref of fragmentRefs) {
+      expect(ids).toContain(ref);
+    }
+  });
+
+  it('scope 付きは footnote-label の id と aria-describedby が双方 scope 付きになる', async () => {
+    const html = await renderDescription(RICH, { scope: 'task-1' });
+    expect(html).toContain('id="user-content-task-1-footnote-label"');
+    expect(html).toContain('aria-describedby="user-content-task-1-footnote-label"');
+    expect(html).not.toContain('id="footnote-label"');
+    expect(html).not.toContain('aria-describedby="footnote-label"');
+  });
+
+  it('scope 無し (既定) は GitHub 互換 footnote-label のまま (id / aria-describedby 双方)', async () => {
+    const html = await renderDescription(RICH);
+    expect(html).toContain('id="footnote-label"');
+    expect(html).toContain('aria-describedby="footnote-label"');
   });
 });

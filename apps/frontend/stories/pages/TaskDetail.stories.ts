@@ -3,8 +3,13 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 import { provide } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import TaskDetailPage from '@/pages/@tenant/projects/@projectKey/tasks/@taskId/+Page.vue';
+import { KFM_STORY_INPUTS } from '@/lib/kfm-story-fixtures/inputs';
+import kfmDescriptionHtml from '@/lib/kfm-story-fixtures/rendered/task-detail-description.html?raw';
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
+// vike-vue の useData は inject('vike-vue:useData') の素通し。+data.ts の戻り値と
+// 同形のオブジェクトを provide すると +Page.vue の SSR データ枝 (KFM 表示) が通る。
+const DATA_KEY = 'vike-vue:useData';
 
 const mockContext = {
   urlPathname: '/tenant-123/projects/ENG/tasks/ENG-1',
@@ -246,6 +251,7 @@ function mockFetch() {
 
 function storyDecorator(
   context: { urlPathname: string; routeParams: Record<string, string> } = mockContext,
+  pageData?: { descriptionHtml: string | null; descriptionSource: string | null },
 ) {
   return () => ({
     setup() {
@@ -257,6 +263,7 @@ function storyDecorator(
       });
       provide(VUE_QUERY_CLIENT, queryClient);
       provide(PAGE_CONTEXT_KEY, context);
+      if (pageData) provide(DATA_KEY, pageData);
     },
     template: '<story />',
   });
@@ -305,6 +312,35 @@ export const Default: Story = {
     // 担当者はアバター（頭文字）のみ表示し、名前テキストは出さない（詳細では hideNames）
     await expect(canvas.findByText('田')).resolves.toBeInTheDocument();
     await expect(canvas.queryByText('田中太郎')).not.toBeInTheDocument();
+  },
+};
+
+// KFM 表示 story の入力対。本番では +data.ts (サーバ) の renderDescription 出力だが、
+// story は同期描画のため事前生成 fixture (kfm-story-fixtures) を使う。入力は
+// inputs.ts の単一ソース、HTML は rendered/task-detail-description.html で、
+// kfm-story-fixtures.test.ts の drift 検査が「renderDescription の現在出力と一致」を
+// CI で強制する (手書き HTML だと実出力とズレても気づけない)。
+// descriptionSource は task.description と厳密一致させる (照合が成立する条件)。
+const KFM_DESCRIPTION = KFM_STORY_INPUTS['task-detail-description'];
+const KFM_DESCRIPTION_HTML = kfmDescriptionHtml;
+
+export const DescriptionKfmRendered: Story = {
+  name: '説明 KFM 描画（useData 接続）',
+  decorators: [
+    storyDecorator(mockContext, {
+      descriptionHtml: KFM_DESCRIPTION_HTML,
+      descriptionSource: KFM_DESCRIPTION,
+    }),
+  ],
+  beforeEach: () =>
+    createMockFetch({ task: { ...sampleTaskDetail, description: KFM_DESCRIPTION } }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // 照合成立 (descriptionSource === task.description) → KFM 枝が v-html 描画される
+    const strong = await canvas.findByText('強調');
+    expect(strong.tagName).toBe('STRONG');
+    // プレーン枝 (生テキストのマーカー記法そのまま) が出ていない
+    expect(canvas.queryByText(KFM_DESCRIPTION)).toBeNull();
   },
 };
 

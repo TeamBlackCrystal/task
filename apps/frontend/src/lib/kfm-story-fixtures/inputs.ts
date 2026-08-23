@@ -62,11 +62,54 @@ export const KFM_STORY_INPUTS = {
   // cmd_669 (starry-night 着色) の前後で差が見える基準。着色が入ると drift 検査が落ち、
   // 再生成後の絵に pl- span が現れる。
   'gfm-code-fence': [
+    '```js',
+    "const message = 'GFM fence baseline';",
+    'console.log(message);',
+    '```',
+  ].join('\n'),
+
+  // コード着色 story。クラスの出方が違う言語を三種と、非着色境界・横溢れを固定する。
+  'code-highlight-typescript': [
     '```ts',
     'const total: number = items.length; // コメント',
     'function greet(name: string): string {',
     '  return `hello ${name}`;',
     '}',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-rust': [
+    '```rust',
+    'fn main() {',
+    '    let x: u32 = 1;',
+    '    println!("{} 件", x); // マクロ',
+    '}',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-python': [
+    '```python',
+    'def total(items):',
+    '    """docstring"""',
+    '    return f"{len(items)} 件"  # コメント',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-no-language': [
+    '```',
+    'plain fence: const x = 1; <b>タグも素通しではなくテキスト</b>',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-unknown-language': [
+    '```definitelynotalang',
+    '<b>&amp; エスケープされたまま</b>',
+    '```',
+  ].join('\n'),
+
+  'code-highlight-long-line': [
+    '```ts',
+    'const result = veryLongFunctionName(firstArgument, secondArgument, thirdArgument).then((response) => transformResponsePayload(response, { includeMetadata: true, normalizeWhitespace: true })).catch(handleUnexpectedRenderingFailure);',
     '```',
   ].join('\n'),
 
@@ -123,6 +166,11 @@ export const KFM_STORY_INPUTS = {
 
   // アプリ側クラスの騙り: 生 HTML で kfm-alert を名乗っても alert の絵は増えない。
   // 正規の alert (プラグイン経由) だけが callout になる。
+  // タスク詳細ページ story (Pages/TaskDetail の DescriptionKfmRendered) の入力対。
+  // story は本番同様 descriptionHtml/descriptionSource の対で受けるため、
+  // descriptionSource 側もこの入力 (単一ソース) から取ること。
+  'task-detail-description': '**強調** と `code` を含む説明',
+
   'sanitize-class-spoof': [
     '> [!NOTE]',
     '> これは正規の alert (絵に出る callout はこれ 1 つ)。',

@@ -7,7 +7,7 @@
  * - class は既知トークン完全一致 allowlist (afterSanitizeAttributes フック)。DOMPurify は
  *   class の「値」を検査しないためフック必須。悪意 HTML がアプリ側クラス
  *   (modal-overlay 等) を騙る UI redressing を封じる。
- * - CUSTOM_ELEMENT_HANDLING は registry 登録制 (Phase 1 は登録タグ空)。
+ * - CUSTOM_ELEMENT_HANDLING は registry 登録制 (現在は kfm-mermaid を許可)。
  *   allowCustomizedBuiltInElements: false で is="" 経路を封鎖。
  *
  * 許可集合は各プラグインが export する SanitizeSchema を createRenderer({ sanitizeSchemas })
@@ -17,9 +17,9 @@
 import DOMPurify from 'isomorphic-dompurify';
 
 export type SanitizeSchema = {
-  /** 許可するカスタム要素タグ (Phase 2 で kfm-animation 等が合流。Phase 1 は空) */
+  /** 許可するカスタム要素タグ (現在は kfm-mermaid。将来 kfm-animation 等が合流) */
   readonly tags?: readonly string[];
-  /** カスタム要素タグごとの許可属性 (Phase 1 は空) */
+  /** カスタム要素タグごとの許可属性 (kfm-mermaid は属性なし) */
   readonly attrs?: Readonly<Record<string, readonly string[]>>;
   /** class 完全一致 allowlist トークン */
   readonly classTokens?: readonly string[];
@@ -64,8 +64,8 @@ export function buildRegistry(schemas: readonly SanitizeSchema[]): Registry {
 
 // isomorphic-dompurify の DOMPurify はモジュール singleton で addHook もグローバルに効く。
 // 常駐フックは素の DOMPurify.sanitize を使う無関係コードの出力まで書き換えてしまう
-// (registry 不在の fail-closed で class 全消去) ため、フックは sanitize() 実行中のみ
-// 据え付け、finally で必ず撤去して有効範囲を sanitizer 内に閉じる。
+// (registry 不在の fail-closed で class 全消去) ため、各 sanitize() 呼び出しの直前に
+// addHook し、呼び出し後は finally で必ず removeHook する。
 // - DOMPurify.sanitize は同期であり、据え付け〜撤去の間に他者のコードは走らない。
 // - removeHook は関数指定の除去 (dompurify 3.x) を使い、他者が据えたフックには触れない。
 // - 別インスタンス化 (createDOMPurify(window) 相当) は SSR 側 window (jsdom) が
