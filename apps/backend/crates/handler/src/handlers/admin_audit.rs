@@ -2,13 +2,15 @@
 
 use axum::http::HeaderMap;
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait};
 
 use entity::audit_logs;
 
+/// 監査ログを 1 行挿入する。対象操作と同一トランザクションに載せたい場合は
+/// `DatabaseTransaction` を渡す（`ConnectionTrait` なのでどちらも受けられる）。
 #[allow(clippy::too_many_arguments)]
-pub async fn record_audit(
-    db: &DatabaseConnection,
+pub async fn record_audit<C: ConnectionTrait>(
+    db: &C,
     actor_id: Uuid,
     action: &str,
     resource_type: &str,

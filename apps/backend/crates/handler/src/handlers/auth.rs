@@ -359,23 +359,30 @@ pub async fn update_me(
         return Ok(Json(current.into()));
     }
 
-    let updated = active.update(&state.db).await?;
-    record_audit(
-        &state.db,
-        user_id,
-        "user.profile.update",
-        "user",
-        &user_id.to_string(),
-        None,
-        Some(serde_json::json!({
-            "changed_fields": changed_fields,
-            "username": {
-                "before": before_username,
-                "after": updated.username.clone(),
-            },
-        })),
-        &headers,
-    )
+    // 更新と監査ログを同一トランザクションに載せ、片方だけ残る状態を作らない。
+    let updated = with_transaction::<_, AuthError, _>(&state.db, move |txn| {
+        Box::pin(async move {
+            let updated = active.update(txn).await?;
+            record_audit(
+                txn,
+                user_id,
+                "user.profile.update",
+                "user",
+                &user_id.to_string(),
+                None,
+                Some(serde_json::json!({
+                    "changed_fields": changed_fields,
+                    "username": {
+                        "before": before_username,
+                        "after": updated.username.clone(),
+                    },
+                })),
+                &headers,
+            )
+            .await?;
+            Ok(updated)
+        })
+    })
     .await?;
 
     Ok(Json(updated.into()))
