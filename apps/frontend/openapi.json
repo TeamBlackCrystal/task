@@ -8768,6 +8768,16 @@
               }
             }
           },
+          "409": {
+            "description": "取り込みは既に実行中です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
             "content": {

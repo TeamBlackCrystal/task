@@ -9240,6 +9240,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description 取り込みは既に実行中です */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
+                };
+            };
             /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
             500: {
                 headers: {

@@ -17,6 +17,12 @@ type MockState = {
   deleteStatus?: number;
   /** true にすると DELETE /github/integration が解決せず、mutation が pending のままになる */
   hangDelete?: boolean;
+  /** 400 以上を設定すると POST /github/import が失敗する */
+  importStatus?: number;
+  /** true にすると POST /github/import が解決せず、mutation が pending のままになる */
+  hangImport?: boolean;
+  /** 連携先リポジトリ名（差し替えると連携先が変わった状況を作れる） */
+  repoName?: string;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -43,11 +49,20 @@ function stubFetch(state: MockState) {
           ? {
               connected: true,
               repo_owner: 'koyori-app',
-              repo_name: 'koyori',
+              repo_name: state.repoName ?? 'koyori',
               connected_at: '2026-07-01T00:00:00Z',
             }
           : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
       );
+    }
+    if (method === 'POST' && pathname.endsWith('/github/import')) {
+      if (state.hangImport) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
+      if (state.importStatus)
+        return jsonResponse(
+          { message: state.importStatus === 409 ? 'conflict' : 'error' },
+          state.importStatus,
+        );
+      return new Response(null, { status: 202 });
     }
     if (method === 'DELETE' && pathname.endsWith('/github/integration')) {
       if (state.hangDelete) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
@@ -65,11 +80,21 @@ function mountSection() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return mount(IntegrationsSection, {
+  const wrapper = mount(IntegrationsSection, {
     props: { tenantId: TENANT_UUID, projectId: PROJECT_UUID },
     global: { plugins: [[VueQueryPlugin, { queryClient }]] },
     attachTo: document.body,
   });
+  return { wrapper, queryClient };
+}
+
+/**
+ * 取り込み成功後のクールダウン（60 秒）を明けさせる。
+ * 境界ちょうどで隠れるバグを避けるため、明ける側は 60 秒より後まで進める
+ */
+async function passImportCooldown() {
+  await vi.advanceTimersByTimeAsync(61_000);
+  await flushPromises();
 }
 
 function bodyButton(label: string) {
@@ -85,6 +110,7 @@ function clickBodyButton(label: string) {
 enableAutoUnmount(afterEach);
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -110,6 +136,229 @@ describe('IntegrationsSection', () => {
     expect(document.body.textContent).toContain('を連携中');
     expect(bodyButton('連携を解除')).toBeTruthy();
     expect(bodyButton('連携する')).toBeUndefined();
+  });
+
+  it('連携済みなら「Issue を取り込む」で POST /github/import を呼び、開始を伝える', async () => {
+    const fetchMock = stubFetch({ connected: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    const importCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/import'));
+    expect(importCall).toBeTruthy();
+    expect(importCall!.method).toBe('POST');
+    expect(importCall!.url).toContain(`/tenants/${TENANT_UUID}/projects/${PROJECT_UUID}/`);
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+  });
+
+  it('取り込みの開始に失敗したらエラーを表示し、成功メッセージは消えて再度押せる', async () => {
+    vi.useFakeTimers();
+    const state: MockState = { connected: true };
+    stubFetch(state);
+    mountSection();
+    await flushPromises();
+
+    // 一度成功させてから失敗させ、前回の成功メッセージが残らないことを見る
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    await passImportCooldown();
+    state.importStatus = 403;
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('取り込みの開始中はボタンを押せなくする', async () => {
+    stubFetch({ connected: true, hangImport: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeUndefined();
+    expect(bodyButton('開始中…')?.disabled).toBe(true);
+  });
+
+  it('取り込みの開始に成功したら一定時間ボタンを押せなくする', async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubFetch({ connected: true });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    const importCalls = () =>
+      fetchMock.mock.calls
+        .map(([req]) => req)
+        .filter((req): req is Request => typeof req !== 'string')
+        .filter((req) => req.url.includes('/github/import')).length;
+    expect(importCalls()).toBe(1);
+
+    // 成功直後はラベルが変わり、押しても POST が増えない
+    expect(bodyButton('Issue を取り込む')).toBeUndefined();
+    expect(bodyButton('取り込み中…')?.disabled).toBe(true);
+    clickBodyButton('取り込み中…');
+    await flushPromises();
+    expect(importCalls()).toBe(1);
+
+    // クールダウン中はまだ押せない
+    await vi.advanceTimersByTimeAsync(59_000);
+    await flushPromises();
+    expect(bodyButton('取り込み中…')?.disabled).toBe(true);
+
+    // 明けたら再び押せて、POST も届く
+    await passImportCooldown();
+    expect(bodyButton('取り込み中…')).toBeUndefined();
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(importCalls()).toBe(2);
+  });
+
+  it('取り込みの開始に失敗したらクールダウンを置かず、すぐ再試行できる', async () => {
+    vi.useFakeTimers();
+    const state: MockState = { connected: true, importStatus: 500 };
+    stubFetch(state);
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('取り込みが既に実行中なら専用のメッセージを表示する', async () => {
+    stubFetch({ connected: true, importStatus: 409 });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Issue の取り込みは既に実行中です');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('取り込み後に連携を解除したら取り込みの結果表示を残さない', async () => {
+    vi.useFakeTimers();
+    const state: MockState = { connected: true };
+    stubFetch(state);
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    await passImportCooldown();
+    state.importStatus = 500;
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+
+    clickBodyButton('連携を解除');
+    await flushPromises();
+    clickBodyButton('解除する');
+    await flushPromises();
+    await flushPromises();
+
+    expect(bodyButton('連携する')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
+  });
+
+  it('連携を解除したあと再連携しても取り込みの結果表示が戻らない', async () => {
+    const state: MockState = { connected: true };
+    stubFetch(state);
+    const { queryClient } = mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    clickBodyButton('連携を解除');
+    await flushPromises();
+    clickBodyButton('解除する');
+    await flushPromises();
+    await flushPromises();
+    expect(bodyButton('連携する')).toBeTruthy();
+
+    // 別タブで再連携された状態を作り、この画面が再取得する（ウィンドウフォーカス相当）
+    state.connected = true;
+    await queryClient.refetchQueries();
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+  });
+
+  it('別タブで解除・再連携されても取り込みの結果表示とエラーが戻らない', async () => {
+    // この画面では解除操作をしない。連携状態の変化だけで状態が捨てられることを見る
+    const state: MockState = { connected: true, importStatus: 500 };
+    stubFetch(state);
+    const { queryClient } = mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+
+    // 別タブで解除された
+    state.connected = false;
+    await queryClient.refetchQueries();
+    await flushPromises();
+    expect(bodyButton('連携する')).toBeTruthy();
+
+    // 別タブで再連携された
+    state.connected = true;
+    state.importStatus = undefined;
+    await queryClient.refetchQueries();
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
+  });
+
+  it('連携先のリポジトリが変わったら取り込みの結果表示を引き継がない', async () => {
+    const state: MockState = { connected: true };
+    stubFetch(state);
+    const { queryClient } = mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+    expect(document.body.textContent).toContain('Issue の取り込みを開始しました');
+
+    state.repoName = 'another-repo';
+    await queryClient.refetchQueries();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('koyori-app/another-repo');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始しました');
+  });
+
+  it('未連携なら「Issue を取り込む」を表示しない', async () => {
+    stubFetch({ connected: false });
+    mountSection();
+    await flushPromises();
+
+    expect(bodyButton('Issue を取り込む')).toBeUndefined();
   });
 
   it('「連携する」でインストール URL を取得して GitHub へ遷移する', async () => {
@@ -192,7 +441,7 @@ describe('IntegrationsSection', () => {
     // DELETE を hang させ、mutation が pending の間に Esc/オーバーレイ相当の
     // update:open(false) を発火してもダイアログが閉じないことを検証する
     stubFetch({ connected: true, hangDelete: true });
-    const wrapper = mountSection();
+    const { wrapper } = mountSection();
     await flushPromises();
 
     clickBodyButton('連携を解除');

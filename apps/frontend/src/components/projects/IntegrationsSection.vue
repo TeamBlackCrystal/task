@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
-import { computed, ref } from 'vue';
+import { OpenApiVueQueryError } from '@koyori-app/openapi-vue-query';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,6 +17,10 @@ import { apiClient, fetchClient } from '@/lib/api-vue-query';
 const GITHUB_INTEGRATION_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/github/integration' as const;
 const GITHUB_INSTALL_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/install' as const;
+const GITHUB_IMPORT_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/github/import' as const;
+
+/** 取り込み開始が成功したあと、再度押せるようになるまでの待ち時間（ミリ秒） */
+const IMPORT_COOLDOWN_MS = 60_000;
 
 const props = defineProps<{
   tenantId: string;
@@ -27,14 +32,27 @@ const isDisconnectOpen = ref(false);
 const disconnectError = ref<string | null>(null);
 const installError = ref<string | null>(null);
 const installPending = ref(false);
+const importError = ref<string | null>(null);
+const importStarted = ref(false);
+const importCoolingDown = ref(false);
+let importCooldownTimer: ReturnType<typeof setTimeout> | null = null;
 
 const integrationQuery = apiClient.useQuery('get', GITHUB_INTEGRATION_PATH, {
   params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
 });
 
 const disconnectMutation = apiClient.useMutation('delete', GITHUB_INTEGRATION_PATH);
+const importMutation = apiClient.useMutation('post', GITHUB_IMPORT_PATH);
 
 const integration = computed(() => integrationQuery.data.value);
+
+const importDisabled = computed(() => importMutation.isPending.value || importCoolingDown.value);
+
+const importLabel = computed(() => {
+  if (importMutation.isPending.value) return '開始中…';
+  if (importCoolingDown.value) return '取り込み中…';
+  return 'Issue を取り込む';
+});
 
 const repoFullName = computed(() => {
   const data = integration.value;
@@ -52,6 +70,44 @@ const connectedAtLabel = computed(() => {
   });
 });
 
+function clearImportCooldown() {
+  if (importCooldownTimer !== null) {
+    clearTimeout(importCooldownTimer);
+    importCooldownTimer = null;
+  }
+  importCoolingDown.value = false;
+}
+
+// 202 は「ジョブを積んだ」だけなので、連打すると同じ全 Issue クロールが
+// その回数だけ積まれる。成功後は一定時間ボタンを塞ぐ
+function startImportCooldown() {
+  clearImportCooldown();
+  importCoolingDown.value = true;
+  importCooldownTimer = setTimeout(() => {
+    importCooldownTimer = null;
+    importCoolingDown.value = false;
+  }, IMPORT_COOLDOWN_MS);
+}
+
+function isImportConflict(error: unknown): boolean {
+  return error instanceof OpenApiVueQueryError && error.response?.status === 409;
+}
+
+onBeforeUnmount(clearImportCooldown);
+
+function resetImportState() {
+  importStarted.value = false;
+  importError.value = null;
+  clearImportCooldown();
+}
+
+// 解除は別タブ・別ユーザーからも起きるので、自分の解除操作ではなく連携状態の変化で捨てる。
+// 表示を隠すだけだと、再連携で connected が true に戻った瞬間に前回の結果表示が戻る
+watch(
+  () => (integration.value?.connected ? repoFullName.value : null),
+  () => resetImportState(),
+);
+
 async function startInstall() {
   installError.value = null;
   installPending.value = true;
@@ -65,6 +121,23 @@ async function startInstall() {
   } catch {
     installError.value = 'GitHub のインストール URL を取得できませんでした';
     installPending.value = false;
+  }
+}
+
+async function startImport() {
+  importError.value = null;
+  importStarted.value = false;
+  try {
+    await importMutation.mutateAsync({
+      params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
+    });
+    // 取り込みはジョブなので、完了は待たずに開始だけを伝える
+    importStarted.value = true;
+    startImportCooldown();
+  } catch (error) {
+    importError.value = isImportConflict(error)
+      ? 'Issue の取り込みは既に実行中です'
+      : 'Issue の取り込みを開始できませんでした';
   }
 }
 
@@ -125,16 +198,20 @@ async function confirmDisconnect() {
             <template v-else>コミットや Pull Request をタスクに紐付けます。</template>
           </p>
         </div>
-        <Button
-          v-if="integration?.connected"
-          type="button"
-          variant="outline"
-          size="sm"
-          class="shrink-0"
-          @click="onDisconnectOpenChange(true)"
-        >
-          連携を解除
-        </Button>
+        <div v-if="integration?.connected" class="flex shrink-0 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="importDisabled"
+            @click="startImport"
+          >
+            {{ importLabel }}
+          </Button>
+          <Button type="button" variant="outline" size="sm" @click="onDisconnectOpenChange(true)">
+            連携を解除
+          </Button>
+        </div>
         <Button
           v-else
           type="button"
@@ -147,6 +224,17 @@ async function confirmDisconnect() {
         </Button>
       </div>
       <p v-if="installError" role="alert" class="text-sm text-destructive">{{ installError }}</p>
+      <!-- 連携解除後に取り込みの結果表示が残らないよう、連携中だけ出す -->
+      <p
+        v-if="integration?.connected && importStarted"
+        role="status"
+        class="text-sm text-muted-foreground"
+      >
+        Issue の取り込みを開始しました。タスクに反映されるまで少し時間がかかります。
+      </p>
+      <p v-if="integration?.connected && importError" role="alert" class="text-sm text-destructive">
+        {{ importError }}
+      </p>
     </div>
 
     <Dialog v-if="isDisconnectOpen" :open="true" @update:open="onDisconnectOpenChange">
