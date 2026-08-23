@@ -4,9 +4,12 @@ import { navigate } from 'vike/client/router';
 import { useData } from 'vike-vue/useData';
 import { usePageContext } from 'vike-vue/usePageContext';
 
+import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useTaskComments } from '@/composables/useTaskComments';
 import { useTaskDetail } from '@/composables/useTaskDetail';
+import { useMeQuery } from '@/lib/api-vue-query';
 import type { Data } from './+data';
 import { refreshTaskDescription } from './task-description-navigation';
 
@@ -34,6 +37,8 @@ function closeDeleteDialog() {
 }
 
 const {
+  tenantId,
+  projectId,
   displayTask,
   statuses,
   projectLabels,
@@ -84,6 +89,36 @@ const {
     }
   },
 });
+
+// コメントは client 取得（SSR 一回契約の対象外）。読み込み失敗はコメント節の中で
+// 倒し、タスク詳細本体には影響させない
+const {
+  threads,
+  commentsLoading,
+  commentsError,
+  refetchComments,
+  submitPending,
+  submitError,
+  replyError,
+  replyErrorThreadId,
+  updatingCommentId,
+  updateError,
+  updateErrorCommentId,
+  deletingCommentId,
+  deleteError: commentDeleteError,
+  deleteErrorCommentId,
+  clearReplyError,
+  clearUpdateError,
+  clearDeleteError,
+  submitComment,
+  updateComment,
+  deleteComment,
+} = useTaskComments({ tenantId, projectId, taskId });
+
+// 編集ボタンの出し分け用（TaskCommentItem 参照）。Layout の useAuthSession が
+// 同じ query key で /v1/auth/me を取得済みのため追加リクエストにはならない
+const meQuery = useMeQuery();
+const currentUserId = computed(() => meQuery.data.value?.id ?? null);
 
 function openDeleteDialog() {
   deleteError.value = null;
@@ -162,6 +197,31 @@ function onDeleteDialogCancel(event: Event) {
           </Button>
         </div>
       </dialog>
+    </template>
+    <template #main>
+      <TaskComments
+        :threads="threads"
+        :loading="commentsLoading"
+        :list-error="commentsError"
+        :on-retry="refetchComments"
+        :current-user-id="currentUserId"
+        :submit-pending="submitPending"
+        :submit-error="submitError"
+        :reply-error="replyError"
+        :reply-error-thread-id="replyErrorThreadId"
+        :updating-comment-id="updatingCommentId"
+        :update-error="updateError"
+        :update-error-comment-id="updateErrorCommentId"
+        :deleting-comment-id="deletingCommentId"
+        :delete-error="commentDeleteError"
+        :delete-error-comment-id="deleteErrorCommentId"
+        :on-submit="submitComment"
+        :on-update="updateComment"
+        :on-delete="deleteComment"
+        :on-clear-reply-error="clearReplyError"
+        :on-clear-update-error="clearUpdateError"
+        :on-clear-delete-error="clearDeleteError"
+      />
     </template>
     <template #footer>
       <p class="text-xs text-muted-foreground">

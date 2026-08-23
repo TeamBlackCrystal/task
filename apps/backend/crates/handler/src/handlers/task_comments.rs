@@ -184,14 +184,18 @@ pub async fn create_comment(
     let mentions = extract_mentions(&state.db, &payload.body, project_id).await?;
 
     let txn = state.db.begin().await?;
+    // created_at と updated_at は同一の now を入れる。frontend は
+    // updated_at != created_at を「編集済み」と解釈するため、now() を
+    // 2 回呼ぶとマイクロ秒差で未編集コメントに「(編集済み)」が付く
+    let now: sea_orm::prelude::DateTimeWithTimeZone = chrono::Utc::now().into();
     let comment = task_comments::ActiveModel {
         id: Set(Uuid::new_v4()),
         task_id: Set(task.id),
         user_id: Set(auth.user_id),
         body: Set(payload.body),
         parent_comment_id: Set(payload.parent_comment_id),
-        created_at: Set(chrono::Utc::now().into()),
-        updated_at: Set(chrono::Utc::now().into()),
+        created_at: Set(now),
+        updated_at: Set(now),
         deleted_at: Set(None),
     }
     .insert(&txn)
