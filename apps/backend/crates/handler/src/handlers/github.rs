@@ -259,9 +259,11 @@ pub async fn github_callback(
     //
     // 束縛先が既に決まっている（expected_installation_id が Some）ときは省く。
     // その束縛に入るのは「state に載せた連携済みの ID」「このプロジェクトの選択待ちの
-    // 控え」「同じテナントが使用中のインストール」のいずれかで、どれもこの確認を通った
-    // callback からしか生まれない。ここで code を要求すると、リポジトリを足して戻る・
-    // 選び直すといった復旧の動線が、GitHub が code を付け直すかどうかに左右される。
+    // 控え」「同じテナントが使用中のインストール」のいずれか。この所有者確認の導入後に
+    // 作られた束縛なら、どれも確認済みの callback からしか生まれない。導入前からある
+    // github_integrations 行は鮮度チェックだけで作られており、この不変条件の対象外。
+    // ここで code を要求すると、リポジトリを足して戻る・選び直すといった復旧の動線が、
+    // GitHub が code を付け直すかどうかに左右される。
     if expected_installation_id.is_none() {
         let Some(code) = query.code.as_deref() else {
             tracing::warn!(

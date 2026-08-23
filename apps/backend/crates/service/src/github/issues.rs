@@ -39,12 +39,12 @@ impl GithubIssue {
     }
 }
 
-/// `GITHUB_API_BASE_URL` が設定されていればそれを使う（統合テストがモックサーバーを向ける）。
+/// `GITHUB_API_BASE_URL` がループバック宛てならそれを使う
+/// （統合テストがモックサーバーを向ける）。
 fn api_base() -> String {
-    match std::env::var("GITHUB_API_BASE_URL") {
-        Ok(base) if !base.trim().is_empty() => base.trim_end_matches('/').to_string(),
-        _ => DEFAULT_API_BASE.to_string(),
-    }
+    super::client::loopback_base_override("GITHUB_API_BASE_URL")
+        .map(|base| base.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| DEFAULT_API_BASE.to_string())
 }
 
 fn request(http: &Client, method: Method, url: &str, token: &str) -> reqwest::RequestBuilder {
