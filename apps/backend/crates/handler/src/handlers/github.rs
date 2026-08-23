@@ -8,7 +8,8 @@ use axum::{
 use hmac::{Hmac, KeyInit, Mac};
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
 };
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -414,6 +415,11 @@ pub async fn github_callback(
 }
 
 /// 連携レコードの UPSERT。callback（自動選択）と選択確定 API で共有する。
+///
+/// 解除（`delete_github_integration`）と同じ installation_id キーの advisory lock を
+/// 取ってから書き込む。解除側が「共有判定 → アンインストール → 行削除」を行う間に
+/// ここが連携行を増減させると、アンインストール済みの installation を指す行だけが
+/// 残る（またはその逆の）競合が成立するため、installation の全変更経路で直列化する。
 #[allow(clippy::too_many_arguments)]
 async fn upsert_integration(
     state: &AppState,
@@ -430,48 +436,83 @@ async fn upsert_integration(
             .map_err(AppError::Internal)?;
 
     let now = chrono::Utc::now();
-    let existing = github_integrations::Entity::find()
+
+    // ロックすべき「現在行の installation_id」は読むまで分からないので、
+    // 事前読み → ロック → 読み直しで確定し、ずれていたら取り直す。
+    let mut previous_installation_id = github_integrations::Entity::find()
         .filter(github_integrations::Column::ProjectId.eq(project_id))
         .one(&state.db)
-        .await?;
+        .await?
+        .map(|m| m.installation_id);
 
-    if let Some(model) = existing {
-        // 再連携: created_by / created_at は変更しない
-        let repo_changed = model.repo_owner != repo_owner || model.repo_name != repo_name;
+    loop {
         let txn = state.db.begin().await?;
-        if repo_changed {
-            // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
-            // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
-            github_issue_links::Entity::delete_many()
-                .filter(github_issue_links::Column::ProjectId.eq(project_id))
-                .exec(&txn)
+
+        // 別の installation へ付け替える場合は新旧両方を昇順でロックする
+        // （複数ロックの取得順を固定しないとデッドロックし得る）。
+        // transaction-scoped advisory lock なので commit / rollback 時に必ず解放される。
+        let mut lock_ids = vec![installation_id];
+        if let Some(old) = previous_installation_id
+            && old != installation_id
+        {
+            lock_ids.push(old);
+        }
+        lock_ids.sort_unstable();
+        for id in &lock_ids {
+            common::db::execute_bound(&txn, "SELECT pg_advisory_xact_lock(?)", vec![(*id).into()])
                 .await?;
         }
-        let mut active: github_integrations::ActiveModel = model.into();
-        active.installation_id = Set(installation_id);
-        active.repo_owner = Set(repo_owner.to_owned());
-        active.repo_name = Set(repo_name.to_owned());
-        active.access_token_enc = Set(token_enc);
-        active.token_expires_at = Set(access.expires_at);
-        active.update(&txn).await?;
-        txn.commit().await?;
-    } else {
-        github_integrations::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            project_id: Set(project_id),
-            installation_id: Set(installation_id),
-            repo_owner: Set(repo_owner.to_owned()),
-            repo_name: Set(repo_name.to_owned()),
-            access_token_enc: Set(token_enc),
-            token_expires_at: Set(access.expires_at),
-            created_by: Set(user_id),
-            created_at: Set(now.into()),
-        }
-        .insert(&state.db)
-        .await?;
-    }
 
-    Ok(())
+        // ロック待ちの間に行が変わっていたら、その installation_id のロックを取り直す。
+        let existing = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(project_id))
+            .lock_exclusive()
+            .one(&txn)
+            .await?;
+        if let Some(current) = existing.as_ref().map(|m| m.installation_id)
+            && !lock_ids.contains(&current)
+        {
+            previous_installation_id = Some(current);
+            txn.rollback().await?;
+            continue;
+        }
+
+        if let Some(model) = existing {
+            // 再連携: created_by / created_at は変更しない
+            let repo_changed = model.repo_owner != repo_owner || model.repo_name != repo_name;
+            if repo_changed {
+                // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
+                // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
+                github_issue_links::Entity::delete_many()
+                    .filter(github_issue_links::Column::ProjectId.eq(project_id))
+                    .exec(&txn)
+                    .await?;
+            }
+            let mut active: github_integrations::ActiveModel = model.into();
+            active.installation_id = Set(installation_id);
+            active.repo_owner = Set(repo_owner.to_owned());
+            active.repo_name = Set(repo_name.to_owned());
+            active.access_token_enc = Set(token_enc.clone());
+            active.token_expires_at = Set(access.expires_at);
+            active.update(&txn).await?;
+        } else {
+            github_integrations::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                project_id: Set(project_id),
+                installation_id: Set(installation_id),
+                repo_owner: Set(repo_owner.to_owned()),
+                repo_name: Set(repo_name.to_owned()),
+                access_token_enc: Set(token_enc.clone()),
+                token_expires_at: Set(access.expires_at),
+                created_by: Set(user_id),
+                created_at: Set(now.into()),
+            }
+            .insert(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        return Ok(());
+    }
 }
 
 /// そのテナントのどれかのプロジェクトが、既にこのインストールを使っているか。
@@ -894,8 +935,9 @@ pub async fn delete_github_integration(
     loop {
         let txn = state.db.begin().await?;
 
-        // 同じ installation の解除を直列化する。共有する 2 プロジェクトを同時に解除して
-        // 両方が shared=true と判断し、GitHub App だけ残す競合を防ぐ。
+        // 同じ installation の変更を直列化する（連携側 `upsert_integration` と同じキー）。
+        // 共有する 2 プロジェクトを同時に解除して両方が shared=true と判断し
+        // GitHub App だけ残す競合や、共有判定の後に連携行が増減する競合を防ぐ。
         // transaction-scoped advisory lock なので commit / rollback 時に必ず解放される。
         common::db::execute_bound(
             &txn,
@@ -908,6 +950,7 @@ pub async fn delete_github_integration(
         // 取り直す。古い ID のロック下で新しい installation を解除してはいけない。
         let Some(locked_row) = github_integrations::Entity::find()
             .filter(github_integrations::Column::ProjectId.eq(project_id))
+            .lock_exclusive()
             .one(&txn)
             .await?
         else {

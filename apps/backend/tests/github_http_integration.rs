@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use backend::utils::github::install_state::{self as github_oauth_state, GithubOAuthStatePayload};
 use common::{TestApp, TestTenantProject};
 use entity::{github_integrations, projects, tenants};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 use uuid::Uuid;
 use wiremock::matchers::{header, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1362,6 +1362,104 @@ async fn github_http_integration_suite() {
             None,
             "控えている当人なら消える"
         );
+
+        app.cleanup_user(user.id).await;
+        app.reset_session_client();
+    }
+
+    // 13. 連携（UPSERT）は解除と同じ advisory lock で直列化される（#595 レビュー指摘）。
+    // 解除側が共有判定〜アンインストールを行っている間に連携行が増減しないことの回帰ガード。
+    {
+        let user = app.insert_user(false, false).await;
+        let tp = app.insert_tenant_project(user.id).await;
+        app.login_session(&user.email, &user.password).await;
+
+        let installation_id = unique_multi_repo_installation_id();
+
+        // まず連携しておく（2 回目の連携で UPSERT の更新経路を通す）。
+        let first_token = github_oauth_state::new_state_token();
+        github_oauth_state::store_select_token(
+            &app.state.redis_client,
+            &first_token,
+            &github_oauth_state::RepoSelectPayload {
+                tenant_id: tp.tenant_id,
+                project_id: tp.project_id,
+                user_id: user.id,
+                installation_id,
+            },
+        )
+        .await
+        .expect("store first select token");
+        let first_connect = app
+            .post_json_with_session(
+                &connect_path(&tp),
+                serde_json::json!({
+                    "select_token": first_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-1"
+                }),
+            )
+            .await;
+        assert_eq!(first_connect.status(), StatusCode::NO_CONTENT);
+
+        // 解除側と同じキー（installation_id）の advisory lock をテストが握る。
+        let blocker = app.state.db.begin().await.expect("begin blocker txn");
+        ::common::db::execute_bound(
+            &blocker,
+            "SELECT pg_advisory_xact_lock(?)",
+            vec![installation_id.into()],
+        )
+        .await
+        .expect("acquire advisory lock");
+
+        let second_token = github_oauth_state::new_state_token();
+        github_oauth_state::store_select_token(
+            &app.state.redis_client,
+            &second_token,
+            &github_oauth_state::RepoSelectPayload {
+                tenant_id: tp.tenant_id,
+                project_id: tp.project_id,
+                user_id: user.id,
+                installation_id,
+            },
+        )
+        .await
+        .expect("store second select token");
+
+        // ロック保持中は、再連携（リポジトリ変更）の UPSERT が完了しない。
+        // タイムアウトしても future は破棄しない（リクエストを継続させるため pin で保持する）。
+        let second_path = connect_path(&tp);
+        {
+            let connect_fut = app.post_json_with_session(
+                &second_path,
+                serde_json::json!({
+                    "select_token": second_token,
+                    "repo_owner": "acme",
+                    "repo_name": "repo-2"
+                }),
+            );
+            tokio::pin!(connect_fut);
+            let blocked =
+                tokio::time::timeout(std::time::Duration::from_millis(500), &mut connect_fut).await;
+            if let Ok(response) = blocked {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                panic!("advisory lock 保持中に UPSERT が完了してはいけない: {status} {body}");
+            }
+
+            // 解放すると完了し、行が新しいリポジトリへ切り替わる。
+            blocker.rollback().await.expect("release advisory lock");
+            let second_connect = connect_fut.await;
+            assert_eq!(second_connect.status(), StatusCode::NO_CONTENT);
+        }
+        let row = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+            .one(&app.state.db)
+            .await
+            .expect("query integration")
+            .expect("integration row survives the lock contention");
+        assert_eq!(row.installation_id, installation_id);
+        assert_eq!(row.repo_name, "repo-2");
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
