@@ -57,7 +57,11 @@ function stubFetch(state: MockState) {
     }
     if (method === 'POST' && pathname.endsWith('/github/import')) {
       if (state.hangImport) return new Promise<Response>(() => {}); // 解決しない → isPending を保持
-      if (state.importStatus) return jsonResponse({ message: 'error' }, state.importStatus);
+      if (state.importStatus)
+        return jsonResponse(
+          { message: state.importStatus === 409 ? 'conflict' : 'error' },
+          state.importStatus,
+        );
       return new Response(null, { status: 202 });
     }
     if (method === 'DELETE' && pathname.endsWith('/github/integration')) {
@@ -234,6 +238,19 @@ describe('IntegrationsSection', () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain('Issue の取り込みを開始できませんでした');
+    expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
+  });
+
+  it('取り込みが既に実行中なら専用のメッセージを表示する', async () => {
+    stubFetch({ connected: true, importStatus: 409 });
+    mountSection();
+    await flushPromises();
+
+    clickBodyButton('Issue を取り込む');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Issue の取り込みは既に実行中です');
+    expect(document.body.textContent).not.toContain('Issue の取り込みを開始できませんでした');
     expect(bodyButton('Issue を取り込む')?.disabled).toBe(false);
   });
 

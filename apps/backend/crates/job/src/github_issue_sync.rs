@@ -24,7 +24,12 @@ pub const MAX_RETRIES: usize = 5;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GithubIssueSyncJob {
     /// リポジトリの Issue を全件取り込む。
-    Import { project_id: Uuid },
+    Import {
+        project_id: Uuid,
+        /// Redis ロックの所有権トークン。旧形式のキューとの互換性のため任意。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lock_token: Option<String>,
+    },
     /// タスク側の変更を、リンク済み Issue へ書き戻す。
     Push { task_id: Uuid },
 }
@@ -75,14 +80,22 @@ pub async fn process(job: GithubIssueSyncJob, state: Data<JobState>) -> Result<(
     };
 
     match job {
-        GithubIssueSyncJob::Import { project_id } => {
+        GithubIssueSyncJob::Import {
+            project_id,
+            lock_token,
+        } => {
             let result =
                 service::github::import_project(&state.db, &state.http_client, github, project_id)
                     .await;
             // 成否によらず取り込み枠を返す（失敗のまま塞ぐと、ユーザー自身の
             // やり直しまで TTL のあいだ弾かれる）
-            if let Err(e) =
-                service::github::release_import_slot(&state.redis_client, project_id).await
+            if let Some(lock_token) = lock_token
+                && let Err(e) = service::github::release_import_slot(
+                    &state.redis_client,
+                    project_id,
+                    &lock_token,
+                )
+                .await
             {
                 tracing::warn!(error = %e, %project_id, "release github import lock failed");
             }
@@ -133,8 +146,9 @@ mod tests {
             (
                 GithubIssueSyncJob::Import {
                     project_id: Uuid::new_v4(),
+                    lock_token: Some(Uuid::new_v4().to_string()),
                 },
-                vec!["kind", "project_id"],
+                vec!["kind", "lock_token", "project_id"],
             ),
             (
                 GithubIssueSyncJob::Push {
@@ -152,6 +166,27 @@ mod tests {
                 .collect();
             keys.sort_unstable();
             assert_eq!(keys, expected);
+        }
+    }
+
+    #[test]
+    fn legacy_import_payload_without_lock_token_is_supported() {
+        let project_id = Uuid::new_v4();
+        let job: GithubIssueSyncJob = serde_json::from_value(serde_json::json!({
+            "kind": "import",
+            "project_id": project_id,
+        }))
+        .expect("deserialize legacy import job");
+
+        match job {
+            GithubIssueSyncJob::Import {
+                project_id: actual,
+                lock_token,
+            } => {
+                assert_eq!(actual, project_id);
+                assert!(lock_token.is_none());
+            }
+            GithubIssueSyncJob::Push { .. } => panic!("expected import job"),
         }
     }
 }

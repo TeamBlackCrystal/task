@@ -226,6 +226,45 @@ async fn github_issue_sync_suite() {
         .clone()
         .expect("github app settings");
 
+    // 所有者でないトークンでは現在のロックを消せず、所有者だけが解放できる。
+    {
+        let project_id = Uuid::new_v4();
+        let current_token =
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, project_id)
+                .await
+                .expect("acquire import slot")
+                .expect("current import slot should be available");
+        let stale_token = Uuid::new_v4().to_string();
+
+        assert!(
+            !backend::utils::github::release_import_slot(
+                &app.state.redis_client,
+                project_id,
+                &stale_token,
+            )
+            .await
+            .expect("release stale import slot"),
+            "古いトークンでは後続ロックを削除しない"
+        );
+        assert!(
+            backend::utils::github::try_acquire_import_slot(&app.state.redis_client, project_id,)
+                .await
+                .expect("check current import slot")
+                .is_none(),
+            "後続ロックは保持されている"
+        );
+        assert!(
+            backend::utils::github::release_import_slot(
+                &app.state.redis_client,
+                project_id,
+                &current_token,
+            )
+            .await
+            .expect("release current import slot"),
+            "現在の所有者はロックを解放できる"
+        );
+    }
+
     // 1. POST /import — 未連携なら 404、非オーナーは 403、オーナーは 202
     {
         let owner = app.insert_user(false, false).await;
@@ -259,14 +298,14 @@ async fn github_issue_sync_suite() {
         );
 
         // 連打しても、取り込み中のあいだは積み直さない（GitHub API のレート制限と
-        // ワーカー時間を無駄に食わせない）。API は 202 のまま
+        // ワーカー時間を無駄に食わせない）。既に実行中であることは 409 で伝える
         let repeated = app
             .post_json_with_session(&import_path(&tp), serde_json::json!({}))
             .await;
         assert_eq!(
             repeated.status(),
-            StatusCode::ACCEPTED,
-            "連打しても 202（取り込みは開始済みなのでエラーにしない）"
+            StatusCode::CONFLICT,
+            "連打は 409（取り込みは開始済み）"
         );
         assert_eq!(
             queued_import_jobs(&app, tp.project_id).await,
@@ -275,9 +314,18 @@ async fn github_issue_sync_suite() {
         );
 
         // 取り込みが終われば（ジョブ側が枠を返せば）また積める
-        backend::utils::github::release_import_slot(&app.state.redis_client, tp.project_id)
-            .await
-            .expect("release import slot");
+        let lock_token =
+            backend::utils::github::get_import_slot_token(&app.state.redis_client, tp.project_id)
+                .await
+                .expect("get import slot")
+                .expect("import slot token should exist");
+        backend::utils::github::release_import_slot(
+            &app.state.redis_client,
+            tp.project_id,
+            &lock_token,
+        )
+        .await
+        .expect("release import slot");
         let after_release = app
             .post_json_with_session(&import_path(&tp), serde_json::json!({}))
             .await;

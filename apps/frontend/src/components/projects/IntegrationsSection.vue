@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
+import { OpenApiVueQueryError } from '@koyori-app/openapi-vue-query';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -88,6 +89,10 @@ function startImportCooldown() {
   }, IMPORT_COOLDOWN_MS);
 }
 
+function isImportConflict(error: unknown): boolean {
+  return error instanceof OpenApiVueQueryError && error.response?.status === 409;
+}
+
 onBeforeUnmount(clearImportCooldown);
 
 function resetImportState() {
@@ -129,8 +134,10 @@ async function startImport() {
     // 取り込みはジョブなので、完了は待たずに開始だけを伝える
     importStarted.value = true;
     startImportCooldown();
-  } catch {
-    importError.value = 'Issue の取り込みを開始できませんでした';
+  } catch (error) {
+    importError.value = isImportConflict(error)
+      ? 'Issue の取り込みは既に実行中です'
+      : 'Issue の取り込みを開始できませんでした';
   }
 }
 
