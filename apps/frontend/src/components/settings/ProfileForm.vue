@@ -55,12 +55,13 @@ const queryClient = useQueryClient();
 const updateProfile = useUpdateProfileMutation();
 const submitError = ref<string | null>(null);
 const saved = ref(false);
+const initialAvatarUrl = props.user.avatar_url ?? '';
 
 const form = useForm({
   defaultValues: {
     username: props.user.username,
     bio: props.user.bio ?? '',
-    avatarUrl: props.user.avatar_url ?? '',
+    avatarUrl: initialAvatarUrl,
   },
   onSubmit: async ({ value }) => {
     submitError.value = null;
@@ -72,7 +73,11 @@ const form = useForm({
         body: {
           username,
           bio: value.bio,
-          ...(avatarUrl === '' ? { clear_avatar_url: true } : { avatar_url: avatarUrl }),
+          ...(value.avatarUrl === initialAvatarUrl
+            ? {}
+            : avatarUrl === ''
+              ? { clear_avatar_url: true }
+              : { avatar_url: avatarUrl }),
         },
       });
       await queryClient.invalidateQueries({ queryKey: meQueryOptions().queryKey });
@@ -105,8 +110,10 @@ function resetSubmitFeedback() {
       <form.Field
         name="avatarUrl"
         :validators="{
-          onBlur: ({ value }) => validateAvatarUrl(value),
-          onSubmit: ({ value }) => validateAvatarUrl(value),
+          onBlur: ({ value }) =>
+            value === initialAvatarUrl ? undefined : validateAvatarUrl(value),
+          onSubmit: ({ value }) =>
+            value === initialAvatarUrl ? undefined : validateAvatarUrl(value),
         }"
       >
         <template #default="{ field }">

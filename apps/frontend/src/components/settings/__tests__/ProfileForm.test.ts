@@ -34,12 +34,12 @@ function stubPatchMe(status = 200) {
   return bodies;
 }
 
-function mountForm() {
+function mountForm(profileUser = user) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return mount(ProfileForm, {
-    props: { user },
+    props: { user: profileUser },
     global: { plugins: [[VueQueryPlugin, { queryClient }]] },
     attachTo: document.body,
   });
@@ -83,6 +83,21 @@ describe('ProfileForm', () => {
       bio: '新しい説明',
       avatar_url: 'https://example.com/b.png',
     });
+  });
+
+  it('既存の HTTP アバターを変更しなければ他の項目を保存できる', async () => {
+    const bodies = stubPatchMe();
+    const wrapper = mountForm({ ...user, avatar_url: 'http://example.com/legacy.png' });
+    await flushPromises();
+
+    await wrapper.find('#bio').setValue('新しい説明');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ bio: '新しい説明' });
+    expect(bodies[0]).not.toHaveProperty('avatar_url');
+    expect(bodies[0]).not.toHaveProperty('clear_avatar_url');
   });
 
   it.each(['http://example.com/a.png', 'javascript:alert(1)'])(

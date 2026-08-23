@@ -3,7 +3,7 @@ mod common;
 use axum::http::StatusCode;
 use common::TestApp;
 use entity::audit_logs;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
 async fn me_json(app: &TestApp) -> serde_json::Value {
     app.get_me()
@@ -11,6 +11,15 @@ async fn me_json(app: &TestApp) -> serde_json::Value {
         .json::<serde_json::Value>()
         .await
         .expect("me body")
+}
+
+async fn profile_audit_count(app: &TestApp, user_id: uuid::Uuid) -> u64 {
+    audit_logs::Entity::find()
+        .filter(audit_logs::Column::Action.eq("user.profile.update"))
+        .filter(audit_logs::Column::ActorId.eq(Some(user_id)))
+        .count(&app.state.db)
+        .await
+        .expect("count profile audit logs")
 }
 
 /// 送った項目だけが更新され、GET /me にも反映される。
@@ -134,9 +143,9 @@ async fn clears_avatar_url_and_empties_bio() {
     app.cleanup_user(user.id).await;
 }
 
-/// 変更点のない PATCH でも 200 を返し、値を壊さない。
+/// 変更点のない PATCH でも 200 を返し、UPDATE や監査ログを発生させない。
 #[tokio::test]
-async fn empty_patch_is_a_no_op() {
+async fn unchanged_patch_is_a_no_op() {
     let mut app = TestApp::new().await;
 
     let user = app.insert_user(false, false).await;
@@ -145,15 +154,33 @@ async fn empty_patch_is_a_no_op() {
         .await;
 
     let before = me_json(&app).await;
+    let audits_before = profile_audit_count(&app, user.id).await;
 
     let res = app
         .patch_json_with_session("/v1/auth/me", serde_json::json!({}))
         .await;
     assert_eq!(res.status(), StatusCode::OK, "空の PATCH でも 500 にしない");
 
+    let res = app
+        .patch_json_with_session(
+            "/v1/auth/me",
+            serde_json::json!({
+                "username": before["username"].clone(),
+                "bio": before["bio"].clone(),
+                "clear_avatar_url": true,
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK, "同じ値の再送も成功する");
+
     let after = me_json(&app).await;
     assert_eq!(before["username"], after["username"]);
     assert_eq!(before["bio"], after["bio"]);
+    assert_eq!(
+        profile_audit_count(&app, user.id).await,
+        audits_before,
+        "変更がなければ監査ログを増やさない"
+    );
 
     app.cleanup_user(user.id).await;
 }

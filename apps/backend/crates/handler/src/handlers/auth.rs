@@ -328,39 +328,38 @@ pub async fn update_me(
 
     let current = user.0;
     let before_username = current.username.clone();
-    let before_bio = current.bio.clone();
-    let before_avatar_url = current.avatar_url.clone();
     let user_id = current.id;
     let mut active: users::ActiveModel = current.clone().into();
+    let mut changed_fields = Vec::new();
 
-    if let Some(username) = username {
+    if let Some(username) = username
+        && username != current.username
+    {
         active.username = Set(username);
+        changed_fields.push("username");
     }
-    if let Some(bio) = bio {
+    if let Some(bio) = bio
+        && current.bio.as_deref() != Some(bio.as_str())
+    {
         active.bio = Set(Some(bio));
+        changed_fields.push("bio");
     }
-    if clear_avatar_url {
+    if clear_avatar_url && current.avatar_url.is_some() {
         active.avatar_url = Set(None);
-    } else if let Some(avatar_url) = avatar_url {
+        changed_fields.push("avatar_url");
+    } else if let Some(avatar_url) = avatar_url
+        && current.avatar_url.as_deref() != Some(avatar_url.as_str())
+    {
         active.avatar_url = Set(Some(avatar_url));
+        changed_fields.push("avatar_url");
     }
 
-    // 変更なしの PATCH で SeaORM に空の UPDATE を投げない。
-    if !active.is_changed() {
+    // 指定の有無ではなく現在値との差を見て、同じ値の UPDATE と空の監査ログを残さない。
+    if changed_fields.is_empty() {
         return Ok(Json(current.into()));
     }
 
     let updated = active.update(&state.db).await?;
-    let mut changed_fields = Vec::new();
-    if updated.username != before_username {
-        changed_fields.push("username");
-    }
-    if updated.bio != before_bio {
-        changed_fields.push("bio");
-    }
-    if updated.avatar_url != before_avatar_url {
-        changed_fields.push("avatar_url");
-    }
     record_audit(
         &state.db,
         user_id,
