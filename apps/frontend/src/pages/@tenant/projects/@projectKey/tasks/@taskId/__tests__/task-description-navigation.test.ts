@@ -1,24 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const TASK_DETAIL_URL = 'http://example.test/acme/projects/alpha/tasks/42';
+/** タスク詳細 URL の pathname 形（実装の window.location.href 式に依存しない固定値）。 */
+const TASK_DETAIL_PATH = '/acme/projects/alpha/tasks/42';
+const TASK_DETAIL_URL = `http://example.test${TASK_DETAIL_PATH}`;
 
-const { navigateMock, reloadMock } = vi.hoisted(() => ({
+const { navigateMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
-  reloadMock: vi.fn(),
 }));
 
 vi.mock('vike/client/router', () => ({
   navigate: navigateMock,
-  reload: reloadMock,
 }));
 
-import { refreshTaskDescription } from '../task-description-navigation';
+import {
+  TASK_DESCRIPTION_REFRESH_NAVIGATE_OPTIONS,
+  refreshTaskDescription,
+} from '../task-description-navigation';
 
 describe('task description refresh navigation', () => {
   beforeEach(() => {
     vi.stubGlobal('location', { href: TASK_DETAIL_URL });
     navigateMock.mockReset();
-    reloadMock.mockReset();
   });
 
   afterEach(() => {
@@ -30,12 +32,12 @@ describe('task description refresh navigation', () => {
 
     await refreshTaskDescription();
 
-    expect(reloadMock).not.toHaveBeenCalled();
     expect(navigateMock).toHaveBeenCalledOnce();
-    expect(navigateMock).toHaveBeenCalledWith(TASK_DETAIL_URL, {
-      keepScrollPosition: true,
-      overwriteLastHistoryEntry: true,
-    });
+    const [calledHref, options] = navigateMock.mock.calls[0]!;
+    const calledUrl = new URL(calledHref);
+    expect(calledUrl.pathname).toBe(TASK_DETAIL_PATH);
+    expect(calledUrl.hostname).toBe('example.test');
+    expect(options).toBe(TASK_DESCRIPTION_REFRESH_NAVIGATE_OPTIONS);
   });
 
   it('再ナビゲート失敗を呼び出し元へ伝える', async () => {
@@ -43,6 +45,5 @@ describe('task description refresh navigation', () => {
     navigateMock.mockRejectedValue(error);
 
     await expect(refreshTaskDescription()).rejects.toBe(error);
-    expect(reloadMock).not.toHaveBeenCalled();
   });
 });

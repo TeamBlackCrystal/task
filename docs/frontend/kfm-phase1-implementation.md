@@ -179,6 +179,10 @@ DOMPurify を最終段に置くのは、remark プラグインが emit したも
 - 編集保存後に KFM 表示へ戻す手段は、同一 URL へ
   `navigate(href, { keepScrollPosition: true, overwriteLastHistoryEntry: true })` で
   `+data.ts` を再実行すること（`reload()` はスクロール位置を維持できないため使わない）。
+  `overwriteLastHistoryEntry: true` は Vike が history の新規 push をせず現在エントリを
+  置き換えるため、保存のたびにブラウザ戻るが 1 段増えない（`keepScrollPosition` だけでは
+  履歴が積み上がる）。実装の単一ソースは
+  `task-description-navigation.ts` の `TASK_DESCRIPTION_REFRESH_NAVIGATE_OPTIONS`。
   失敗時は descriptionSource 照合不一致によりプレーンテキスト表示のまま残る
 - **入力長の上限は 65536 文字**（GitHub issue 本文の上限と同値。KFM Phase 1 =
   github profile の複製レンダラ）。上限は消費側の `+data.ts` が `renderDescription`
