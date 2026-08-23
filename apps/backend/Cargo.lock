@@ -223,16 +223,16 @@ dependencies = [
 
 [[package]]
 name = "aes-gcm"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdf011db2e21ce0d575593d749db5554b47fed37aff429e4dc50bc91ac93a028"
+checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
 dependencies = [
  "aead 0.6.1",
  "aes 0.9.1",
  "cipher 0.5.2",
  "ctr 0.10.1",
+ "ctutils",
  "ghash 0.6.0",
- "subtle",
 ]
 
 [[package]]
@@ -728,7 +728,7 @@ name = "auth-core"
 version = "0.1.0"
 source = "git+https://github.com/koyori-app/auth-core.git?rev=a9ce1a75df278d6dc96ea62fc19e763581b60a7b#a9ce1a75df278d6dc96ea62fc19e763581b60a7b"
 dependencies = [
- "aes-gcm 0.11.0",
+ "aes-gcm 0.11.1",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -5642,7 +5642,7 @@ dependencies = [
 name = "service"
 version = "0.1.0"
 dependencies = [
- "aes-gcm 0.11.0",
+ "aes-gcm 0.11.1",
  "anyhow",
  "argon2",
  "async-trait",
@@ -5840,7 +5840,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6396,7 +6396,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.52.0",
