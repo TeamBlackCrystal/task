@@ -889,31 +889,62 @@ pub async fn delete_github_integration(
         return Err(AppError::NotFound);
     };
 
-    let installation_id = row.installation_id;
+    let mut installation_id = row.installation_id;
 
-    // 同じインストールを他のプロジェクトも使っていたら、GitHub 側は消さない
-    // （アンインストールはアカウント単位なので、他のプロジェクトの連携ごと壊れる）。
-    let shared = github_integrations::Entity::find()
-        .filter(github_integrations::Column::InstallationId.eq(installation_id))
-        .filter(github_integrations::Column::ProjectId.ne(project_id))
-        .one(&state.db)
-        .await?
-        .is_some();
+    loop {
+        let txn = state.db.begin().await?;
 
-    // GitHub 側を先に解除する（404/410 は冪等成功として delete_installation 内で処理済み）。
-    // DB を先に削除すると GitHub 側の失敗時に installation_id が失われ再試行不能になる。
-    if !shared {
-        github_app(&state.http_client, github)
-            .delete_installation(installation_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, installation_id, "github delete_installation failed");
-                AppError::Internal(e)
-            })?;
+        // 同じ installation の解除を直列化する。共有する 2 プロジェクトを同時に解除して
+        // 両方が shared=true と判断し、GitHub App だけ残す競合を防ぐ。
+        // transaction-scoped advisory lock なので commit / rollback 時に必ず解放される。
+        common::db::execute_bound(
+            &txn,
+            "SELECT pg_advisory_xact_lock(?)",
+            vec![installation_id.into()],
+        )
+        .await?;
+
+        // ロック待ちの間に再連携で installation が変わっていたら、新しい ID のロックを
+        // 取り直す。古い ID のロック下で新しい installation を解除してはいけない。
+        let Some(locked_row) = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(project_id))
+            .one(&txn)
+            .await?
+        else {
+            return Err(AppError::NotFound);
+        };
+        if locked_row.installation_id != installation_id {
+            installation_id = locked_row.installation_id;
+            txn.rollback().await?;
+            continue;
+        }
+
+        // ロック取得後の最新状態で共有判定する。アンインストールはアカウント単位なので、
+        // 他プロジェクトが使っている間は GitHub 側を消さない。
+        let shared = github_integrations::Entity::find()
+            .filter(github_integrations::Column::InstallationId.eq(installation_id))
+            .filter(github_integrations::Column::ProjectId.ne(project_id))
+            .one(&txn)
+            .await?
+            .is_some();
+
+        // GitHub 側を先に解除する（404/410 は冪等成功として処理済み）。DB を先に消すと、
+        // GitHub 側の失敗時に installation_id が失われ再試行不能になる。
+        if !shared {
+            github_app(&state.http_client, github)
+                .delete_installation(installation_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, installation_id, "github delete_installation failed");
+                    AppError::Internal(e)
+                })?;
+        }
+
+        let active: github_integrations::ActiveModel = locked_row.into();
+        active.delete(&txn).await?;
+        txn.commit().await?;
+        break;
     }
-
-    let active: github_integrations::ActiveModel = row.into();
-    active.delete(&state.db).await?;
 
     // 解除は済んでいるので、後片付けの失敗で失敗扱いにしない（TTL で切れる）。
     if let Err(e) = install_state::delete_pending_installation_if(

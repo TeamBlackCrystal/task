@@ -166,6 +166,19 @@ async fn mount_github_api_mocks(server: &MockServer) {
         .await;
 }
 
+async fn delete_installation_count(server: &MockServer, installation_id: i64) -> usize {
+    let expected_path = format!("/app/installations/{installation_id}");
+    server
+        .received_requests()
+        .await
+        .expect("received GitHub mock requests")
+        .iter()
+        .filter(|request| {
+            request.method == wiremock::http::Method::DELETE && request.url.path() == expected_path
+        })
+        .count()
+}
+
 /// この認可コードは交換のたびに GitHub 側の不調（500）を返す。
 const FLAKY_CODE: &str = "flaky-code";
 
@@ -1016,20 +1029,29 @@ async fn github_http_integration_suite() {
             .await;
         assert_eq!(second_connect.status(), StatusCode::NO_CONTENT);
 
-        // 片方を解除しても、もう片方の連携は残る（GitHub 側のアンインストールを伴わない）
-        let delete_first = app.delete_with_session(&integration_path(&first)).await;
+        // 2 プロジェクトを同時に解除しても共有判定を直列化し、最後の 1 件を処理する側が
+        // GitHub App をちょうど一度だけアンインストールする。
+        let delete_calls_before = delete_installation_count(&mock_server, installation_id).await;
+        let first_integration_path = integration_path(&first);
+        let second_integration_path = integration_path(&second);
+        let (delete_first, delete_second) = tokio::join!(
+            app.delete_with_session(&first_integration_path),
+            app.delete_with_session(&second_integration_path),
+        );
         assert_eq!(delete_first.status(), StatusCode::NO_CONTENT);
-        let remaining = github_integrations::Entity::find()
-            .filter(github_integrations::Column::ProjectId.eq(second.project_id))
-            .one(&app.state.db)
-            .await
-            .expect("query integration")
-            .expect("second integration row");
-        assert_eq!(remaining.repo_name, "repo-2");
-
-        // 最後の 1 件の解除では GitHub 側も消す
-        let delete_second = app.delete_with_session(&integration_path(&second)).await;
         assert_eq!(delete_second.status(), StatusCode::NO_CONTENT);
+
+        let remaining = github_integrations::Entity::find()
+            .filter(github_integrations::Column::InstallationId.eq(installation_id))
+            .all(&app.state.db)
+            .await
+            .expect("query integrations after concurrent disconnect");
+        assert!(remaining.is_empty(), "両プロジェクトの連携が消える");
+        assert_eq!(
+            delete_installation_count(&mock_server, installation_id).await - delete_calls_before,
+            1,
+            "GitHub App のアンインストールは一度だけ"
+        );
 
         app.cleanup_user(user.id).await;
         app.reset_session_client();
