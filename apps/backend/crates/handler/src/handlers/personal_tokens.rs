@@ -8,6 +8,7 @@ use sea_orm::prelude::Uuid;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder,
 };
 
 use crate::AppState;
@@ -74,6 +75,43 @@ async fn get_owned_token(
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/",
+    tag = "Personal Tokens",
+    summary = "自分のパーソナルアクセストークンの一覧",
+    responses(
+        (
+            status = 200,
+            description = "取り消し済みを除く、自分が発行したトークンの一覧",
+            body = Vec<PersonalTokenResponse>
+        ),
+        SessionAuthErrors,
+    )
+)]
+pub async fn list_personal_tokens(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<PersonalTokenResponse>>, AppError> {
+    auth.require_session()?;
+
+    let tokens = personal_tokens::Entity::find()
+        .filter(personal_tokens::Column::UserId.eq(auth.user_id))
+        .filter(personal_tokens::Column::Revoked.eq(false))
+        .order_by_asc(personal_tokens::Column::Name)
+        .order_by_asc(personal_tokens::Column::Id)
+        .all(&state.db)
+        .await?;
+
+    let resp = tokens
+        .into_iter()
+        .map(PersonalTokenResponse::try_from)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(resp))
 }
 
 #[axum::debug_handler]
