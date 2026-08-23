@@ -5,13 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SIDECAR_CSS_PATHS = [
-  ...fs.globSync(path.join(__dirname, '../remark-*/style.css')),
-  ...fs.globSync(path.join(__dirname, '../rehype-*/style.css')),
-];
+const SIDECAR_CSS_PATHS = fs.globSync(path.join(__dirname, '../*/style.css'));
 // bare 要素を描画するプラグインだけ器クラスを要する。自身が emit する名前空間を
-// 直接指すサイドカーも明示分類し、remark-* だけを拾って rehype-* が検査網から
-// 抜ける状態を防ぐ。
+// 直接指すサイドカーも明示分類し、ディレクトリ名に依存せず全サイドカーを検査する。
 const CONTAINER_SCOPED_PLUGINS = new Set(['remark-gfm']);
 // 免除は無検査の別枠ではない: 「自身が emit する名前空間を直に指す」という分類根拠
 // そのものを機械照合する。各エントリは自 namespace のセレクタ形 (selectorToken) と、

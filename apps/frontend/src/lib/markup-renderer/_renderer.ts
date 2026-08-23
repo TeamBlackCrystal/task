@@ -161,8 +161,8 @@ export function createRenderer(options: CreateRendererOptions): RenderDescriptio
     // memoize は既定 prefix のみ。scope の値空間は非有界 (comment id 等) で、singleton
     // の SSR プロセスに scope ごとの processor を溜めるとメモリが漏れる。scope 付きは
     // 都度構築する — この「構築 = プラグイン合成のみで軽い」が成り立つのは、rehype 層の
-    // 高い初期化 (starry-night の WASM＋文法登録) がプラグイン factory 側で renderer
-    // スコープ共有されている前提 (rehype-starry-night/index.ts)。attach ごとに初期化を
+    // 高い初期化 (starry-night の WASM＋文法登録) がプラグイン factory の closure に
+    // 共有されている前提 (rehype-starry-night/index.ts)。attach ごとに初期化を
     // 始めるプラグインを直接渡すとこの前提が崩れる (ProfileDefinition.rehypePlugins の
     // 注意書きを参照)。
     if (clobberPrefix !== DEFAULT_CLOBBER_PREFIX) {

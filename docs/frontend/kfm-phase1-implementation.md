@@ -23,8 +23,8 @@ apps/frontend/src/lib/
     index.ts                   自前 transformer（GitHub alerts の境界規則）
     style.css                  サイドカー CSS（アイコンは名前空間クラス・inline style 不使用）
   rehype-starry-night/         コードブロック着色 (rehype-starry-night の薄いラッパ)
-    index.ts                   createRehypeStarryNight（starry-night 実体の renderer
-                               スコープ共有・失敗回収）
+    index.ts                   createRehypeStarryNight（starry-night 実体の factory closure
+                               共有・失敗回収）
     schema.ts                  pl-* class の sanitize スキーマ
     style.css                  サイドカー CSS（light シート固定 ＋ .dark ブリッジ）
   markup-renderer/             KFM コア
@@ -62,7 +62,7 @@ composition root が remark 層と sanitize スキーマを注入する。
   値空間（comment id 等）は非有界で、singleton に溜めるとメモリが漏れるため
   （`_renderer.ts` の `getProcessor` の分岐）。
   ただし build のたびに高い初期化が走るわけではない。starry-night の WASM 読み込みと
-  文法登録はプラグイン factory 側で renderer スコープに共有してあり、構築回数に比例しない。
+  文法登録はプラグイン factory の closure に共有してあり、構築回数に比例しない。
 - 描画の既定 profile は composition root が `CreateRendererOptions.defaultProfile` へ
   `contentConfig.defaultProfile` を渡して接続する。未指定時の fallback は `github`。
 
