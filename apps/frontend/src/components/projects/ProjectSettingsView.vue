@@ -2,7 +2,7 @@
 import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
 import { useQueryClient } from '@tanstack/vue-query';
-import { PhKanban, PhSlidersHorizontal, PhWarning } from '@phosphor-icons/vue';
+import { PhKanban, PhSlidersHorizontal, PhUsers, PhWarning } from '@phosphor-icons/vue';
 import { navigate } from 'vike/client/router';
 import { usePageContext } from 'vike-vue/usePageContext';
 import { computed, ref } from 'vue';
@@ -15,6 +15,7 @@ import CustomFieldsSection from '@/components/projects/CustomFieldsSection.vue';
 import EmojiIconPicker from '@/components/projects/EmojiIconPicker.vue';
 import IntegrationsSection from '@/components/projects/IntegrationsSection.vue';
 import LabelsSection from '@/components/projects/LabelsSection.vue';
+import MembersSection from '@/components/projects/MembersSection.vue';
 import WorkflowStatusesEditor from '@/components/projects/WorkflowStatusesEditor.vue';
 import { apiClient } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
@@ -24,8 +25,15 @@ type ProjectResponse = components['schemas']['ProjectResponse'];
 const LIST_PROJECTS_PATH = '/v1/tenants/{tenant_id}/projects' as const;
 const PROJECT_PATH = '/v1/tenants/{tenant_id}/projects/{id}' as const;
 
-/** 設定セクション。Members(#371) ほかは増分で追加 */
-type SettingsSection = 'general' | 'workflow' | 'labels' | 'fields' | 'integrations' | 'danger';
+/** 設定セクション。残りは増分で追加 */
+type SettingsSection =
+  | 'general'
+  | 'members'
+  | 'workflow'
+  | 'labels'
+  | 'fields'
+  | 'integrations'
+  | 'danger';
 
 const props = defineProps<{
   tenantId: string;
@@ -42,6 +50,7 @@ const icon = ref<string | null>(props.project.icon_emoji ?? null);
 
 const sections: { key: SettingsSection; label: string; danger?: boolean }[] = [
   { key: 'general', label: '一般' },
+  { key: 'members', label: 'メンバー' },
   { key: 'workflow', label: 'ワークフロー' },
   { key: 'labels', label: 'ラベル' },
   { key: 'fields', label: 'カスタムフィールド' },
@@ -139,6 +148,7 @@ function onDeleted() {
             @click="activeSection = section.key"
           >
             <PhWarning v-if="section.danger" class="size-4" />
+            <PhUsers v-else-if="section.key === 'members'" class="size-4 text-muted-foreground" />
             <PhKanban v-else-if="section.key === 'workflow'" class="size-4 text-muted-foreground" />
             <PhSlidersHorizontal v-else class="size-4 text-muted-foreground" />
             <span class="flex-1">{{ section.label }}</span>
@@ -233,6 +243,13 @@ function onDeleted() {
             </form.Subscribe>
           </div>
         </form>
+
+        <!-- メンバー -->
+        <MembersSection
+          v-else-if="activeSection === 'members'"
+          :tenant-id="tenantId"
+          :project-id="project.id"
+        />
 
         <!-- ワークフロー -->
         <WorkflowStatusesEditor
