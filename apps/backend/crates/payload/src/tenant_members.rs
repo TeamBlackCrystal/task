@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
+use crate::users::UserSummary;
 use entity::tenant_members::{self, TenantRole};
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -14,15 +15,18 @@ pub struct TenantMemberResponse {
     #[schema(value_type = String, format = "uuid")]
     pub user_id: Uuid,
     pub role: TenantRole,
+    /// 表示用のユーザー情報。メンバー管理 UI が名前・アバターを引けるように同梱する
+    pub user: UserSummary,
 }
 
-impl From<tenant_members::Model> for TenantMemberResponse {
-    fn from(model: tenant_members::Model) -> Self {
+impl TenantMemberResponse {
+    pub fn from_parts(member: tenant_members::Model, user: entity::users::Model) -> Self {
         Self {
-            id: model.id,
-            tenant_id: model.tenant_id,
-            user_id: model.user_id,
-            role: model.role,
+            id: member.id,
+            tenant_id: member.tenant_id,
+            user_id: member.user_id,
+            role: member.role,
+            user: user.into(),
         }
     }
 }

@@ -46,6 +46,31 @@ pub(crate) async fn require_tenant_admin(
     }
 }
 
+/// メンバー行に表示用のユーザー情報を同梱する。FK があるため利用者は必ず居るはずで、
+/// 居なければ握り潰さず 500 にする。
+async fn attach_users(
+    state: &AppState,
+    members: Vec<tenant_members::Model>,
+) -> Result<Vec<TenantMemberResponse>, AppError> {
+    let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
+    let mut users_by_id: std::collections::HashMap<Uuid, users::Model> = users::Entity::find()
+        .filter(users::Column::Id.is_in(user_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|u| (u.id, u))
+        .collect();
+    members
+        .into_iter()
+        .map(|m| {
+            let user = users_by_id
+                .remove(&m.user_id)
+                .ok_or_else(|| anyhow::anyhow!("tenant member {} has no user row", m.user_id))?;
+            Ok(TenantMemberResponse::from_parts(m, user))
+        })
+        .collect()
+}
+
 async fn find_member(
     state: &AppState,
     tenant_id: Uuid,
@@ -85,7 +110,7 @@ pub async fn list_members(
         .filter(tenant_members::Column::TenantId.eq(tenant_id))
         .all(&state.db)
         .await?;
-    Ok(Json(members.into_iter().map(Into::into).collect()))
+    Ok(Json(attach_users(&state, members).await?))
 }
 
 #[axum::debug_handler]
@@ -112,7 +137,7 @@ pub async fn add_member(
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
 
-    users::Entity::find_by_id(payload.user_id)
+    let user = users::Entity::find_by_id(payload.user_id)
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -133,7 +158,10 @@ pub async fn add_member(
         Err(e) => return Err(e.into()),
     };
 
-    Ok((StatusCode::CREATED, Json(member.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(TenantMemberResponse::from_parts(member, user)),
+    ))
 }
 
 #[axum::debug_handler]
@@ -163,10 +191,14 @@ pub async fn update_member(
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
 
     let member = find_member(&state, tenant_id, user_id).await?;
+    let user = users::Entity::find_by_id(user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tenant member {user_id} has no user row"))?;
     let mut active: tenant_members::ActiveModel = member.into();
     active.role = Set(payload.role);
     let updated = active.update(&state.db).await?;
-    Ok(Json(updated.into()))
+    Ok(Json(TenantMemberResponse::from_parts(updated, user)))
 }
 
 #[axum::debug_handler]

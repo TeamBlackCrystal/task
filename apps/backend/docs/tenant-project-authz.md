@@ -122,6 +122,10 @@ Drive にはファイル ID だけで引ける経路がある（`GET /v1/drive/f
 
 一覧と取得で条件を揃えているのは、一覧に出るのに開けないテナントを作らないため（#572）。
 
+メンバー系レスポンス（`TenantMemberResponse` / `ProjectMemberResponse`）には表示用の
+`user`（`UserSummary`: id / username / avatar_url）を同梱する。メンバー管理 UI（#317）が
+ID とは別にユーザー名・アバターを引けるようにするためで、メールアドレス等は含めない。
+
 ## 守っている不変条件
 
 | 不変条件 | 実装 |

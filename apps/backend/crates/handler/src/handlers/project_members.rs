@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -53,6 +53,31 @@ pub(crate) async fn require_project_admin(
         Some(m) if m.role == ProjectRole::Admin => Ok(()),
         _ => Err(AppError::Forbidden),
     }
+}
+
+/// メンバー行に表示用のユーザー情報を同梱する。FK があるため利用者は必ず居るはずで、
+/// 居なければ握り潰さず 500 にする。
+async fn attach_users(
+    state: &AppState,
+    members: Vec<project_members::Model>,
+) -> Result<Vec<ProjectMemberResponse>, AppError> {
+    let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
+    let mut users_by_id: HashMap<Uuid, users::Model> = users::Entity::find()
+        .filter(users::Column::Id.is_in(user_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|u| (u.id, u))
+        .collect();
+    members
+        .into_iter()
+        .map(|m| {
+            let user = users_by_id
+                .remove(&m.user_id)
+                .ok_or_else(|| anyhow::anyhow!("project member {} has no user row", m.user_id))?;
+            Ok(ProjectMemberResponse::from_parts(m, user))
+        })
+        .collect()
 }
 
 async fn find_member(
@@ -146,7 +171,7 @@ pub async fn list_members(
         .filter(project_members::Column::ProjectId.eq(project_id))
         .all(&state.db)
         .await?;
-    Ok(Json(members.into_iter().map(Into::into).collect()))
+    Ok(Json(attach_users(&state, members).await?))
 }
 
 #[axum::debug_handler]
@@ -179,7 +204,7 @@ pub async fn add_member(
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
 
-    users::Entity::find_by_id(payload.user_id)
+    let user = users::Entity::find_by_id(payload.user_id)
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -208,7 +233,10 @@ pub async fn add_member(
         role: Set(payload.role),
     };
     let model = member.insert(&state.db).await?;
-    Ok((StatusCode::CREATED, Json(model.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(ProjectMemberResponse::from_parts(model, user)),
+    ))
 }
 
 #[axum::debug_handler]
@@ -246,10 +274,14 @@ pub async fn update_member(
     {
         return Err(AppError::Conflict);
     }
+    let user = users::Entity::find_by_id(member_user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("project member {member_user_id} has no user row"))?;
     let mut active: project_members::ActiveModel = current.into();
     active.role = Set(payload.role);
     let updated = active.update(&state.db).await?;
-    Ok(Json(updated.into()))
+    Ok(Json(ProjectMemberResponse::from_parts(updated, user)))
 }
 
 #[axum::debug_handler]
