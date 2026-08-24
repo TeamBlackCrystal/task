@@ -254,7 +254,9 @@ export const LastAdminGuard: Story = {
     await canvas.findByText('alice');
 
     await user.click(canvas.getByLabelText('alice のロール'));
-    await user.click(await page.findByRole('option', { name: /メンバー/ }));
+    // オプションの accessible name はラベル＋説明文の連結になる。/メンバー/ だと
+    // 「管理者」の説明文（メンバーの管理を含む…）にも一致するので、説明文で特定する
+    await user.click(await page.findByRole('option', { name: /プロジェクトに参加して作業する/ }));
 
     await expect(
       canvas.findByText('最後の管理者「alice」は降格できません。'),
