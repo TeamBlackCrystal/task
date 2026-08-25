@@ -344,7 +344,7 @@
       "get": {
         "tags": ["Admin Tenants"],
         "summary": "全テナント一覧（管理者）",
-        "operationId": "list_tenants",
+        "operationId": "list_admin_tenants",
         "responses": {
           "200": {
             "description": "テナント一覧",

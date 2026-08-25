@@ -155,6 +155,7 @@ describe('AccessTokensSection', () => {
     const text = wrapper.text();
     expect(text).toContain('CLI on MacBook');
     expect(text).toContain('pat_••••••7f3a');
+    expect(text).toContain('Acme Inc');
     expect(text).toContain('3 スコープ');
     expect(text).toContain('無期限');
     expect(text).toContain('に使用');
@@ -267,6 +268,65 @@ describe('AccessTokensSection', () => {
     expect(wrapper.text()).toContain('100文字以内で入力してください。');
   });
 
+  it('文字数は UTF-16 ではなくコードポイント単位で数える（絵文字 100 個は通り、101 個は弾く）', async () => {
+    const { createBodies } = stubFetch({ tokens: [] });
+    const wrapper = mountSection();
+    await flushPromises();
+
+    clickBodyButton('トークンを発行');
+    await flushPromises();
+
+    // サロゲートペア 100 個 = UTF-16 では 200。UTF-16 で数えると backend が許す名前を画面が弾く
+    await wrapper.find('#token-name').setValue('😀'.repeat(100));
+    clickScopeCheckbox('read:task');
+    await flushPromises();
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(createBodies).toHaveLength(1);
+
+    clickBodyButton('トークンを発行');
+    await flushPromises();
+    await wrapper.find('#token-name').setValue('😀'.repeat(101));
+    clickScopeCheckbox('read:task');
+    await flushPromises();
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(createBodies).toHaveLength(1);
+    expect(wrapper.text()).toContain('100文字以内で入力してください。');
+  });
+
+  it.each([
+    ['成功', true, 'コピーしました'],
+    ['失敗', false, 'コピーできませんでした。表示中のトークンを選択してコピーしてください。'],
+  ])('平文トークンのコピー%s時に結果を表示する', async (_label, ok, expected) => {
+    stubFetch({ tokens: [] });
+    const writeText = ok
+      ? vi.fn().mockResolvedValue(undefined)
+      : vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    const wrapper = mountSection();
+    await flushPromises();
+
+    clickBodyButton('トークンを発行');
+    await flushPromises();
+    await wrapper.find('#token-name').setValue('CI deploy');
+    clickScopeCheckbox('read:task');
+    await flushPromises();
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    clickBodyButton('コピー');
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledWith('pat_plain-token-value');
+    expect(wrapper.text()).toContain(expected);
+  });
+
   it('スコープ未選択なら送信しない', async () => {
     const { createBodies } = stubFetch({ tokens: [] });
     const wrapper = mountSection();
@@ -309,6 +369,8 @@ describe('AccessTokensSection', () => {
     await flushPromises();
 
     expect(document.body.textContent).toContain('トークンを取り消しますか？');
+    // どのテナントの何を消すのか、ダイアログで判別できること
+    expect(document.body.textContent).toContain('テナント「Acme Inc」の「CLI on MacBook」');
 
     clickBodyButton('取り消す');
     await flushPromises();

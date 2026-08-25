@@ -47,7 +47,7 @@ export interface paths {
             cookie?: never;
         };
         /** 全テナント一覧（管理者） */
-        get: operations["list_tenants"];
+        get: operations["list_admin_tenants"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3378,7 +3378,7 @@ export interface operations {
             };
         };
     };
-    list_tenants: {
+    list_admin_tenants: {
         parameters: {
             query?: never;
             header?: never;

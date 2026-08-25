@@ -36,6 +36,7 @@ import {
   useRevokePersonalTokenMutation,
   useTenantsQuery,
 } from '@/lib/api-vue-query';
+import { codePointLength } from '@/lib/code-points';
 import {
   EXPIRATION_PRESETS,
   SCOPE_CATALOG,
@@ -60,12 +61,18 @@ const createToken = useCreatePersonalTokenMutation();
 const revokeToken = useRevokePersonalTokenMutation();
 
 /** PAT はテナントオーナーしか発行できないため、選択肢を自分がオーナーのテナントに絞る。 */
-const ownedTenants = computed(() => {
-  // operationId 重複（admin 側の list_tenants）で生成型が配列とのユニオンになるため、両形に対応する。
-  const data = tenantsQuery.data.value;
-  const tenants = Array.isArray(data) ? data : (data?.tenants ?? []);
-  return tenants.filter((t) => t.owner_id === props.user.id);
-});
+const ownedTenants = computed(() =>
+  (tenantsQuery.data.value ?? []).filter((t) => t.owner_id === props.user.id),
+);
+
+/** 一覧・取り消しダイアログでトークンの束縛先テナントを表示するための対応表。 */
+const tenantNamesById = computed(
+  () => new Map((tenantsQuery.data.value ?? []).map((t) => [t.id, t.name])),
+);
+
+function tenantName(tenantId: string) {
+  return tenantNamesById.value.get(tenantId) ?? '不明なテナント';
+}
 
 // --- 発行フォーム ---
 
@@ -81,6 +88,7 @@ const submitError = ref<string | null>(null);
 /** 発行直後の平文トークン。この画面でしか見られない。 */
 const createdToken = ref<string | null>(null);
 const copied = ref(false);
+const copyError = ref<string | null>(null);
 
 const formTenantId = computed(() => selectedTenantId.value ?? ownedTenants.value[0]?.id ?? null);
 
@@ -88,6 +96,7 @@ function openForm() {
   isFormOpen.value = true;
   createdToken.value = null;
   copied.value = false;
+  copyError.value = null;
 }
 
 function resetForm() {
@@ -114,7 +123,7 @@ function validateName(): boolean {
     nameError.value = 'トークン名を入力してください。';
     return false;
   }
-  if (name.length > TOKEN_NAME_MAX) {
+  if (codePointLength(name) > TOKEN_NAME_MAX) {
     nameError.value = `${TOKEN_NAME_MAX}文字以内で入力してください。`;
     return false;
   }
@@ -158,8 +167,14 @@ async function onSubmit() {
 
 async function copyCreatedToken() {
   if (!createdToken.value) return;
-  await navigator.clipboard.writeText(createdToken.value);
-  copied.value = true;
+  copyError.value = null;
+  try {
+    await navigator.clipboard.writeText(createdToken.value);
+    copied.value = true;
+  } catch {
+    // 平文はこの画面でしか見られないため、失敗を握り潰すと取り逃す。手動コピーへ誘導する
+    copyError.value = 'コピーできませんでした。表示中のトークンを選択してコピーしてください。';
+  }
 }
 
 // --- 取り消し ---
@@ -232,6 +247,7 @@ async function onRevokeConfirm() {
           {{ copied ? 'コピーしました' : 'コピー' }}
         </Button>
       </div>
+      <p v-if="copyError" role="alert" class="text-destructive text-sm">{{ copyError }}</p>
     </div>
 
     <!-- 発行フォーム -->
@@ -368,6 +384,8 @@ async function onRevokeConfirm() {
             <p class="text-muted-foreground flex flex-wrap items-center gap-x-2 text-xs">
               <code class="font-mono">{{ maskedToken(token.token_last_four) }}</code>
               <span>·</span>
+              <span>{{ tenantName(token.tenant_id) }}</span>
+              <span>·</span>
               <span>{{ token.scopes.length }} スコープ</span>
               <span>·</span>
               <span>{{ formatExpiry(token.expires_at) }}</span>
@@ -406,7 +424,8 @@ async function onRevokeConfirm() {
         <DialogHeader>
           <DialogTitle>トークンを取り消しますか？</DialogTitle>
           <DialogDescription>
-            「{{ revokeTarget.name }}」を取り消します。このトークンを使っている API・CLI
+            テナント「{{ tenantName(revokeTarget.tenant_id) }}」の「{{ revokeTarget.name }}」を
+            取り消します。このトークンを使っている API・CLI
             は即座に認証できなくなります。この操作は元に戻せません。
           </DialogDescription>
         </DialogHeader>
