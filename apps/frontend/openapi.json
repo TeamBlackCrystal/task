@@ -344,7 +344,7 @@
       "get": {
         "tags": ["Admin Tenants"],
         "summary": "全テナント一覧（管理者）",
-        "operationId": "list_tenants",
+        "operationId": "list_admin_tenants",
         "responses": {
           "200": {
             "description": "テナント一覧",
@@ -435,7 +435,7 @@
       "get": {
         "tags": ["Admin Tenants"],
         "summary": "テナント詳細（管理者）",
-        "operationId": "get_tenant",
+        "operationId": "get_admin_tenant",
         "parameters": [
           {
             "name": "id",
@@ -536,7 +536,7 @@
       "delete": {
         "tags": ["Admin Tenants"],
         "summary": "テナント強制削除（管理者）",
-        "operationId": "delete_tenant",
+        "operationId": "delete_admin_tenant",
         "parameters": [
           {
             "name": "id",
@@ -1308,7 +1308,7 @@
       "delete": {
         "tags": ["Admin Users"],
         "summary": "パスキー強制削除",
-        "operationId": "delete_passkey",
+        "operationId": "delete_admin_user_passkey",
         "responses": {
           "204": {
             "description": "削除完了"
@@ -9852,7 +9852,7 @@
       "get": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバー一覧",
-        "operationId": "list_members",
+        "operationId": "list_project_members",
         "parameters": [
           {
             "name": "tenant_id",
@@ -9966,7 +9966,7 @@
       "post": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーを追加",
-        "operationId": "add_member",
+        "operationId": "add_project_member",
         "parameters": [
           {
             "name": "tenant_id",
@@ -10109,7 +10109,7 @@
       "put": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーの権限を変更",
-        "operationId": "update_member",
+        "operationId": "update_project_member",
         "parameters": [
           {
             "name": "tenant_id",
@@ -10250,7 +10250,7 @@
       "delete": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーを削除",
-        "operationId": "remove_member",
+        "operationId": "remove_project_member",
         "parameters": [
           {
             "name": "tenant_id",

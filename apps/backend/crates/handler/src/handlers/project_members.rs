@@ -121,6 +121,7 @@ async fn would_drop_last_admin(
 #[utoipa::path(
     get,
     path = "/",
+    operation_id = "list_project_members",
     tag = "Project Members",
     summary = "プロジェクトメンバー一覧",
     params(
@@ -152,6 +153,7 @@ pub async fn list_members(
 #[utoipa::path(
     post,
     path = "/",
+    operation_id = "add_project_member",
     tag = "Project Members",
     summary = "プロジェクトメンバーを追加",
     params(
@@ -213,6 +215,7 @@ pub async fn add_member(
 #[utoipa::path(
     put,
     path = "/{user_id}",
+    operation_id = "update_project_member",
     tag = "Project Members",
     summary = "プロジェクトメンバーの権限を変更",
     params(
@@ -253,6 +256,7 @@ pub async fn update_member(
 #[utoipa::path(
     delete,
     path = "/{user_id}",
+    operation_id = "remove_project_member",
     tag = "Project Members",
     summary = "プロジェクトメンバーを削除",
     params(

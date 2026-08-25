@@ -47,7 +47,7 @@ export interface paths {
             cookie?: never;
         };
         /** 全テナント一覧（管理者） */
-        get: operations["list_tenants"];
+        get: operations["list_admin_tenants"];
         put?: never;
         post?: never;
         delete?: never;
@@ -64,11 +64,11 @@ export interface paths {
             cookie?: never;
         };
         /** テナント詳細（管理者） */
-        get: operations["get_tenant"];
+        get: operations["get_admin_tenant"];
         put?: never;
         post?: never;
         /** テナント強制削除（管理者） */
-        delete: operations["delete_tenant"];
+        delete: operations["delete_admin_tenant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -172,7 +172,7 @@ export interface paths {
         put?: never;
         post?: never;
         /** パスキー強制削除 */
-        delete: operations["delete_passkey"];
+        delete: operations["delete_admin_user_passkey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1240,10 +1240,10 @@ export interface paths {
             cookie?: never;
         };
         /** プロジェクトメンバー一覧 */
-        get: operations["list_members"];
+        get: operations["list_project_members"];
         put?: never;
         /** プロジェクトメンバーを追加 */
-        post: operations["add_member"];
+        post: operations["add_project_member"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1259,10 +1259,10 @@ export interface paths {
         };
         get?: never;
         /** プロジェクトメンバーの権限を変更 */
-        put: operations["update_member"];
+        put: operations["update_project_member"];
         post?: never;
         /** プロジェクトメンバーを削除 */
-        delete: operations["remove_member"];
+        delete: operations["remove_project_member"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3362,7 +3362,7 @@ export interface operations {
             };
         };
     };
-    list_tenants: {
+    list_admin_tenants: {
         parameters: {
             query?: never;
             header?: never;
@@ -3430,7 +3430,7 @@ export interface operations {
             };
         };
     };
-    get_tenant: {
+    get_admin_tenant: {
         parameters: {
             query?: never;
             header?: never;
@@ -3501,7 +3501,7 @@ export interface operations {
             };
         };
     };
-    delete_tenant: {
+    delete_admin_tenant: {
         parameters: {
             query?: never;
             header?: never;
@@ -4058,7 +4058,7 @@ export interface operations {
             };
         };
     };
-    delete_passkey: {
+    delete_admin_user_passkey: {
         parameters: {
             query?: never;
             header?: never;
@@ -9927,7 +9927,7 @@ export interface operations {
             };
         };
     };
-    list_members: {
+    list_project_members: {
         parameters: {
             query?: never;
             header?: never;
@@ -10000,7 +10000,7 @@ export interface operations {
             };
         };
     };
-    add_member: {
+    add_project_member: {
         parameters: {
             query?: never;
             header?: never;
@@ -10095,7 +10095,7 @@ export interface operations {
             };
         };
     };
-    update_member: {
+    update_project_member: {
         parameters: {
             query?: never;
             header?: never;
@@ -10183,7 +10183,7 @@ export interface operations {
             };
         };
     };
-    remove_member: {
+    remove_project_member: {
         parameters: {
             query?: never;
             header?: never;
