@@ -8,8 +8,11 @@ pub fn review_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::<AppState>::new()
         .routes(routes!(crate::handlers::reviews::list_reviews))
         .routes(routes!(crate::handlers::reviews::create_review))
-        // `/summary` は `/{id}` より先に静的一致する（matchit の優先度）
+        // `/summary` `/pull-requests` は `/{id}` より先に静的一致する（matchit の優先度）
         .routes(routes!(crate::handlers::reviews::get_review_summary))
+        .routes(routes!(
+            crate::handlers::reviews::list_reviewed_pull_requests
+        ))
         .routes(routes!(crate::handlers::reviews::get_review))
 }
 

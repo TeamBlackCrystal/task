@@ -437,6 +437,33 @@ pub async fn get_review_summary(
 #[axum::debug_handler]
 #[utoipa::path(
     get,
+    path = "/pull-requests",
+    operation_id = "list_reviewed_pull_requests",
+    tag = "Reviews",
+    summary = "レビューのある PR の一覧（集計つき）",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("project_id" = Uuid, Path, description = "プロジェクトID"),
+    ),
+    responses(
+        (status = 200, description = "PR 一覧（最後にレビューされた順）", body = [ReviewedPullRequest]),
+        CrudErrors,
+    )
+)]
+pub async fn list_reviewed_pull_requests(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<ReviewedPullRequest>>, AppError> {
+    ensure_read_access(&state, &auth, tenant_id, project_id).await?;
+    Ok(Json(
+        service::reviews::reviewed_pull_requests(&state.db, project_id).await?,
+    ))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
     path = "/{id}",
     operation_id = "get_review",
     tag = "Reviews",

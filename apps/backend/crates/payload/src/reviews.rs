@@ -238,6 +238,26 @@ pub struct ReviewSummaryResponse {
     pub mergeable: bool,
 }
 
+/// レビューのある PR の一覧行。画面の PR 一覧が使う。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewedPullRequest {
+    pub pr_number: i32,
+    /// これまでのラウンド数
+    pub rounds: i32,
+    #[schema(nullable)]
+    pub pr_title: Option<String>,
+    #[schema(nullable)]
+    pub pr_author: Option<String>,
+    /// 未解決（open / fixed）の指摘数。重大度は問わない
+    pub unresolved: u64,
+    /// マージを塞いでいる件数（High / Medium かつ open / fixed）
+    pub blocking: u64,
+    pub mergeable: bool,
+    /// 最新ラウンドの作成時刻
+    #[schema(value_type = String, format = "date-time")]
+    pub last_reviewed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SeverityStateCount {
     pub severity: FindingSeverity,

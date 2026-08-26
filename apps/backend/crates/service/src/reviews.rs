@@ -14,6 +14,7 @@ use entity::{
     github_integrations, project_statuses, projects, review_findings, reviews, tasks,
     tenant_members, tenants,
 };
+use payload::reviews::ReviewedPullRequest;
 
 /// 繰り延べで自動起票するタスクのタイトル接頭辞。
 const DEFERRED_TASK_PREFIX: &str = "[レビュー指摘]";
@@ -728,6 +729,91 @@ pub async fn round_count<C: ConnectionTrait>(
         .one(db)
         .await?;
     Ok(last.unwrap_or(0))
+}
+
+/// レビューのある PR を、集計つきで新しい順に返す。
+///
+/// 画面の PR 一覧が使う。ラウンドと指摘をそれぞれ 1 回ずつ引いてメモリで畳む
+/// （PR ごとにクエリを出すと件数に比例して往復が増える）。
+pub async fn reviewed_pull_requests<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+) -> Result<Vec<ReviewedPullRequest>, sea_orm::DbErr> {
+    let rounds = reviews::Entity::find()
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .order_by_asc(reviews::Column::PrNumber)
+        .order_by_asc(reviews::Column::Round)
+        .all(db)
+        .await?;
+    if rounds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let review_ids: Vec<Uuid> = rounds.iter().map(|r| r.id).collect();
+    let findings: Vec<(Uuid, FindingSeverity, FindingState)> = review_findings::Entity::find()
+        .filter(review_findings::Column::ReviewId.is_in(review_ids))
+        .select_only()
+        .column(review_findings::Column::ReviewId)
+        .column(review_findings::Column::Severity)
+        .column(review_findings::Column::State)
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    let pr_of_review: std::collections::HashMap<Uuid, i32> =
+        rounds.iter().map(|r| (r.id, r.pr_number)).collect();
+
+    let mut by_pr: std::collections::BTreeMap<i32, ReviewedPullRequest> =
+        std::collections::BTreeMap::new();
+    for round in &rounds {
+        let entry = by_pr
+            .entry(round.pr_number)
+            .or_insert_with(|| ReviewedPullRequest {
+                pr_number: round.pr_number,
+                rounds: 0,
+                pr_title: None,
+                pr_author: None,
+                unresolved: 0,
+                blocking: 0,
+                mergeable: true,
+                last_reviewed_at: round.created_at.with_timezone(&chrono::Utc),
+            });
+        // ラウンドは round 昇順なので、最後に見たものが最新
+        entry.rounds = round.round;
+        entry.last_reviewed_at = round.created_at.with_timezone(&chrono::Utc);
+        if round.pr_title.is_some() {
+            entry.pr_title = round.pr_title.clone();
+        }
+        if round.pr_author.is_some() {
+            entry.pr_author = round.pr_author.clone();
+        }
+    }
+
+    for (review_id, severity, state) in findings {
+        let Some(pr_number) = pr_of_review.get(&review_id) else {
+            continue;
+        };
+        let Some(entry) = by_pr.get_mut(pr_number) else {
+            continue;
+        };
+        if state.counts_as_unresolved() {
+            entry.unresolved += 1;
+            if severity.blocks_merge() {
+                entry.blocking += 1;
+            }
+        }
+    }
+
+    let mut out: Vec<ReviewedPullRequest> = by_pr
+        .into_values()
+        .map(|mut pr| {
+            pr.mergeable = pr.blocking == 0;
+            pr
+        })
+        .collect();
+    // 新しくレビューされた PR を上に
+    out.sort_by_key(|pr| std::cmp::Reverse(pr.last_reviewed_at));
+    Ok(out)
 }
 
 // ── GitHub 要約コメント ──────────────────────────────────────────────────

@@ -19,6 +19,7 @@ use apalis::prelude::{
     BackoffConfig, BoxDynError, Data, IntervalStrategy, StrategyBuilder, Task, TaskSink,
 };
 use apalis_postgres::{Config, JsonCodec, PgPool, PostgresStorage};
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -413,17 +414,18 @@ async fn update_summary(
     };
 
     // 指摘一覧への導線。アプリの公開 URL は既存の
-    // `email_verification_app_url`（メール本文のリンクに使うもの）を流用する
+    // `email_verification_app_url`（メール本文のリンクに使うもの）を流用する。
+    // プロジェクトとテナントの表示 ID を引いて、画面と同じ URL を組み立てる
     let base = state
         .settings
         .email_verification_app_url
-        .trim_end_matches('/');
-    let findings_url = (!base.is_empty()).then(|| {
-        format!(
-            "{base}/reviews?project={}&pr={}",
-            job.project_id, job.pr_number
-        )
-    });
+        .trim_end_matches('/')
+        .to_string();
+    let findings_url = if base.is_empty() {
+        None
+    } else {
+        review_findings_url(&state.db, &base, job.project_id, job.pr_number).await?
+    };
 
     let snapshot = service::reviews::summary_snapshot(
         &state.db,
@@ -490,6 +492,32 @@ async fn update_summary(
         "review summary comment updated"
     );
     Ok(())
+}
+
+/// 画面の指摘一覧 URL（`/{tenant}/projects/{KEY}/reviews?pr=N`）。
+/// プロジェクトかテナントが引けなければリンクを出さない（間違った URL より無い方がよい）。
+async fn review_findings_url(
+    db: &sea_orm::DatabaseConnection,
+    base: &str,
+    project_id: Uuid,
+    pr_number: i32,
+) -> Result<Option<String>, anyhow::Error> {
+    let Some(project) = entity::projects::Entity::find_by_id(project_id)
+        .one(db)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(tenant) = entity::tenants::Entity::find_by_id(project.tenant_id)
+        .one(db)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "{base}/{}/projects/{}/reviews?pr={pr_number}",
+        tenant.display_id, project.key
+    )))
 }
 
 pub fn worker_concurrency(settings: &Settings) -> usize {

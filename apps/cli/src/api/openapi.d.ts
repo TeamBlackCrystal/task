@@ -47,7 +47,7 @@ export interface paths {
             cookie?: never;
         };
         /** 全テナント一覧（管理者） */
-        get: operations["list_admin_tenants"];
+        get: operations["list_tenants"];
         put?: never;
         post?: never;
         delete?: never;
@@ -64,11 +64,11 @@ export interface paths {
             cookie?: never;
         };
         /** テナント詳細（管理者） */
-        get: operations["get_admin_tenant"];
+        get: operations["get_tenant"];
         put?: never;
         post?: never;
         /** テナント強制削除（管理者） */
-        delete: operations["delete_admin_tenant"];
+        delete: operations["delete_tenant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -172,7 +172,7 @@ export interface paths {
         put?: never;
         post?: never;
         /** パスキー強制削除 */
-        delete: operations["delete_admin_user_passkey"];
+        delete: operations["delete_passkey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -345,8 +345,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 自分のプロフィール更新 */
-        patch: operations["update_me"];
+        patch?: never;
         trace?: never;
     };
     "/v1/auth/oauth/connections": {
@@ -761,8 +760,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 自分のパーソナルアクセストークンの一覧 */
-        get: operations["list_personal_tokens"];
+        get?: never;
         put?: never;
         /** パーソナルアクセストークンを発行 */
         post: operations["create_personal_token"];
@@ -1112,23 +1110,6 @@ export interface paths {
         patch: operations["update_custom_field"];
         trace?: never;
     };
-    "/v1/tenants/{tenant_id}/projects/{project_id}/github/connect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 選択したリポジトリを連携 */
-        post: operations["connect_github_repository"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/tenants/{tenant_id}/projects/{project_id}/github/import": {
         parameters: {
             query?: never;
@@ -1176,23 +1157,6 @@ export interface paths {
         post?: never;
         /** GitHub 連携解除 */
         delete: operations["delete_github_integration"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tenants/{tenant_id}/projects/{project_id}/github/repositories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 選択トークンに紐づくリポジトリ一覧 */
-        get: operations["list_github_repositories"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1276,10 +1240,10 @@ export interface paths {
             cookie?: never;
         };
         /** プロジェクトメンバー一覧 */
-        get: operations["list_project_members"];
+        get: operations["list_members"];
         put?: never;
         /** プロジェクトメンバーを追加 */
-        post: operations["add_project_member"];
+        post: operations["add_member"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1295,10 +1259,10 @@ export interface paths {
         };
         get?: never;
         /** プロジェクトメンバーの権限を変更 */
-        put: operations["update_project_member"];
+        put: operations["update_member"];
         post?: never;
         /** プロジェクトメンバーを削除 */
-        delete: operations["remove_project_member"];
+        delete: operations["remove_member"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1387,6 +1351,23 @@ export interface paths {
         put?: never;
         /** レビューラウンドを起票（指摘の一括作成） */
         post: operations["create_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/pull-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** レビューのある PR の一覧（集計つき） */
+        get: operations["list_reviewed_pull_requests"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2589,11 +2570,6 @@ export interface components {
             note?: string | null;
             to_state: components["schemas"]["FindingState"];
         };
-        GithubConnectRequest: {
-            repo_name: string;
-            repo_owner: string;
-            select_token: string;
-        };
         GithubInstallUrlResponse: {
             url: string;
         };
@@ -2603,13 +2579,6 @@ export interface components {
             connected_at?: string | null;
             repo_name?: string | null;
             repo_owner?: string | null;
-        };
-        GithubRepositoriesResponse: {
-            repositories: components["schemas"]["GithubRepositoryItem"][];
-        };
-        GithubRepositoryItem: {
-            name: string;
-            owner: string;
         };
         /** @enum {string} */
         ImportConflict: "skip" | "overwrite";
@@ -2996,6 +2965,34 @@ export interface components {
              */
             rounds: number;
         };
+        /** @description レビューのある PR の一覧行。画面の PR 一覧が使う。 */
+        ReviewedPullRequest: {
+            /**
+             * Format: int64
+             * @description マージを塞いでいる件数（High / Medium かつ open / fixed）
+             */
+            blocking: number;
+            /**
+             * Format: date-time
+             * @description 最新ラウンドの作成時刻
+             */
+            last_reviewed_at: string;
+            mergeable: boolean;
+            pr_author?: string | null;
+            /** Format: int32 */
+            pr_number: number;
+            pr_title?: string | null;
+            /**
+             * Format: int32
+             * @description これまでのラウンド数
+             */
+            rounds: number;
+            /**
+             * Format: int64
+             * @description 未解決（open / fixed）の指摘数。重大度は問わない
+             */
+            unresolved: number;
+        };
         RevokeAllPersonalTokensRequest: {
             /** Format: uuid */
             confirm_tenant_id: string;
@@ -3327,20 +3324,6 @@ export interface components {
             /** Format: date */
             due_date?: string | null;
             name?: string | null;
-        };
-        /**
-         * @description ログイン中ユーザーが自分で編集できる項目。
-         *
-         *     省略したフィールドは変更しない。`avatar_url` を空にするときは、空文字が URL 検証を
-         *     通らないため、既存の PATCH（`UpdateTaskRequest`）と同じく `clear_*` フラグで指定する。
-         *     `bio` は空文字が有効な値なのでフラグを持たない。
-         */
-        UpdateProfileRequest: {
-            avatar_url?: string | null;
-            bio?: string | null;
-            clear_avatar_url?: boolean;
-            /** Format: username */
-            username?: string | null;
         };
         UpdateProjectRequest: {
             clear_icon_emoji?: boolean;
@@ -3690,7 +3673,7 @@ export interface operations {
             };
         };
     };
-    list_admin_tenants: {
+    list_tenants: {
         parameters: {
             query?: never;
             header?: never;
@@ -3758,7 +3741,7 @@ export interface operations {
             };
         };
     };
-    get_admin_tenant: {
+    get_tenant: {
         parameters: {
             query?: never;
             header?: never;
@@ -3829,7 +3812,7 @@ export interface operations {
             };
         };
     };
-    delete_admin_tenant: {
+    delete_tenant: {
         parameters: {
             query?: never;
             header?: never;
@@ -4386,7 +4369,7 @@ export interface operations {
             };
         };
     };
-    delete_admin_user_passkey: {
+    delete_passkey: {
         parameters: {
             query?: never;
             header?: never;
@@ -5007,75 +4990,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description ログインまたはセッションが必要です */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description この操作は許可されていません */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-        };
-    };
-    update_me: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProfileRequest"];
-            };
-        };
-        responses: {
-            /** @description 更新後のアカウント情報 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description 入力内容が制約を満たしていません */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ServerError"];
                 };
             };
             /** @description ログインまたはセッションが必要です */
@@ -6631,11 +6545,6 @@ export interface operations {
                 state: string;
                 /** @description GitHub が送る操作種別。"request" はオーナー承認待ちであり連携未完了。 */
                 setup_action?: string;
-                /**
-                 * @description インストール時のユーザー認可で GitHub が付ける認可コード。
-                 *     これを交換して得たユーザーアクセストークンで、installation の所有者を確認する。
-                 */
-                code?: string;
             };
             header?: never;
             path?: never;
@@ -6688,62 +6597,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    list_personal_tokens: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 取り消し済みを除く、自分が発行したトークンの一覧 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PersonalTokenResponse"][];
-                };
-            };
-            /** @description ログインまたはセッションが必要です */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description この操作は許可されていません */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
             };
         };
     };
@@ -9641,79 +9494,6 @@ export interface operations {
             };
         };
     };
-    connect_github_repository: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tenant_id: string;
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GithubConnectRequest"];
-            };
-        };
-        responses: {
-            /** @description 連携完了 */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description ログインまたはセッションが必要です */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description この操作は許可されていません */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description リソースが見つかりません */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-        };
-    };
     import_github_issues: {
         parameters: {
             query?: never;
@@ -9955,78 +9735,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description ログインまたはセッションが必要です */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description この操作は許可されていません */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description リソースが見つかりません */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @example internal-error */
-                        message: string;
-                    };
-                };
-            };
-        };
-    };
-    list_github_repositories: {
-        parameters: {
-            query?: never;
-            header: {
-                "X-Github-Select-Token": string;
-            };
-            path: {
-                tenant_id: string;
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GithubRepositoriesResponse"];
-                };
             };
             /** @description ログインまたはセッションが必要です */
             401: {
@@ -10530,7 +10238,7 @@ export interface operations {
             };
         };
     };
-    list_project_members: {
+    list_members: {
         parameters: {
             query?: never;
             header?: never;
@@ -10603,7 +10311,7 @@ export interface operations {
             };
         };
     };
-    add_project_member: {
+    add_member: {
         parameters: {
             query?: never;
             header?: never;
@@ -10698,7 +10406,7 @@ export interface operations {
             };
         };
     };
-    update_project_member: {
+    update_member: {
         parameters: {
             query?: never;
             header?: never;
@@ -10786,7 +10494,7 @@ export interface operations {
             };
         };
     };
-    remove_project_member: {
+    remove_member: {
         parameters: {
             query?: never;
             header?: never;
@@ -11248,10 +10956,8 @@ export interface operations {
     list_review_findings: {
         parameters: {
             query: {
-                /** @description 対象 PR 番号（1 以上） */
+                /** @description 対象 PR 番号 */
                 pr: number;
-                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
-                repo?: string;
                 /** @description 状態での絞り込み（カンマ区切り。例: `open,fixed`） */
                 state?: string;
                 /** @description 重大度での絞り込み（カンマ区切り。例: `high,medium`） */
@@ -11263,6 +10969,8 @@ export interface operations {
                 tenant_id: string;
                 /** @description プロジェクトID */
                 project_id: string;
+                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
+                repo: string | null;
             };
             cookie?: never;
         };
@@ -11418,15 +11126,8 @@ export interface operations {
     list_reviews: {
         parameters: {
             query: {
-                /** @description 対象 PR 番号（1 以上） */
+                /** @description 対象 PR 番号 */
                 pr: number;
-                /**
-                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
-                 *
-                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
-                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
-                 */
-                repo?: string;
             };
             header?: never;
             path: {
@@ -11434,6 +11135,13 @@ export interface operations {
                 tenant_id: string;
                 /** @description プロジェクトID */
                 project_id: string;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo: string | null;
             };
             cookie?: never;
         };
@@ -11584,18 +11292,84 @@ export interface operations {
             };
         };
     };
+    list_reviewed_pull_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PR 一覧（最後にレビューされた順） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewedPullRequest"][];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
     get_review_summary: {
         parameters: {
             query: {
-                /** @description 対象 PR 番号（1 以上） */
+                /** @description 対象 PR 番号 */
                 pr: number;
-                /**
-                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
-                 *
-                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
-                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
-                 */
-                repo?: string;
             };
             header?: never;
             path: {
@@ -11603,6 +11377,13 @@ export interface operations {
                 tenant_id: string;
                 /** @description プロジェクトID */
                 project_id: string;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo: string | null;
             };
             cookie?: never;
         };
