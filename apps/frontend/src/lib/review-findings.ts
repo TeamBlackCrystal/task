@@ -30,6 +30,16 @@ export function blocksMerge(severity: FindingSeverity): boolean {
   return severity === 'high' || severity === 'medium';
 }
 
+/**
+ * 繰り延べ（deferred）を許す重大度（backend の `FindingSeverity::can_defer` と対）。
+ *
+ * 繰り延べはマージ可否の集計から外れるので、マージ前必須の重大度には許さない。
+ * サーバーも 409 で拒否する。
+ */
+export function canDefer(severity: FindingSeverity): boolean {
+  return !blocksMerge(severity);
+}
+
 /** マージ判定で「未解決」と数える状態（backend の `counts_as_unresolved` と対）。 */
 export function countsAsUnresolved(state: FindingState): boolean {
   return state === 'open' || state === 'fixed';
@@ -84,7 +94,12 @@ export function findingActions(finding: ReviewFinding, viewerId: string): Findin
     open: finding.state === 'fixed' ? 'レビューに戻す' : '再オープン',
   };
 
-  return STATES.filter((to) => canTransition(finding.state, to)).map((to) => {
+  return STATES.filter(
+    (to) =>
+      canTransition(finding.state, to) &&
+      // High / Medium は繰り延べられない（押しても 409 になるボタンを出さない）
+      (to !== 'deferred' || canDefer(finding.severity)),
+  ).map((to) => {
     const selfVerification = to === 'verified' && finding.fixed_by === viewerId;
     return {
       to,

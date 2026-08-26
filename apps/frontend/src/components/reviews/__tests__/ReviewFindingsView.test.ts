@@ -213,6 +213,24 @@ describe('ReviewFindingsView', () => {
     expect(bodyButton('確認した')?.disabled).toBe(false);
   });
 
+  it('High には繰り延べのボタンを出さない（サーバーも 409 で拒否する）', async () => {
+    stubFetch({ findings: [finding({ severity: 'high' })] });
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('繰り延べる')).toBeUndefined();
+    // 他の操作は出る（繰り延べだけを落としている）
+    expect(bodyButton('修正した')?.disabled).toBe(false);
+  });
+
+  it('Low には繰り延べのボタンを出す', async () => {
+    stubFetch({ findings: [finding({ severity: 'low' })] });
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('繰り延べる')?.disabled).toBe(false);
+  });
+
   it('verified の指摘には操作ボタンを出さない（終端）', async () => {
     stubFetch({ findings: [finding({ state: 'verified' })] });
     mountView();

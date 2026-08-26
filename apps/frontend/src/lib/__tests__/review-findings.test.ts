@@ -3,6 +3,7 @@ import {
   SEVERITIES,
   STATES,
   blocksMerge,
+  canDefer,
   canTransition,
   countsAsUnresolved,
   findingActions,
@@ -80,11 +81,31 @@ describe('遷移表', () => {
   });
 });
 
+describe('canDefer', () => {
+  it('繰り延べられるのはマージを塞がない重大度だけ', () => {
+    expect(canDefer('low')).toBe(true);
+    expect(canDefer('nit')).toBe(true);
+    expect(canDefer('high')).toBe(false);
+    expect(canDefer('medium')).toBe(false);
+    // backend の can_defer と同じく blocks_merge の裏返し
+    for (const severity of SEVERITIES) {
+      expect(canDefer(severity)).toBe(!blocksMerge(severity));
+    }
+  });
+});
+
 describe('findingActions', () => {
-  it('open では修正・繰り延べ・取り下げを出す', () => {
-    const actions = findingActions(finding(), VIEWER);
+  it('open の Low では修正・繰り延べ・取り下げを出す', () => {
+    const actions = findingActions(finding({ severity: 'low' }), VIEWER);
     expect(actions.map((a) => a.to)).toEqual(['fixed', 'deferred', 'rejected']);
     expect(actions.every((a) => a.disabledReason === null)).toBe(true);
+  });
+
+  it('High / Medium には繰り延べを出さない（サーバーも 409 で拒否する）', () => {
+    for (const severity of ['high', 'medium'] as const) {
+      const actions = findingActions(finding({ severity }), VIEWER);
+      expect(actions.map((a) => a.to)).toEqual(['fixed', 'rejected']);
+    }
   });
 
   it('fixed を宣言した本人には verified を押させない', () => {
