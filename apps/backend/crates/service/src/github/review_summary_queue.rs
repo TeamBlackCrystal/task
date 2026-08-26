@@ -30,8 +30,13 @@ pub const SUMMARY_PENDING_TTL_SECS: u64 = 5 * 60;
 /// 実行区間のロックの TTL。
 ///
 /// 正常系ではジョブの終了時に解放するため、これはワーカーが落ちてロックが
-/// 残った場合の保険。GitHub API の往復に足りる長さにする。
-pub const SUMMARY_LOCK_TTL_SECS: u64 = 2 * 60;
+/// 残った場合の保険。
+///
+/// 短すぎると保持中に期限が切れ、塞いだはずの並行書き込みが戻ってくる。
+/// ジョブ 1 回の GitHub API 往復は最悪ケースで 8 リクエスト（installation token /
+/// PR メタ / コメント探索 5 ページ / 投稿）、HTTP クライアントのタイムアウトは
+/// 1 リクエスト 30 秒なので 4 分。余裕を見て 10 分に置く。
+pub const SUMMARY_LOCK_TTL_SECS: u64 = 10 * 60;
 
 const KEY_SUMMARY_PENDING: &str = "github:review_summary:pending:";
 const KEY_SUMMARY_LOCK: &str = "github:review_summary:lock:";
