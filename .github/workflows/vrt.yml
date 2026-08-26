@@ -94,7 +94,7 @@ jobs:
       # wait を false にするか、このステップに `continue-on-error: true` を付ける。
       # branch と commit は vrt-actions が PR の head 情報を優先して解決する。
       - name: Upload to VRT
-        uses: koyori-app/vrt-actions@7d644fc89f122c002733c50355353af25b680e8e # main @ 2026-08-07
+        uses: koyori-app/vrt-actions@33bb59b0d8ca9c9ab2e4c2c8df598918e313d023 # main @ 2026-08-26
         with:
           token: ${{ secrets.VRT_TOKEN }}
           project: koyori/task
@@ -106,4 +106,4 @@ jobs:
           wait: true
           # 既定値 latest だと将来の CLI Release 公開で挙動が変わりうるため、
           # 動作確認済みのバージョンに固定する。更新は Action SHA と同様に明示的な PR で行う。
-          cli-version: cli-v0.1.1
+          cli-version: cli-v0.1.2
