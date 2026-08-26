@@ -275,7 +275,7 @@ async fn reviewer_only_transitions_reject_the_developer() {
     let (_, finding_id) = submit_round(&fx, 701, "high", "認可が抜けている").await;
 
     fx.login(&fx.developer.clone()).await;
-    // 棄却はレビュー側の判断
+    // 棄却は指摘を出した本人だけの判断
     let res = transition(&fx, &finding_id, "rejected").await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
@@ -416,6 +416,105 @@ async fn deferring_creates_a_task_and_reverting_closes_it() {
         task.completed_at.is_some(),
         "二重管理を作らないよう自動起票タスクは完了する"
     );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 指摘ゼロのラウンドを作っても、他人が出した指摘を取り下げる権利は得られない。
+///
+/// ラウンドは指摘ゼロでも確定できる。取り下げまで「より新しいラウンドの作成者」に
+/// 認めると、修正する側が空のラウンドを 1 本作るだけで他人の High を `rejected` にでき、
+/// マージ基準を 1 人で迂回できてしまう（仕様 §3）。
+#[tokio::test]
+async fn an_empty_round_does_not_grant_the_right_to_reject() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 710,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [
+                    { "severity": "high", "title": "認可が抜けている", "body": "根拠" },
+                    { "severity": "high", "title": "検証が抜けている", "body": "根拠" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json(res).await;
+    let id_of = |title: &str| -> String {
+        body["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["title"] == title)
+            .unwrap_or_else(|| panic!("{title} の指摘"))["id"]
+            .as_str()
+            .expect("finding id")
+            .to_string()
+    };
+    let first = id_of("認可が抜けている");
+    let second = id_of("検証が抜けている");
+
+    // 修正する側が、指摘ゼロのラウンドを確定して「レビュー側」を名乗る
+    fx.login(&fx.developer.clone()).await;
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 710,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "指摘なし",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json(res).await["round"], 2, "空のラウンドも確定はできる");
+
+    // それでも他人の指摘は取り下げられない
+    assert_eq!(
+        transition(&fx, &first, "rejected").await.status(),
+        StatusCode::FORBIDDEN,
+        "空のラウンドでは取り下げの権利を得られない"
+    );
+
+    // マージ可否は「可」に変わらない
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=710", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["mergeable"], false);
+    assert_eq!(summary["blocking"], 2, "High は 2 件とも未解決のまま");
+
+    // 対照 1: 確認（verified）は後から出したラウンドの作成者にも許す
+    // ——再レビューの「解消」判定そのものなので塞がない
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &first, "fixed").await.status(),
+        StatusCode::OK
+    );
+    fx.login(&fx.developer.clone()).await;
+    assert_eq!(
+        transition(&fx, &first, "verified").await.status(),
+        StatusCode::OK,
+        "空のラウンドでも確認は行える"
+    );
+
+    // 対照 2: 指摘を出した本人は取り下げられる
+    fx.login(&fx.reviewer.clone()).await;
+    let res = transition(&fx, &second, "rejected").await;
+    assert_eq!(res.status(), StatusCode::OK, "出した本人は取り下げられる");
+    assert_eq!(json(res).await["state"], "rejected");
 
     fx.app.cleanup_user(fx.reviewer.id).await;
     fx.app.cleanup_user(fx.developer.id).await;

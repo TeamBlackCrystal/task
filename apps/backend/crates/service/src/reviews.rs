@@ -25,6 +25,9 @@ pub enum ReviewError {
     /// レビュー側だけが行える遷移を、修正側が行おうとした。
     #[error("transition requires the reviewer side")]
     ReviewerOnly,
+    /// 指摘を出した本人だけが行える遷移を、別の利用者が行おうとした。
+    #[error("transition requires the author of the finding's round")]
+    FindingAuthorOnly,
     /// `fixed` を宣言した本人が `verified` に進めようとした。
     #[error("the fixer cannot verify their own fix")]
     SelfVerification,
@@ -54,7 +57,9 @@ impl From<ReviewError> for common::error::AppError {
                 "{} の指摘は繰り延べられません（繰り延べは low / nit のみ。マージ前に解消するか、指摘自体を取り下げてください）",
                 severity.as_str()
             )),
-            ReviewError::ReviewerOnly | ReviewError::SelfVerification => Self::Forbidden,
+            ReviewError::ReviewerOnly
+            | ReviewError::FindingAuthorOnly
+            | ReviewError::SelfVerification => Self::Forbidden,
             // 既定ステータスが無いプロジェクトでは繰り延べ先タスクを作れない。
             // 利用者が直せる状態の問題なので 409（指摘の状態は変えない）
             ReviewError::NoDefaultStatus(_) => Self::ConflictDetail(
@@ -114,13 +119,23 @@ pub fn can_transition(from: FindingState, to: FindingState) -> bool {
 /// その遷移がレビュー側（ラウンドの作成者、または同じ PR のより新しい
 /// ラウンドの作成者）に限られるか。
 ///
-/// `fixed`（修正の宣言）と `deferred` からの復帰は修正側も行える。
+/// 再レビューの判定（解消／未対応）がまさにこの遷移なので、後から出した
+/// ラウンドの作成者にも認める。`fixed`（修正の宣言）と `deferred` からの
+/// 復帰は修正側も行える。
 pub fn requires_reviewer_side(from: FindingState, to: FindingState) -> bool {
     use FindingState::*;
-    matches!(
-        (from, to),
-        (Fixed, Verified) | (Fixed, Open) | (Open, Rejected) | (Rejected, Open)
-    )
+    matches!((from, to), (Fixed, Verified) | (Fixed, Open))
+}
+
+/// その遷移が「その指摘を出したラウンドの作成者」に限られるか。
+///
+/// 取り下げ（`rejected`）だけは [`requires_reviewer_side`] より狭くする。
+/// ラウンドは指摘ゼロでも作れるので、「より新しいラウンドの作成者」まで認めると、
+/// 修正する側が空のラウンドを 1 本確定するだけでレビュー側を自称でき、他人が
+/// 出した High を棄却してマージ基準を 1 人で迂回できてしまう（仕様 §3）。
+pub fn requires_finding_author(from: FindingState, to: FindingState) -> bool {
+    use FindingState::*;
+    matches!((from, to), (Open, Rejected) | (Rejected, Open))
 }
 
 /// `actor` が対象 PR のレビュー側か。
@@ -150,6 +165,7 @@ pub async fn is_reviewer_side<C: ConnectionTrait>(
 /// - 遷移そのものが規則にない → [`ReviewError::InvalidTransition`]
 /// - マージ前必須の重大度を繰り延べようとした → [`ReviewError::NotDeferrable`]
 /// - レビュー側限定の遷移を修正側が行った → [`ReviewError::ReviewerOnly`]
+/// - 取り下げを、指摘を出した本人以外が行った → [`ReviewError::FindingAuthorOnly`]
 /// - `fixed` を宣言した本人が `verified` に進めた → [`ReviewError::SelfVerification`]
 pub async fn ensure_transition_allowed<C: ConnectionTrait>(
     db: &C,
@@ -171,6 +187,11 @@ pub async fn ensure_transition_allowed<C: ConnectionTrait>(
 
     if to == FindingState::Verified && finding.fixed_by == Some(actor_id) {
         return Err(ReviewError::SelfVerification);
+    }
+
+    // 取り下げは、その指摘を出したラウンドの作成者だけ
+    if requires_finding_author(from, to) && review.reviewer_id != actor_id {
+        return Err(ReviewError::FindingAuthorOnly);
     }
 
     if requires_reviewer_side(from, to)
@@ -511,12 +532,32 @@ mod tests {
     fn reviewer_only_transitions_are_the_verification_side() {
         assert!(requires_reviewer_side(Fixed, Verified));
         assert!(requires_reviewer_side(Fixed, Open));
-        assert!(requires_reviewer_side(Open, Rejected));
-        assert!(requires_reviewer_side(Rejected, Open));
         // 修正の宣言と繰り延べの出入りは修正側も行える
         assert!(!requires_reviewer_side(Open, Fixed));
         assert!(!requires_reviewer_side(Open, Deferred));
         assert!(!requires_reviewer_side(Deferred, Open));
+    }
+
+    /// 取り下げだけは「レビュー側」より狭く、指摘を出した本人に限る。
+    ///
+    /// ラウンドは指摘ゼロでも作れるので、より新しいラウンドの作成者まで認めると、
+    /// 空のラウンドを 1 本作るだけで他人の High を棄却でき、マージ基準を
+    /// 1 人で迂回できてしまう。
+    #[test]
+    fn rejecting_is_limited_to_the_author_of_the_finding() {
+        assert!(requires_finding_author(Open, Rejected));
+        assert!(requires_finding_author(Rejected, Open));
+        // 取り下げは「レビュー側」の緩い方には載せない（二重判定にしない）
+        assert!(!requires_reviewer_side(Open, Rejected));
+        assert!(!requires_reviewer_side(Rejected, Open));
+        // 確認と差し戻しは後続ラウンドの作成者にも許す（再レビューの判定そのもの）
+        assert!(!requires_finding_author(Fixed, Verified));
+        assert!(!requires_finding_author(Fixed, Open));
+        // 修正側が行える遷移は、どちらの制約にも載らない
+        for (from, to) in [(Open, Fixed), (Open, Deferred), (Deferred, Open)] {
+            assert!(!requires_finding_author(from, to));
+            assert!(!requires_reviewer_side(from, to));
+        }
     }
 
     #[test]
