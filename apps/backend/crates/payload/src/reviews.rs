@@ -208,6 +208,12 @@ pub struct ReviewSummaryResponse {
     /// 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる
     #[schema(nullable)]
     pub latest_head_sha: Option<String>,
+    /// 集計対象のリポジトリ（`owner/name`）。GitHub 連携が無ければ `null`
+    ///
+    /// 連携を外すと集計の視界が空になるので、ゲートとして使う側は
+    /// これが `null` の集計を通してはいけない（仕様 §5 / §6）。
+    #[schema(nullable)]
+    pub repository: Option<String>,
     /// ラウンドが 1 件以上あり、かつ `blocking == 0` か
     ///
     /// レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。

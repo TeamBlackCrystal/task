@@ -10,7 +10,10 @@ use sea_orm::{
 };
 
 use entity::review_findings::{FindingSeverity, FindingState};
-use entity::{github_integrations, project_statuses, projects, review_findings, reviews, tasks};
+use entity::{
+    github_integrations, project_statuses, projects, review_findings, reviews, tasks,
+    tenant_members, tenants,
+};
 
 /// 繰り延べで自動起票するタスクのタイトル接頭辞。
 const DEFERRED_TASK_PREFIX: &str = "[レビュー指摘]";
@@ -221,6 +224,47 @@ pub async fn is_reviewer_side<C: ConnectionTrait>(
     Ok(found.is_some())
 }
 
+/// 取り下げをテナントオーナーが代行してよいか。
+///
+/// 取り下げは本来「その指摘を出したラウンドの作成者だけ」。ただし除名・退会で作成者が
+/// テナントの利用者でなくなると、誤った指摘を取り下げる主体が永久に居なくなり、直して
+/// いないものを `fixed → verified` と記録するしかなくなる。監査記録に嘘を書かせない
+/// ための例外として、この場合に限りオーナーが代行できる（仕様 §3）。
+///
+/// 作成者が在籍しているうちはオーナーでも代行できない（役割規則を素通しにしない）。
+pub async fn may_reject_on_behalf<C: ConnectionTrait>(
+    db: &C,
+    review: &reviews::Model,
+    actor_id: Uuid,
+) -> Result<bool, sea_orm::DbErr> {
+    let Some(project) = projects::Entity::find_by_id(review.project_id)
+        .one(db)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let Some(tenant) = tenants::Entity::find_by_id(project.tenant_id)
+        .one(db)
+        .await?
+    else {
+        return Ok(false);
+    };
+    if tenant.owner_id != actor_id {
+        return Ok(false);
+    }
+    // オーナー自身が出した指摘なら、そもそも本人として取り下げられる
+    if review.reviewer_id == tenant.owner_id {
+        return Ok(false);
+    }
+    let still_a_member = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant.id))
+        .filter(tenant_members::Column::UserId.eq(review.reviewer_id))
+        .one(db)
+        .await?
+        .is_some();
+    Ok(!still_a_member)
+}
+
 /// 遷移の可否を判定する。DB は読むが書かない。
 ///
 /// - 遷移そのものが規則にない → [`ReviewError::InvalidTransition`]
@@ -251,7 +295,11 @@ pub async fn ensure_transition_allowed<C: ConnectionTrait>(
     }
 
     // 取り下げは、その指摘を出したラウンドの作成者だけ
-    if requires_finding_author(from, to) && review.reviewer_id != actor_id {
+    // （作成者がテナントから居なくなった場合に限りオーナーが代行できる）
+    if requires_finding_author(from, to)
+        && review.reviewer_id != actor_id
+        && !may_reject_on_behalf(db, review, actor_id).await?
+    {
         return Err(ReviewError::FindingAuthorOnly);
     }
 

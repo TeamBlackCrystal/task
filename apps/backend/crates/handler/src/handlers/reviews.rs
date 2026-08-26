@@ -344,6 +344,9 @@ pub async fn get_review_summary(
             .collect(),
         blocking,
         latest_head_sha,
+        repository: repo
+            .is_linked()
+            .then(|| format!("{}/{}", repo.owner, repo.name)),
         // レビューが 1 件も無い PR を「可」にしない。件数だけで見ると未レビューの PR が
         // 0 件として通り、マージ前ゲートとして最も危ない誤りになる（仕様 §5）
         mergeable: rounds > 0 && blocking == 0,

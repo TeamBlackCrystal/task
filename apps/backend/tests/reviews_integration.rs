@@ -2,8 +2,10 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
-use entity::{github_integrations, project_statuses, review_findings, tasks};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, prelude::Uuid};
+use entity::{github_integrations, project_statuses, review_findings, tasks, tenant_members};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, prelude::Uuid,
+};
 
 // レビュー指摘管理（#623 の仕様）の統合テスト。
 //
@@ -679,6 +681,48 @@ async fn rounds_are_scoped_to_the_linked_repository() {
     fx.app.cleanup_user(fx.developer.id).await;
 }
 
+/// 作成者がテナントから居なくなった指摘は、オーナーが取り下げを代行できる。
+///
+/// 取り下げは本来「出した本人だけ」。除名・退会で主体が消えると、誤った High を
+/// 取り下げる手段が無くなり、直していないものを verified と記録するしかなくなる（仕様 §3）。
+#[tokio::test]
+async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
+    let mut fx = setup().await;
+
+    // 修正する側（developer）が指摘を出す。オーナーは reviewer
+    fx.login(&fx.developer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 713, "high", "誤った指摘").await;
+
+    // 在籍しているうちは、オーナーでも代行できない（役割規則を素通しにしない）
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &finding_id, "rejected").await.status(),
+        StatusCode::FORBIDDEN,
+        "作成者が在籍していれば代行できない"
+    );
+
+    // テナントから居なくなる
+    tenant_members::Entity::delete_many()
+        .filter(tenant_members::Column::TenantId.eq(fx.tenant_id))
+        .filter(tenant_members::Column::UserId.eq(fx.developer.id))
+        .exec(&fx.app.state.db)
+        .await
+        .expect("remove tenant member");
+
+    let res = transition(&fx, &finding_id, "rejected").await;
+    assert_eq!(res.status(), StatusCode::OK, "作成者が消えたら代行できる");
+    let body = json(res).await;
+    assert_eq!(body["state"], "rejected");
+    // 誰が代行したかは履歴に残る
+    let transitions = body["transitions"].as_array().expect("transitions");
+    let last = transitions.last().expect("last transition");
+    assert_eq!(last["to_state"], "rejected");
+    assert_eq!(last["actor"]["id"], fx.reviewer.id.to_string());
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
 /// レビューが 1 件も無い PR は「マージ可」にしない。
 ///
 /// 件数だけで判定すると、未レビューの PR が 0 件として通る（仕様 §5）。
@@ -729,6 +773,33 @@ async fn a_pull_request_without_any_round_is_not_mergeable() {
         summary["latest_head_sha"], head,
         "レビューした commit を返す（鮮度は呼び出し側が見る）"
     );
+    assert!(
+        summary["repository"].is_null(),
+        "連携が無ければ集計対象のリポジトリは空（呼び出し側はゲートとして通さない）: {summary}"
+    );
+
+    // 対照: 連携があれば、どのリポジトリを見た集計かを返す
+    link_repo(&fx, "acme", "app").await;
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 712,
+                "head_sha": head,
+                "summary": "連携後のレビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["repository"], "acme/app");
 
     fx.app.cleanup_user(fx.reviewer.id).await;
     fx.app.cleanup_user(fx.developer.id).await;

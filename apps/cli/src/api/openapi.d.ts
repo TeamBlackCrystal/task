@@ -2909,6 +2909,13 @@ export interface components {
             /** Format: int32 */
             pr_number: number;
             /**
+             * @description 集計対象のリポジトリ（`owner/name`）。GitHub 連携が無ければ `null`
+             *
+             *     連携を外すと集計の視界が空になるので、ゲートとして使う側は
+             *     これが `null` の集計を通してはいけない（仕様 §5 / §6）。
+             */
+            repository?: string | null;
+            /**
              * Format: int32
              * @description これまでに走ったラウンド数（R1, R2, … の最大値）
              */

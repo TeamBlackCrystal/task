@@ -21306,6 +21306,10 @@
             "type": "integer",
             "format": "int32"
           },
+          "repository": {
+            "type": ["string", "null"],
+            "description": "集計対象のリポジトリ（`owner/name`）。GitHub 連携が無ければ `null`\n\n連携を外すと集計の視界が空になるので、ゲートとして使う側は\nこれが `null` の集計を通してはいけない（仕様 §5 / §6）。"
+          },
           "rounds": {
             "type": "integer",
             "format": "int32",
