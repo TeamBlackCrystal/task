@@ -345,7 +345,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** 自分のプロフィール更新 */
+        patch: operations["update_me"];
         trace?: never;
     };
     "/v1/auth/oauth/connections": {
@@ -3014,6 +3015,20 @@ export interface components {
             due_date?: string | null;
             name?: string | null;
         };
+        /**
+         * @description ログイン中ユーザーが自分で編集できる項目。
+         *
+         *     省略したフィールドは変更しない。`avatar_url` を空にするときは、空文字が URL 検証を
+         *     通らないため、既存の PATCH（`UpdateTaskRequest`）と同じく `clear_*` フラグで指定する。
+         *     `bio` は空文字が有効な値なのでフラグを持たない。
+         */
+        UpdateProfileRequest: {
+            avatar_url?: string | null;
+            bio?: string | null;
+            clear_avatar_url?: boolean;
+            /** Format: username */
+            username?: string | null;
+        };
         UpdateProjectRequest: {
             clear_icon_emoji?: boolean;
             clear_icon_url?: boolean;
@@ -4679,6 +4694,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    update_me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後のアカウント情報 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description 入力内容が制約を満たしていません */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
                 };
             };
             /** @description ログインまたはセッションが必要です */

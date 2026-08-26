@@ -32,6 +32,14 @@
 | `/forgot-password` | パスワードリセット申請 |
 | `/reset-password` | パスワードリセット実行 |
 
+### アカウント設定（テナント外）
+
+個人アカウントの設定。テナントに紐づかないため `/{tenant}` の外に置く。
+
+| URL | 説明 |
+|-----|------|
+| `/settings/profile` | プロフィール編集（[仕様](../features/account-settings.md)） |
+
 ### テナントスコープ
 
 | URL | 説明 |
@@ -78,6 +86,9 @@ apps/frontend/src/pages/
 ├── signup/+Page.vue                     # /signup
 ├── forgot-password/+Page.vue            # /forgot-password
 ├── reset-password/+Page.vue             # /reset-password
+│
+├── settings/
+│   └── profile/+Page.vue                # /settings/profile
 │
 ├── @tenant/
 │   ├── +Page.vue                        # /{tenant}
@@ -134,6 +145,7 @@ apps/frontend/src/pages/
 | `/signup` | `signup/+Page.vue` |
 | `/forgot-password` | `forgot-password/+Page.vue` |
 | `/reset-password` | `reset-password/+Page.vue` |
+| `/settings/profile` | `settings/profile/+Page.vue` |
 | `/{tenant}` | `@tenant/+Page.vue` |
 | `/{tenant}/settings` | `@tenant/settings/+Page.vue` |
 | `/{tenant}/members` | `@tenant/members/+Page.vue` |

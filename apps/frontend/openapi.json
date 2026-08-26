@@ -2169,6 +2169,97 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": ["Auth"],
+        "summary": "自分のプロフィール更新",
+        "operationId": "update_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "更新後のアカウント情報",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入力内容が制約を満たしていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/auth/oauth/connections": {
@@ -21108,6 +21199,25 @@
           },
           "name": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "description": "ログイン中ユーザーが自分で編集できる項目。\n\n省略したフィールドは変更しない。`avatar_url` を空にするときは、空文字が URL 検証を\n通らないため、既存の PATCH（`UpdateTaskRequest`）と同じく `clear_*` フラグで指定する。\n`bio` は空文字が有効な値なのでフラグを持たない。",
+        "properties": {
+          "avatar_url": {
+            "type": ["string", "null"]
+          },
+          "bio": {
+            "type": ["string", "null"]
+          },
+          "clear_avatar_url": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": ["string", "null"],
+            "format": "username"
           }
         }
       },

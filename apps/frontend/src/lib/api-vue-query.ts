@@ -100,6 +100,10 @@ export function useRegisterMutation() {
   return apiClient.useMutation('post', '/v1/auth/register');
 }
 
+export function useUpdateProfileMutation() {
+  return apiClient.useMutation('patch', '/v1/auth/me');
+}
+
 export function useLogoutMutation() {
   return apiClient.useMutation('post', '/v1/auth/logout');
 }

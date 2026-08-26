@@ -1,4 +1,9 @@
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use axum_session::Session;
 use axum_session_redispool::SessionRedisPool;
 use axum_valid::Valid;
@@ -6,12 +11,12 @@ use sea_orm::prelude::Uuid;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use sea_orm::{ColumnTrait, QueryFilter};
 
-use crate::AppState;
 use crate::extractors::{AuthUser, CurrentUser};
 use crate::openapi::{
     CredentialErrors, RegisterErrors, ResendVerificationErrors, SessionAuthErrors,
     UnauthorizedErrors, VerifyEmailErrors,
 };
+use crate::{AppState, error::ServerError, handlers::admin_audit::record_audit};
 use entity::{system_settings, users};
 use job::AlreadyRegisteredEmailJob;
 use job::VerificationEmailJob;
@@ -19,7 +24,7 @@ use job::already_registered_email;
 use job::verification_email;
 use payload::auth::*;
 use payload::auth_2fa::Login2faResponse;
-use payload::users::UserResponse;
+use payload::users::{UpdateProfileRequest, UserResponse};
 use service::auth::{AuthError, create_password_hash, dummy_password_hash, verify_password};
 use service::db::{is_postgres_unique_violation, with_transaction};
 use service::email::normalize_email;
@@ -293,6 +298,94 @@ pub async fn me(
     user: CurrentUser,
 ) -> Result<Json<UserResponse>, AuthError> {
     Ok(Json(user.0.into()))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    patch,
+    path = "/me",
+    tag = "Auth",
+    summary = "自分のプロフィール更新",
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 200, description = "更新後のアカウント情報", body = UserResponse),
+        (status = 400, description = "入力内容が制約を満たしていません", body = ServerError),
+        SessionAuthErrors,
+    )
+)]
+pub async fn update_me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    headers: HeaderMap,
+    Valid(Json(payload)): Valid<Json<UpdateProfileRequest>>,
+) -> Result<Json<UserResponse>, AuthError> {
+    let UpdateProfileRequest {
+        username,
+        bio,
+        avatar_url,
+        clear_avatar_url,
+    } = payload;
+
+    let current = user.0;
+    let before_username = current.username.clone();
+    let user_id = current.id;
+    let mut active: users::ActiveModel = current.clone().into();
+    let mut changed_fields = Vec::new();
+
+    if let Some(username) = username
+        && username != current.username
+    {
+        active.username = Set(username);
+        changed_fields.push("username");
+    }
+    if let Some(bio) = bio
+        && current.bio.as_deref() != Some(bio.as_str())
+    {
+        active.bio = Set(Some(bio));
+        changed_fields.push("bio");
+    }
+    if clear_avatar_url && current.avatar_url.is_some() {
+        active.avatar_url = Set(None);
+        changed_fields.push("avatar_url");
+    } else if let Some(avatar_url) = avatar_url
+        && current.avatar_url.as_deref() != Some(avatar_url.as_str())
+    {
+        active.avatar_url = Set(Some(avatar_url));
+        changed_fields.push("avatar_url");
+    }
+
+    // 指定の有無ではなく現在値との差を見て、同じ値の UPDATE と空の監査ログを残さない。
+    if changed_fields.is_empty() {
+        return Ok(Json(current.into()));
+    }
+
+    // 更新と監査ログを同一トランザクションに載せ、片方だけ残る状態を作らない。
+    let updated = with_transaction::<_, AuthError, _>(&state.db, move |txn| {
+        Box::pin(async move {
+            let updated = active.update(txn).await?;
+            record_audit(
+                txn,
+                user_id,
+                "user.profile.update",
+                "user",
+                &user_id.to_string(),
+                None,
+                Some(serde_json::json!({
+                    "changed_fields": changed_fields,
+                    "username": {
+                        "before": before_username,
+                        "after": updated.username.clone(),
+                    },
+                })),
+                &headers,
+            )
+            .await?;
+            Ok(updated)
+        })
+    })
+    .await?;
+
+    Ok(Json(updated.into()))
 }
 
 #[axum::debug_handler]

@@ -24,6 +24,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { computed } from 'vue';
+import { avatarInitials } from '@/lib/initials';
 
 const props = defineProps<{
   user: {
@@ -35,6 +37,7 @@ const props = defineProps<{
 }>();
 
 const { isMobile } = useSidebar();
+const initials = computed(() => avatarInitials(props.user.name));
 </script>
 
 <template>
@@ -48,7 +51,7 @@ const { isMobile } = useSidebar();
           >
             <Avatar class="h-8 w-8 rounded-lg">
               <AvatarImage :src="user.avatar" :alt="user.name" />
-              <AvatarFallback class="rounded-lg"> CN </AvatarFallback>
+              <AvatarFallback class="rounded-lg">{{ initials }}</AvatarFallback>
             </Avatar>
             <div class="grid flex-1 text-left text-sm leading-tight">
               <span class="truncate font-medium">{{ user.name }}</span>
@@ -67,7 +70,7 @@ const { isMobile } = useSidebar();
             <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar class="h-8 w-8 rounded-lg">
                 <AvatarImage :src="user.avatar" :alt="user.name" />
-                <AvatarFallback class="rounded-lg"> CN </AvatarFallback>
+                <AvatarFallback class="rounded-lg">{{ initials }}</AvatarFallback>
               </Avatar>
               <div class="grid flex-1 text-left text-sm leading-tight">
                 <span class="truncate font-semibold">{{ user.name }}</span>
@@ -84,9 +87,11 @@ const { isMobile } = useSidebar();
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-            <DropdownMenuItem>
-              <PhSealCheck />
-              Account
+            <DropdownMenuItem as-child>
+              <a href="/settings/profile">
+                <PhSealCheck />
+                Account
+              </a>
             </DropdownMenuItem>
             <DropdownMenuItem>
               <PhCreditCard />
