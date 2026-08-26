@@ -408,6 +408,93 @@ async fn consecutive_transitions_coalesce_into_one_summary_update() {
     app.cleanup_user(reviewer.id).await;
 }
 
+/// 担い手が消えても詰まらないよう、印とロックは TTL 付きで、
+/// ロックの解放は取得時のトークンと一致するときだけ効く（仕様 §7）。
+#[tokio::test]
+async fn the_pending_flag_and_lock_expire_and_release_is_owner_checked() {
+    use service::github::review_summary_queue as queue;
+
+    let app = TestApp::new().await;
+    let redis = &app.state.redis_client;
+    // Redis だけを使うので、実在するプロジェクトでなくてよい
+    let project_id = Uuid::new_v4();
+    let pr = 618;
+
+    assert!(
+        queue::try_mark_pending(redis, project_id, pr)
+            .await
+            .expect("mark pending")
+    );
+    let token = queue::try_acquire_update_lock(redis, project_id, pr)
+        .await
+        .expect("acquire lock")
+        .expect("空いていれば取れる");
+
+    // ワーカーが落ちても、どちらの目印も期限で必ず明ける
+    let (pending_ttl, lock_ttl) = queue::remaining_ttl_secs(redis, project_id, pr)
+        .await
+        .expect("ttl");
+    assert!(
+        pending_ttl > 0 && pending_ttl <= queue::SUMMARY_PENDING_TTL_SECS as i64,
+        "印に TTL が付いている: {pending_ttl}"
+    );
+    assert!(
+        lock_ttl > 0 && lock_ttl <= queue::SUMMARY_LOCK_TTL_SECS as i64,
+        "ロックに TTL が付いている: {lock_ttl}"
+    );
+
+    // 保持中は取れない
+    assert!(
+        queue::try_acquire_update_lock(redis, project_id, pr)
+            .await
+            .expect("acquire lock")
+            .is_none(),
+        "同じ PR の更新は同時に走らない"
+    );
+
+    // 期限切れで別のジョブが取り直した状況を作る
+    assert!(
+        queue::release_update_lock(redis, project_id, pr, &token)
+            .await
+            .expect("release lock")
+    );
+    let newer = queue::try_acquire_update_lock(redis, project_id, pr)
+        .await
+        .expect("acquire lock")
+        .expect("解放後は取り直せる");
+
+    // 遅れて完走した古いジョブは、取り直されたロックを解放しない
+    assert!(
+        !queue::release_update_lock(redis, project_id, pr, &token)
+            .await
+            .expect("release lock"),
+        "古いトークンでは解放できない"
+    );
+    assert!(
+        queue::try_acquire_update_lock(redis, project_id, pr)
+            .await
+            .expect("acquire lock")
+            .is_none(),
+        "取り直したロックはそのまま残る"
+    );
+
+    queue::release_update_lock(redis, project_id, pr, &newer)
+        .await
+        .expect("release lock");
+    queue::clear_pending(redis, project_id, pr)
+        .await
+        .expect("clear pending");
+    assert!(
+        queue::try_mark_pending(redis, project_id, pr)
+            .await
+            .expect("mark pending"),
+        "印を落とせば次の更新をまた積める"
+    );
+    queue::clear_pending(redis, project_id, pr)
+        .await
+        .expect("clear pending");
+}
+
 /// 同じ PR を更新中のジョブがいる間は投稿せず、再試行へ回る。
 ///
 /// 合流はジョブの本数を減らすだけで同時実行は止まらない。並行して走ると、古い状態を

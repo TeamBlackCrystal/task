@@ -185,6 +185,37 @@ pub async fn release_update_lock(
     Ok(deleted == 1)
 }
 
+/// 「更新待ち」の印とロックの残り秒数（`TTL`）。
+///
+/// `-2` は鍵が無い、`-1` は期限なし。担い手が落ちたときに詰まらせないための
+/// 保険が実際に効いているかを外から確かめられるようにしている。
+///
+/// # Errors
+/// * Redis 接続・コマンド実行に失敗した場合
+pub async fn remaining_ttl_secs(
+    redis: &RedisConnection,
+    project_id: Uuid,
+    pr_number: i32,
+) -> Result<(i64, i64), anyhow::Error> {
+    let mut conn = redis
+        .conn
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
+
+    let mut ttl_of = async |key: String| -> Result<i64, anyhow::Error> {
+        redis::cmd("TTL")
+            .arg(key)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("redis TTL: {e}"))
+    };
+
+    let pending = ttl_of(pending_key(project_id, pr_number)).await?;
+    let lock = ttl_of(lock_key(project_id, pr_number)).await?;
+    Ok((pending, lock))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
