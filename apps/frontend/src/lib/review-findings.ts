@@ -65,11 +65,19 @@ export function canTransition(from: FindingState, to: FindingState): boolean {
 
 /** レビュー側だけが行える遷移か（backend の `requires_reviewer_side` と対）。 */
 export function requiresReviewerSide(from: FindingState, to: FindingState): boolean {
-  return (
-    (from === 'fixed' && (to === 'verified' || to === 'open')) ||
-    (from === 'open' && to === 'rejected') ||
-    (from === 'rejected' && to === 'open')
-  );
+  return from === 'fixed' && (to === 'verified' || to === 'open');
+}
+
+/**
+ * 指摘を出したラウンドの作成者だけが行える遷移か
+ * （backend の `requires_finding_author` と対）。
+ *
+ * 取り下げだけレビュー側より狭い。ラウンドは指摘ゼロでも作れるので、後から出した
+ * ラウンドの作成者にまで認めると、空のラウンドを 1 本作るだけで他人の High を
+ * 棄却でき、マージ基準を 1 人で迂回できてしまう。
+ */
+export function requiresFindingAuthor(from: FindingState, to: FindingState): boolean {
+  return (from === 'open' && to === 'rejected') || (from === 'rejected' && to === 'open');
 }
 
 export type FindingAction = {
@@ -85,7 +93,12 @@ export type FindingAction = {
  * `viewerId` が `fixed` を宣言した本人なら verified は押せない
  * （自分の修正を自分で確認済みにはできない）。
  */
-export function findingActions(finding: ReviewFinding, viewerId: string): FindingAction[] {
+export function findingActions(
+  finding: ReviewFinding,
+  viewerId: string,
+  /** その指摘を出したラウンドの作成者。分からなければ取り下げを出さない */
+  findingAuthorId?: string | null,
+): FindingAction[] {
   const labels: Partial<Record<FindingState, string>> = {
     fixed: '修正した',
     verified: '確認した',
@@ -98,7 +111,9 @@ export function findingActions(finding: ReviewFinding, viewerId: string): Findin
     (to) =>
       canTransition(finding.state, to) &&
       // High / Medium は繰り延べられない（押しても 409 になるボタンを出さない）
-      (to !== 'deferred' || canDefer(finding.severity)),
+      (to !== 'deferred' || canDefer(finding.severity)) &&
+      // 取り下げは指摘を出した本人だけ（押しても 403 になるボタンを出さない）
+      (!requiresFindingAuthor(finding.state, to) || viewerId === findingAuthorId),
   ).map((to) => {
     const selfVerification = to === 'verified' && finding.fixed_by === viewerId;
     return {

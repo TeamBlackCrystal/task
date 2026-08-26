@@ -33,6 +33,7 @@ import {
   summaryRows,
   type FindingSeverity,
   type FindingState,
+  type Review,
   type ReviewFinding,
 } from '@/lib/review-findings';
 
@@ -64,6 +65,15 @@ const updateState = useUpdateFindingStateMutation();
 
 const pullRequests = computed(() => prsQuery.data.value ?? []);
 const rounds = computed(() => roundsQuery.data.value ?? []);
+
+/**
+ * 指摘 → それを出したラウンドの作成者。取り下げを出してよいかの判定に使う。
+ *
+ * ラウンド一覧が未取得のうちは分からないので、その間は取り下げを出さない
+ * （押せるのに 403 になるボタンを出さないため）。
+ */
+const findingAuthorId = (finding: ReviewFinding): string | null =>
+  rounds.value.find((round: Review) => round.id === finding.review_id)?.reviewer.id ?? null;
 const summary = computed(() => summaryQuery.data.value ?? null);
 
 /** 初期 PR の指定が無ければ、最後にレビューされた PR を開く。 */
@@ -395,7 +405,7 @@ async function onRoundCreated() {
 
                 <div class="mt-3 flex flex-wrap items-center gap-2">
                   <Button
-                    v-for="action in findingActions(finding, viewerId)"
+                    v-for="action in findingActions(finding, viewerId, findingAuthorId(finding))"
                     :key="action.to"
                     type="button"
                     size="sm"
@@ -407,7 +417,11 @@ async function onRoundCreated() {
                     {{ action.label }}
                   </Button>
                   <span
-                    v-if="findingActions(finding, viewerId).some((a) => a.disabledReason)"
+                    v-if="
+                      findingActions(finding, viewerId, findingAuthorId(finding)).some(
+                        (a) => a.disabledReason,
+                      )
+                    "
                     class="text-muted-foreground text-xs"
                   >
                     修正者と確認者は別の人である必要があります

@@ -8,6 +8,7 @@ import {
   countsAsUnresolved,
   findingActions,
   findingLocation,
+  requiresFindingAuthor,
   requiresReviewerSide,
   sortFindings,
   summaryRows,
@@ -69,15 +70,24 @@ describe('遷移表', () => {
     }
   });
 
-  it('レビュー側限定の遷移は確認・差し戻し・棄却', () => {
+  it('レビュー側限定の遷移は確認と差し戻し', () => {
     expect(requiresReviewerSide('fixed', 'verified')).toBe(true);
     expect(requiresReviewerSide('fixed', 'open')).toBe(true);
-    expect(requiresReviewerSide('open', 'rejected')).toBe(true);
-    expect(requiresReviewerSide('rejected', 'open')).toBe(true);
     // 修正の宣言と繰り延べの出入りは修正側も行える
     expect(requiresReviewerSide('open', 'fixed')).toBe(false);
     expect(requiresReviewerSide('open', 'deferred')).toBe(false);
     expect(requiresReviewerSide('deferred', 'open')).toBe(false);
+  });
+
+  it('取り下げはレビュー側より狭く、指摘を出した本人に限る', () => {
+    expect(requiresFindingAuthor('open', 'rejected')).toBe(true);
+    expect(requiresFindingAuthor('rejected', 'open')).toBe(true);
+    // 緩い方には載せない（二重判定にしない）
+    expect(requiresReviewerSide('open', 'rejected')).toBe(false);
+    expect(requiresReviewerSide('rejected', 'open')).toBe(false);
+    // 確認と差し戻しは後続ラウンドの作成者にも許す
+    expect(requiresFindingAuthor('fixed', 'verified')).toBe(false);
+    expect(requiresFindingAuthor('fixed', 'open')).toBe(false);
   });
 });
 
@@ -96,16 +106,38 @@ describe('canDefer', () => {
 
 describe('findingActions', () => {
   it('open の Low では修正・繰り延べ・取り下げを出す', () => {
-    const actions = findingActions(finding({ severity: 'low' }), VIEWER);
+    const actions = findingActions(finding({ severity: 'low' }), VIEWER, VIEWER);
     expect(actions.map((a) => a.to)).toEqual(['fixed', 'deferred', 'rejected']);
     expect(actions.every((a) => a.disabledReason === null)).toBe(true);
   });
 
   it('High / Medium には繰り延べを出さない（サーバーも 409 で拒否する）', () => {
     for (const severity of ['high', 'medium'] as const) {
-      const actions = findingActions(finding({ severity }), VIEWER);
+      const actions = findingActions(finding({ severity }), VIEWER, VIEWER);
       expect(actions.map((a) => a.to)).toEqual(['fixed', 'rejected']);
     }
+  });
+
+  it('取り下げは指摘を出した本人にだけ出す（サーバーも 403 で拒否する）', () => {
+    // 他人が出した指摘。空のラウンドを作って「レビュー側」を名乗っても取り下げられない
+    const others = findingActions(finding({ severity: 'low' }), VIEWER, OTHER);
+    expect(others.map((a) => a.to)).toEqual(['fixed', 'deferred']);
+
+    // 出した本人には出す
+    const own = findingActions(finding({ severity: 'low' }), VIEWER, VIEWER);
+    expect(own.map((a) => a.to)).toContain('rejected');
+
+    // ラウンドが引けないうちは出さない（押せるのに 403 になるボタンを作らない）
+    const unknown = findingActions(finding({ severity: 'low' }), VIEWER, null);
+    expect(unknown.map((a) => a.to)).not.toContain('rejected');
+
+    // rejected からの再オープンも同じ主体に限る
+    expect(findingActions(finding({ state: 'rejected' }), VIEWER, OTHER).map((a) => a.to)).toEqual(
+      [],
+    );
+    expect(findingActions(finding({ state: 'rejected' }), VIEWER, VIEWER).map((a) => a.to)).toEqual(
+      ['open'],
+    );
   });
 
   it('fixed を宣言した本人には verified を押させない', () => {
@@ -122,7 +154,7 @@ describe('findingActions', () => {
   });
 
   it('verified には操作が無い（終端）', () => {
-    expect(findingActions(finding({ state: 'verified' }), VIEWER)).toEqual([]);
+    expect(findingActions(finding({ state: 'verified' }), VIEWER, VIEWER)).toEqual([]);
   });
 });
 

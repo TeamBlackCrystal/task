@@ -38,6 +38,8 @@ type MockState = {
   prsStatus?: number;
   patchStatus?: number;
   patchMessage?: string;
+  /** ラウンドを出した人（取り下げを出してよいかの判定に使う） */
+  roundReviewerId?: string;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -102,7 +104,11 @@ function stubFetch(state: MockState) {
           pr_number: 618,
           round: 1,
           head_sha: '60cdd7795f94',
-          reviewer: { id: OTHER_ID, username: 'reviewer', avatar_url: null },
+          reviewer: {
+            id: state.roundReviewerId ?? OTHER_ID,
+            username: 'reviewer',
+            avatar_url: null,
+          },
           summary: '総評',
           pr_title: null,
           pr_author: null,
@@ -231,6 +237,25 @@ describe('ReviewFindingsView', () => {
     await flushPromises();
 
     expect(bodyButton('繰り延べる')?.disabled).toBe(false);
+  });
+
+  it('他人が出した指摘には取り下げのボタンを出さない（サーバーも 403 で拒否する）', async () => {
+    stubFetch({ findings: [finding({ severity: 'low' })] });
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('指摘を取り下げる')).toBeUndefined();
+    // 修正の宣言と繰り延べは出る（取り下げだけを落としている）
+    expect(bodyButton('修正した')?.disabled).toBe(false);
+    expect(bodyButton('繰り延べる')?.disabled).toBe(false);
+  });
+
+  it('自分が出した指摘には取り下げのボタンを出す', async () => {
+    stubFetch({ findings: [finding({ severity: 'low' })], roundReviewerId: VIEWER_ID });
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('指摘を取り下げる')?.disabled).toBe(false);
   });
 
   it('verified の指摘には操作ボタンを出さない（終端）', async () => {
