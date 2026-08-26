@@ -286,6 +286,7 @@ pub async fn create_review(
     // 要約コメントの反映は非同期。投稿に失敗しても起票は巻き戻さない（仕様 §7）
     job::review_summary::enqueue_best_effort(
         &state.review_summary_storage,
+        &state.redis_client,
         project_id,
         review.pr_number,
     )
@@ -617,6 +618,7 @@ pub async fn update_review_finding_state(
 
     job::review_summary::enqueue_best_effort(
         &state.review_summary_storage,
+        &state.redis_client,
         project_id,
         review.pr_number,
     )

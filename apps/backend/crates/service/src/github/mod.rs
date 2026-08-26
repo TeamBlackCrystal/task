@@ -11,6 +11,7 @@ pub mod install_state;
 pub mod issues;
 pub mod pr_comments;
 pub mod repositories;
+pub mod review_summary_queue;
 pub mod sync;
 
 pub use client::github_app;

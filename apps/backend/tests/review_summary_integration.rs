@@ -286,6 +286,128 @@ async fn an_existing_summary_comment_is_updated_in_place() {
     app.cleanup_user(reviewer.id).await;
 }
 
+/// 連続した状態遷移でも更新ジョブは 1 本に合流し、コメントは 1 本のまま最新になる。
+///
+/// 遷移のたびにジョブを積むと、同じコメントへ短時間に何度も書き込みに行き、
+/// GitHub の secondary rate limit に当たる（仕様 §7）。
+#[serial_test::serial]
+#[tokio::test]
+async fn consecutive_transitions_coalesce_into_one_summary_update() {
+    let mock_server = MockServer::start().await;
+    // SAFETY: serial アトリビュートにより他テストとの並列実行を防いでいる。
+    unsafe {
+        std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
+    }
+    mount_mocks(&mock_server, false).await;
+
+    let mut app = TestApp::new_with_github().await;
+    let reviewer = app.insert_user_default().await;
+    let tp = app.insert_tenant_project(reviewer.id).await;
+    seed_statuses(&app, tp.project_id).await;
+    link_integration(&app, tp.project_id, reviewer.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&reviewer.email, &reviewer.password)
+        .await;
+
+    let reviews_path = format!(
+        "/v1/tenants/{}/projects/{}/reviews",
+        tp.tenant_id, tp.project_id
+    );
+    let res = app
+        .post_json_with_session(
+            &reviews_path,
+            serde_json::json!({
+                "pr_number": PR_NUMBER,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [
+                    { "severity": "high", "title": "認可漏れ", "body": "本文" },
+                    { "severity": "high", "title": "検証漏れ", "body": "本文" },
+                    { "severity": "medium", "title": "境界値", "body": "本文" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let finding_ids: Vec<String> = res.json::<serde_json::Value>().await.expect("json")["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .map(|f| f["id"].as_str().expect("finding id").to_string())
+        .collect();
+
+    // 起票で 1 本積まれている。ここから 3 件を続けて fixed にしても増えない
+    let findings_path = format!(
+        "/v1/tenants/{}/projects/{}/review-findings",
+        tp.tenant_id, tp.project_id
+    );
+    for finding_id in &finding_ids {
+        let res = app
+            .patch_json_with_session(
+                &format!("{findings_path}/{finding_id}"),
+                serde_json::json!({ "state": "fixed" }),
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    assert!(
+        !service::github::review_summary_queue::try_mark_pending(
+            &app.state.redis_client,
+            tp.project_id,
+            PR_NUMBER
+        )
+        .await
+        .expect("pending flag"),
+        "起票と 3 件の遷移は 1 本の更新に合流する"
+    );
+
+    // 積まれている 1 本を走らせると、最新状態（3 件とも fixed）で 1 回だけ投稿する
+    let state = job_state(&app);
+    job::review_summary::process(
+        job::ReviewSummaryJob {
+            project_id: tp.project_id,
+            pr_number: PR_NUMBER,
+        },
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .expect("post review summary");
+
+    let posted = bodies_of(&mock_server, wiremock::http::Method::POST).await;
+    let posted: Vec<&serde_json::Value> =
+        posted.iter().filter(|b| b.get("body").is_some()).collect();
+    assert_eq!(posted.len(), 1, "書き込みは 1 回だけ");
+    let body = posted[0]["body"].as_str().expect("comment body");
+    assert!(
+        body.contains("| High | Fixed | 2 |"),
+        "最新の件数が出る: {body}"
+    );
+    assert!(
+        body.contains("| Medium | Fixed | 1 |"),
+        "最新の件数が出る: {body}"
+    );
+    assert!(
+        body.contains("マージ不可"),
+        "fixed は未解決として数える: {body}"
+    );
+
+    // ジョブが走ったので、次の遷移はまた積める
+    assert!(
+        service::github::review_summary_queue::try_mark_pending(
+            &app.state.redis_client,
+            tp.project_id,
+            PR_NUMBER
+        )
+        .await
+        .expect("pending flag"),
+        "ジョブの実行後は次の更新を受け付ける"
+    );
+
+    app.cleanup_user(reviewer.id).await;
+}
+
 /// GitHub 連携の無いプロジェクトでは投稿しない（起票・管理自体は成功している）。
 #[serial_test::serial]
 #[tokio::test]

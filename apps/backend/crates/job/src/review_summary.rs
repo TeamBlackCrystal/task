@@ -6,6 +6,10 @@
 //!
 //! 失敗はベストエフォート: 投稿・編集に失敗しても API 側の起票・遷移は
 //! 巻き戻さない。GitHub 連携の無いプロジェクトでは何もしない。
+//!
+//! 同一 (project, pr) の更新要求は 1 本に合流させる（`service::github::review_summary_queue`）。
+//! 遷移のたびに積むと同じコメントへ連続して書き込み、GitHub の
+//! secondary rate limit に当たるため。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +22,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use common::cache::redis::RedisConnection;
 use common::settings::Settings;
 use entity::github_integrations;
 
@@ -73,9 +78,31 @@ pub async fn enqueue(
     Ok(())
 }
 
+/// 更新待ちのジョブが無いときだけ投入する。
+///
 /// 投稿に失敗してもジョブ側の呼び出し元（API）を巻き込まないよう、
-/// enqueue の失敗は警告に留める。
-pub async fn enqueue_best_effort(storage: &ReviewSummaryStorage, project_id: Uuid, pr_number: i32) {
+/// enqueue の失敗は警告に留める。合流の判定に使う Redis が落ちている場合も
+/// 同じで、そのときは合流せずに積む（要約が止まるより、多めに書きに行く方がよい）。
+pub async fn enqueue_best_effort(
+    storage: &ReviewSummaryStorage,
+    redis: &RedisConnection,
+    project_id: Uuid,
+    pr_number: i32,
+) {
+    match service::github::review_summary_queue::try_mark_pending(redis, project_id, pr_number)
+        .await
+    {
+        Ok(false) => {
+            // 既に積まれているジョブが、実行時に最新状態を読み直して反映する
+            tracing::debug!(%project_id, pr_number, "review summary update is already pending");
+            return;
+        }
+        Ok(true) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, %project_id, pr_number, "review summary pending flag failed");
+        }
+    }
+
     if let Err(e) = enqueue(
         storage,
         ReviewSummaryJob {
@@ -86,10 +113,29 @@ pub async fn enqueue_best_effort(storage: &ReviewSummaryStorage, project_id: Uui
     .await
     {
         tracing::warn!(error = %e, %project_id, pr_number, "enqueue review summary failed");
+        // 積めなかったフラグを残すと、TTL のあいだ以降の更新まで合流で捨てられる
+        if let Err(e) =
+            service::github::review_summary_queue::clear_pending(redis, project_id, pr_number).await
+        {
+            tracing::warn!(error = %e, %project_id, pr_number, "clear review summary pending failed");
+        }
     }
 }
 
 pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(), BoxDynError> {
+    // 状態を読む前に落とす。順序を逆にすると、読んだ後・落とす前の遷移が
+    // 合流で捨てられて要約に出ない。先に落として取りこぼす側は
+    // ジョブが 1 本余計に積まれるだけで済む
+    if let Err(e) = service::github::review_summary_queue::clear_pending(
+        &state.redis_client,
+        job.project_id,
+        job.pr_number,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, project_id = %job.project_id, pr = job.pr_number, "clear review summary pending failed");
+    }
+
     let Some(github) = state.settings.github_app.as_ref() else {
         tracing::warn!("github app is not configured; skipping review summary");
         return Ok(());
