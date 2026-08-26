@@ -9,6 +9,13 @@ impl MigrationTrait for Migration {
         // レビューラウンド。同一 PR への再レビューは round を増やして新しい行にする
         // （既存行は更新しない）。reviewer_id / actor_id は著者性の記録なので
         // tasks.created_by と同じく NO ACTION（利用者削除は墓標方式で行を残す）。
+        //
+        // repo_owner / repo_name は「どのリポジトリの PR を見たか」の控え。
+        // プロジェクトの連携先は解除・再連携で差し替えられるため、これが無いと
+        // 旧リポジトリの PR #10 と新リポジトリの PR #10 が同じ PR として続く。
+        // 連携が無いラウンドは空文字（NULL にすると UNIQUE が効かない）。
+        // integration_id は SET NULL: 連携を外しても指摘は消さない
+        // （指摘の権威は task 側にあり、連携は要約コメントの投稿にだけ要る）。
         manager
             .get_connection()
             .execute_unprepared(
@@ -16,6 +23,9 @@ impl MigrationTrait for Migration {
             CREATE TABLE reviews (
                 id          UUID PRIMARY KEY,
                 project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                integration_id UUID REFERENCES github_integrations(id) ON DELETE SET NULL,
+                repo_owner  VARCHAR NOT NULL DEFAULT '',
+                repo_name   VARCHAR NOT NULL DEFAULT '',
                 pr_number   INT NOT NULL,
                 round       INT NOT NULL,
                 head_sha    VARCHAR NOT NULL,
@@ -24,7 +34,7 @@ impl MigrationTrait for Migration {
                 pr_title    VARCHAR,
                 pr_author   VARCHAR,
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (project_id, pr_number, round)
+                UNIQUE (project_id, repo_owner, repo_name, pr_number, round)
             )
         "#,
             )
@@ -33,7 +43,9 @@ impl MigrationTrait for Migration {
         // PR 単位の一覧・集計が主な引き方
         manager
             .get_connection()
-            .execute_unprepared("CREATE INDEX idx_reviews_project_pr ON reviews(project_id, pr_number)")
+            .execute_unprepared(
+                "CREATE INDEX idx_reviews_project_repo_pr ON reviews(project_id, repo_owner, repo_name, pr_number)",
+            )
             .await?;
 
         // 指摘。fixed_by は「fixed を宣言した本人は verified にできない」判定に使う。

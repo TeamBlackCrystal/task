@@ -8,11 +8,17 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(unique_key = "reviews_project_id_pr_number_round_key")]
+    #[sea_orm(unique_key = "reviews_project_id_repo_owner_repo_name_pr_number_round_key")]
     pub project_id: Uuid,
-    #[sea_orm(unique_key = "reviews_project_id_pr_number_round_key")]
+    #[sea_orm(nullable)]
+    pub integration_id: Option<Uuid>,
+    #[sea_orm(unique_key = "reviews_project_id_repo_owner_repo_name_pr_number_round_key")]
+    pub repo_owner: String,
+    #[sea_orm(unique_key = "reviews_project_id_repo_owner_repo_name_pr_number_round_key")]
+    pub repo_name: String,
+    #[sea_orm(unique_key = "reviews_project_id_repo_owner_repo_name_pr_number_round_key")]
     pub pr_number: i32,
-    #[sea_orm(unique_key = "reviews_project_id_pr_number_round_key")]
+    #[sea_orm(unique_key = "reviews_project_id_repo_owner_repo_name_pr_number_round_key")]
     pub round: i32,
     pub head_sha: String,
     pub reviewer_id: Uuid,
@@ -31,6 +37,14 @@ pub struct Model {
         on_delete = "Cascade"
     )]
     pub projects: HasOne<super::projects::Entity>,
+    #[sea_orm(
+        belongs_to,
+        from = "integration_id",
+        to = "id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    pub github_integrations: HasOne<super::github_integrations::Entity>,
     #[sea_orm(
         belongs_to,
         from = "reviewer_id",

@@ -160,12 +160,18 @@ pub async fn create_review(
 
     // ラウンドは確定時に指摘ごと作る。確定後の追記は API として提供しない
     // （「どの head を見た時点の判断か」を濁さないため。仕様 §3）
-    let round = service::reviews::next_round(&txn, project_id, payload.pr_number).await?;
+    // どのリポジトリの PR を見たかを控える。連携先は差し替えられるので、
+    // これが無いと別リポジトリの同番 PR が同じ PR として続く（仕様 §3）
+    let repo = service::reviews::current_repo(&txn, project_id).await?;
+    let round = service::reviews::next_round(&txn, project_id, &repo, payload.pr_number).await?;
     let now = chrono::Utc::now();
 
     let review = reviews::ActiveModel {
         id: Set(Uuid::new_v4()),
         project_id: Set(project_id),
+        integration_id: Set(repo.integration_id),
+        repo_owner: Set(repo.owner.clone()),
+        repo_name: Set(repo.name.clone()),
         pr_number: Set(payload.pr_number),
         round: Set(round),
         head_sha: Set(payload.head_sha),
@@ -262,8 +268,13 @@ pub async fn list_reviews(
 ) -> Result<Json<Vec<ReviewResponse>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
+    // 一覧が見るのは現在の連携先のラウンドだけ。連携を差し替えた後に旧リポジトリの
+    // 同番 PR のラウンドが混ざらないようにする（仕様 §3）
+    let repo = service::reviews::current_repo(&state.db, project_id).await?;
     let rounds = reviews::Entity::find()
         .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
         .filter(reviews::Column::PrNumber.eq(query.pr))
         .order_by_desc(reviews::Column::Round)
         .all(&state.db)
@@ -312,9 +323,13 @@ pub async fn get_review_summary(
 ) -> Result<Json<ReviewSummaryResponse>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
-    let counts = service::reviews::severity_state_counts(&state.db, project_id, query.pr).await?;
+    let repo = service::reviews::current_repo(&state.db, project_id).await?;
+    let counts =
+        service::reviews::severity_state_counts(&state.db, project_id, &repo, query.pr).await?;
     let blocking = service::reviews::blocking_count(&counts);
-    let rounds = service::reviews::round_count(&state.db, project_id, query.pr).await?;
+    let rounds = service::reviews::round_count(&state.db, project_id, &repo, query.pr).await?;
+    let latest_head_sha =
+        service::reviews::latest_head_sha(&state.db, project_id, &repo, query.pr).await?;
 
     Ok(Json(ReviewSummaryResponse {
         pr_number: query.pr,
@@ -328,7 +343,10 @@ pub async fn get_review_summary(
             })
             .collect(),
         blocking,
-        mergeable: blocking == 0,
+        latest_head_sha,
+        // レビューが 1 件も無い PR を「可」にしない。件数だけで見ると未レビューの PR が
+        // 0 件として通り、マージ前ゲートとして最も危ない誤りになる（仕様 §5）
+        mergeable: rounds > 0 && blocking == 0,
     }))
 }
 
@@ -415,8 +433,11 @@ pub async fn list_review_findings(
     let states = parse_csv::<FindingState>(query.state.as_deref())?;
     let severities = parse_csv::<FindingSeverity>(query.severity.as_deref())?;
 
+    let repo = service::reviews::current_repo(&state.db, project_id).await?;
     let rounds = reviews::Entity::find()
         .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
         .filter(reviews::Column::PrNumber.eq(query.pr))
         .order_by_asc(reviews::Column::Round)
         .all(&state.db)

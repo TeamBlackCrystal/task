@@ -2898,7 +2898,13 @@ export interface components {
             blocking: number;
             /** @description 重大度 × 状態の件数 */
             counts: components["schemas"]["SeverityStateCount"][];
-            /** @description `blocking == 0` か */
+            /** @description 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる */
+            latest_head_sha?: string | null;
+            /**
+             * @description ラウンドが 1 件以上あり、かつ `blocking == 0` か
+             *
+             *     レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。
+             */
             mergeable: boolean;
             /** Format: int32 */
             pr_number: number;

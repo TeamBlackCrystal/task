@@ -2,7 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
-use entity::{project_statuses, tasks};
+use entity::{github_integrations, project_statuses, review_findings, tasks};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, prelude::Uuid};
 
 // レビュー指摘管理（#623 の仕様）の統合テスト。
@@ -87,6 +87,27 @@ async fn setup() -> Fixture {
         reviewer,
         developer,
     }
+}
+
+/// プロジェクトを指定のリポジトリへ連携させ、その連携 ID を返す。
+async fn link_repo(fx: &Fixture, owner: &str, name: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    github_integrations::ActiveModel {
+        id: Set(id),
+        project_id: Set(fx.project_id),
+        // 他テストと衝突しない範囲で散らす
+        installation_id: Set((Uuid::new_v4().as_u128() % 1_000_000) as i64 + 9_000_000),
+        repo_owner: Set(owner.into()),
+        repo_name: Set(name.into()),
+        access_token_enc: Set("unused".into()),
+        token_expires_at: Set(chrono::Utc::now().into()),
+        created_by: Set(fx.reviewer.id),
+        created_at: Set(chrono::Utc::now().into()),
+    }
+    .insert(&fx.app.state.db)
+    .await
+    .expect("insert integration");
+    id
 }
 
 async fn json(res: reqwest::Response) -> serde_json::Value {
@@ -565,6 +586,148 @@ async fn concurrent_rounds_on_the_same_pr_get_distinct_numbers() {
         rounds,
         vec![1, 2, 3, 4, 5],
         "round が重複しない: {rounds:?}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 連携先リポジトリを差し替えると、同じ PR 番号でも別の PR として扱う。
+///
+/// プロジェクトの連携先は解除・再連携で差し替えられる。`project_id + pr_number` だけを
+/// キーにすると、旧リポジトリの PR #10 と新リポジトリの PR #10 が同じ PR として続く
+/// （仕様 §3）。
+#[tokio::test]
+async fn rounds_are_scoped_to_the_linked_repository() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let old_integration = link_repo(&fx, "acme", "old-repo").await;
+    let (_, finding_id) = submit_round(&fx, 711, "high", "旧リポジトリの指摘").await;
+
+    // 旧リポジトリのラウンドは見えている
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(rounds.as_array().expect("rounds").len(), 1);
+
+    // 連携を別リポジトリへ差し替える
+    github_integrations::Entity::delete_by_id(old_integration)
+        .exec(&fx.app.state.db)
+        .await
+        .expect("delete integration");
+    link_repo(&fx, "acme", "new-repo").await;
+
+    // 同じ PR 番号でも R1 から始まる（旧リポジトリの続きにしない）
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 711,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "新リポジトリのレビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json(res).await["round"], 1, "別リポジトリの PR は R1 から");
+
+    // 一覧・集計に旧リポジトリのラウンドと指摘が混ざらない
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    let rounds = rounds.as_array().expect("rounds");
+    assert_eq!(rounds.len(), 1, "現在の連携先のラウンドだけ: {rounds:?}");
+    assert_eq!(rounds[0]["summary"], "新リポジトリのレビュー");
+
+    let findings = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.findings_path()))
+            .await,
+    )
+    .await;
+    assert!(
+        findings.as_array().expect("findings").is_empty(),
+        "旧リポジトリの指摘は出てこない: {findings}"
+    );
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["blocking"], 0, "旧リポジトリの High は数えない");
+    assert_eq!(summary["mergeable"], true);
+
+    // 旧リポジトリの指摘は消えていない（連携解除で失われない）
+    let finding = review_findings::Entity::find_by_id(finding_id.parse::<Uuid>().expect("uuid"))
+        .one(&fx.app.state.db)
+        .await
+        .expect("query finding");
+    assert!(finding.is_some(), "連携を外しても指摘は残る");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// レビューが 1 件も無い PR は「マージ可」にしない。
+///
+/// 件数だけで判定すると、未レビューの PR が 0 件として通る（仕様 §5）。
+#[tokio::test]
+async fn a_pull_request_without_any_round_is_not_mergeable() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 0);
+    assert_eq!(summary["blocking"], 0);
+    assert_eq!(
+        summary["mergeable"], false,
+        "レビューされていない PR は通さない: {summary}"
+    );
+    assert!(summary["latest_head_sha"].is_null());
+
+    // 対照: 指摘ゼロのラウンドが 1 件あれば「可」になり、見た commit も返る
+    let head = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 712,
+                "head_sha": head,
+                "summary": "指摘なし",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 1);
+    assert_eq!(summary["mergeable"], true);
+    assert_eq!(
+        summary["latest_head_sha"], head,
+        "レビューした commit を返す（鮮度は呼び出し側が見る）"
     );
 
     fx.app.cleanup_user(fx.reviewer.id).await;

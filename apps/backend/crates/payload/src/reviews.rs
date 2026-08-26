@@ -205,7 +205,12 @@ pub struct ReviewSummaryResponse {
     pub counts: Vec<SeverityStateCount>,
     /// マージ判定を塞いでいる指摘の件数（High / Medium かつ open / fixed）
     pub blocking: u64,
-    /// `blocking == 0` か
+    /// 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる
+    #[schema(nullable)]
+    pub latest_head_sha: Option<String>,
+    /// ラウンドが 1 件以上あり、かつ `blocking == 0` か
+    ///
+    /// レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。
     pub mergeable: bool,
 }
 

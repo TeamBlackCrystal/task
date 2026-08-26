@@ -21294,9 +21294,13 @@
             },
             "description": "重大度 × 状態の件数"
           },
+          "latest_head_sha": {
+            "type": ["string", "null"],
+            "description": "最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる"
+          },
           "mergeable": {
             "type": "boolean",
-            "description": "`blocking == 0` か"
+            "description": "ラウンドが 1 件以上あり、かつ `blocking == 0` か\n\nレビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。"
           },
           "pr_number": {
             "type": "integer",

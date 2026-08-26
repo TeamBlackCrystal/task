@@ -10,7 +10,7 @@ use sea_orm::{
 };
 
 use entity::review_findings::{FindingSeverity, FindingState};
-use entity::{project_statuses, projects, review_findings, reviews, tasks};
+use entity::{github_integrations, project_statuses, projects, review_findings, reviews, tasks};
 
 /// 繰り延べで自動起票するタスクのタイトル接頭辞。
 const DEFERRED_TASK_PREFIX: &str = "[レビュー指摘]";
@@ -70,6 +70,68 @@ impl From<ReviewError> for common::error::AppError {
     }
 }
 
+/// ラウンドが見ていたリポジトリ。
+///
+/// プロジェクトの連携先は解除・再連携で差し替えられるので、PR を指すキーには
+/// リポジトリを含める。含めないと旧リポジトリの PR #10 と新リポジトリの PR #10 が
+/// 同じ PR として続き、旧リポジトリ向けの指摘を新リポジトリへ投稿してしまう（仕様 §3）。
+///
+/// 連携が無いプロジェクトでは空。`NULL` ではなく空文字にするのは、`UNIQUE` が
+/// NULL 同士を別物として扱い、採番の防波堤にならないため。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoRef {
+    pub integration_id: Option<Uuid>,
+    pub owner: String,
+    pub name: String,
+}
+
+impl RepoRef {
+    /// GitHub 連携の無いプロジェクトのラウンド。
+    pub fn unlinked() -> Self {
+        Self {
+            integration_id: None,
+            owner: String::new(),
+            name: String::new(),
+        }
+    }
+
+    /// GitHub へ投稿する先を持つか。
+    pub fn is_linked(&self) -> bool {
+        !self.owner.is_empty() && !self.name.is_empty()
+    }
+}
+
+/// プロジェクトの現在の連携先。連携が無ければ [`RepoRef::unlinked`]。
+pub async fn current_repo<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+) -> Result<RepoRef, sea_orm::DbErr> {
+    let integration = github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(db)
+        .await?;
+    Ok(integration
+        .map(|row| RepoRef {
+            integration_id: Some(row.id),
+            owner: row.repo_owner,
+            name: row.repo_name,
+        })
+        .unwrap_or_else(RepoRef::unlinked))
+}
+
+/// ラウンドの検索を (project, リポジトリ, pr) に絞る。
+fn scoped_rounds(
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+) -> sea_orm::Select<reviews::Entity> {
+    reviews::Entity::find()
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
+        .filter(reviews::Column::PrNumber.eq(pr_number))
+}
+
 /// PR 内の次のラウンド番号を返す。
 ///
 /// 同じ PR に同時にラウンドを作られると `UNIQUE (project_id, pr_number, round)` に
@@ -78,6 +140,7 @@ impl From<ReviewError> for common::error::AppError {
 pub async fn next_round<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
 ) -> Result<i32, sea_orm::DbErr> {
     projects::Entity::find_by_id(project_id)
@@ -85,9 +148,7 @@ pub async fn next_round<C: ConnectionTrait>(
         .one(db)
         .await?;
 
-    let last: Option<i32> = reviews::Entity::find()
-        .filter(reviews::Column::ProjectId.eq(project_id))
-        .filter(reviews::Column::PrNumber.eq(pr_number))
+    let last: Option<i32> = scoped_rounds(project_id, repo, pr_number)
         .select_only()
         .column(reviews::Column::Round)
         .order_by_desc(reviews::Column::Round)
@@ -385,11 +446,14 @@ pub async fn record_transition<C: ConnectionTrait>(
 pub async fn severity_state_counts<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
 ) -> Result<Vec<(FindingSeverity, FindingState, u64)>, sea_orm::DbErr> {
     let rows: Vec<(FindingSeverity, FindingState, i64)> = review_findings::Entity::find()
         .inner_join(reviews::Entity)
         .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
         .filter(reviews::Column::PrNumber.eq(pr_number))
         .select_only()
         .column(review_findings::Column::Severity)
@@ -416,15 +480,34 @@ pub fn blocking_count(counts: &[(FindingSeverity, FindingState, u64)]) -> u64 {
         .sum()
 }
 
+/// 最新ラウンドがレビューした commit。ラウンドが無ければ `None`。
+///
+/// 現在の HEAD と突き合わせるのは呼び出し側（CLI）。読み取り API から GitHub を
+/// 呼ばないのは、マージ前ゲートの応答時間と可用性を GitHub に握らせないため（仕様 §5）。
+pub async fn latest_head_sha<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    let latest: Option<String> = scoped_rounds(project_id, repo, pr_number)
+        .select_only()
+        .column(reviews::Column::HeadSha)
+        .order_by_desc(reviews::Column::Round)
+        .into_tuple()
+        .one(db)
+        .await?;
+    Ok(latest)
+}
+
 /// PR 内のラウンド数（= 最大の round）。
 pub async fn round_count<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
 ) -> Result<i32, sea_orm::DbErr> {
-    let last: Option<i32> = reviews::Entity::find()
-        .filter(reviews::Column::ProjectId.eq(project_id))
-        .filter(reviews::Column::PrNumber.eq(pr_number))
+    let last: Option<i32> = scoped_rounds(project_id, repo, pr_number)
         .select_only()
         .column(reviews::Column::Round)
         .order_by_desc(reviews::Column::Round)
