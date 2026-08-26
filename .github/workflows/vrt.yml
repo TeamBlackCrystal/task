@@ -89,9 +89,6 @@ jobs:
       #    自動的に全撮影へ安全側フォールバックする)
       # wait: 比較完了まで待ち、結果を終了コードで返す
       #   passed=0 / changes_detected=1 / failed=2
-      #
-      # 差分検出 (終了コード 1) でこのジョブを落としたくない場合は、
-      # wait を false にするか、このステップに `continue-on-error: true` を付ける。
       # branch と commit は vrt-actions が PR の head 情報を優先して解決する。
       - name: Upload to VRT
         uses: koyori-app/vrt-actions@ca529f2000f543930dda075f0a7501eeb56d1a1e # main @ 2026-08-26
@@ -104,14 +101,23 @@ jobs:
           only-changed: true
           stats-json: apps/frontend/storybook-static/preview-stats.json
           wait: true
-          # main では差分ありを緑にし、PR では赤のままにする。
-          # main へ入った差分は承認待ちであって壊れてはいないので、
-          # チェック一覧の赤を本物の失敗だけに絞る。
-          # ブランチ名の照合は PR ビルドには効かない (PR で照合される名前は
-          # PR を出した側が名乗った値なので、`main` と名付けた PR まで緑に
-          # なってしまう)。この除外は上で pin した vrt-actions 側にある。
-          # 壊れたビルド (failed / rejected) はこの設定でも赤のまま。
-          exit-zero-on-changes: main
+          # 差分あり (changes_detected) はこのジョブを赤にしない。
+          # このジョブが表すのは「撮影と比較が問題なく走ったか」で、
+          # 壊れたビルド (failed / rejected) は従来どおり赤のまま
+          # (この設定は終了コード 2 には効かない)。
+          #
+          # 差分は人の承認待ちであって壊れてはいない。その通知は VRT 側の
+          # commit status (context `vrt`) が 🟡 pending
+          # 「N changes detected, awaiting review」で出し、PR コメントにも
+          # レビュー UI へのリンクが載る——Actions の赤を本物の失敗だけに
+          # 絞ることで、赤が常態化して本物の失敗を見落とすのを避ける。
+          #
+          # 「差分が残っているうちはマージさせない」まで求めるなら、
+          # GitHub の ruleset で `vrt` を required status check にする
+          # (承認すると status は 🟢 success に変わるので、そのまま門になる)。
+          # 現状 main には branch protection / ruleset を掛けていないので、
+          # この設定でゲートが緩むことはない。
+          exit-zero-on-changes: true
           # 既定値 latest だと将来の CLI Release 公開で挙動が変わりうるため、
           # 動作確認済みのバージョンに固定する。更新は Action SHA と同様に明示的な PR で行う。
           cli-version: cli-v0.1.2
