@@ -40,7 +40,11 @@ type MockState = {
   patchMessage?: string;
   /** ラウンドを出した人（取り下げを出してよいかの判定に使う） */
   roundReviewerId?: string;
+  /** これまでのラウンド数（0 = 未レビュー） */
+  rounds?: number;
 };
+
+const REVIEWED_HEAD = '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e';
 
 const jsonResponse = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -65,13 +69,13 @@ function stubFetch(state: MockState) {
       return jsonResponse([
         {
           pr_number: 618,
-          rounds: 1,
+          rounds: state.rounds ?? 1,
           pr_title: 'feat: レビュー指摘管理',
           pr_author: 'yupix',
           unresolved: state.findings.filter((f) => f.state === 'open' || f.state === 'fixed')
             .length,
           blocking,
-          mergeable: blocking === 0,
+          mergeable: (state.rounds ?? 1) > 0 && blocking === 0,
           last_reviewed_at: '2026-08-26T00:00:00Z',
         },
       ]);
@@ -84,16 +88,18 @@ function stubFetch(state: MockState) {
             (f.severity === 'high' || f.severity === 'medium') &&
             (f.state === 'open' || f.state === 'fixed'),
         ).length;
+      const rounds = state.rounds ?? 1;
       return jsonResponse({
         pr_number: 618,
-        rounds: 1,
+        rounds,
         counts: state.findings.map((f) => ({
           severity: f.severity,
           state: f.state,
           count: 1,
         })),
         blocking,
-        mergeable: blocking === 0,
+        latest_head_sha: rounds > 0 ? REVIEWED_HEAD : null,
+        mergeable: rounds > 0 && blocking === 0,
       });
     }
     if (req.method === 'GET' && pathname.endsWith('/reviews')) {
@@ -256,6 +262,25 @@ describe('ReviewFindingsView', () => {
     await flushPromises();
 
     expect(bodyButton('指摘を取り下げる')?.disabled).toBe(false);
+  });
+
+  it('未レビューの PR は「マージ可」と言わない', async () => {
+    stubFetch({ findings: [], rounds: 0 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const gate = wrapper.get('[data-testid="merge-gate"]').text();
+    expect(gate).toContain('未レビュー');
+    expect(gate).not.toContain('マージ可');
+  });
+
+  it('レビュー済みならレビューした commit を出す（鮮度を目で確かめられる）', async () => {
+    stubFetch({ findings: [] });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('マージ可');
+    expect(wrapper.text()).toContain(REVIEWED_HEAD.slice(0, 7));
   });
 
   it('verified の指摘には操作ボタンを出さない（終端）', async () => {

@@ -29,6 +29,7 @@ import {
   STATE_LABELS,
   findingActions,
   findingLocation,
+  mergeVerdict,
   sortFindings,
   summaryRows,
   type FindingSeverity,
@@ -246,15 +247,9 @@ async function onRoundCreated() {
                 "
               />
               <div class="flex flex-col">
-                <span class="text-sm font-medium">
-                  {{ summary.mergeable ? 'マージ可' : `マージ不可（${summary.blocking} 件）` }}
-                </span>
+                <span class="text-sm font-medium">{{ mergeVerdict(summary).title }}</span>
                 <span class="text-muted-foreground text-xs">
-                  {{
-                    summary.mergeable
-                      ? 'High / Medium の未解決はありません'
-                      : 'High / Medium が未解決です。Low / Nit は繰り延べできます'
-                  }}
+                  {{ mergeVerdict(summary).detail }}
                 </span>
               </div>
               <div class="ml-auto flex flex-wrap justify-end gap-1">

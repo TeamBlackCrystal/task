@@ -737,10 +737,15 @@ pub async fn round_count<C: ConnectionTrait>(
 /// （PR ごとにクエリを出すと件数に比例して往復が増える）。
 pub async fn reviewed_pull_requests<C: ConnectionTrait>(
     db: &C,
+    repo: &RepoRef,
     project_id: Uuid,
 ) -> Result<Vec<ReviewedPullRequest>, sea_orm::DbErr> {
+    // 現在の連携先のラウンドだけを見る。連携を差し替えた後に旧リポジトリの
+    // PR が一覧へ混ざらないようにする（仕様 §3）
     let rounds = reviews::Entity::find()
         .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
         .order_by_asc(reviews::Column::PrNumber)
         .order_by_asc(reviews::Column::Round)
         .all(db)
@@ -807,6 +812,8 @@ pub async fn reviewed_pull_requests<C: ConnectionTrait>(
     let mut out: Vec<ReviewedPullRequest> = by_pr
         .into_values()
         .map(|mut pr| {
+            // ラウンドが 1 件以上あるものだけを畳んでいるので、ここは件数だけ見てよい
+            // （レビューの無い PR はそもそも一覧に出ない。仕様 §5）
             pr.mergeable = pr.blocking == 0;
             pr
         })

@@ -457,7 +457,12 @@ pub async fn list_reviewed_pull_requests(
 ) -> Result<Json<Vec<ReviewedPullRequest>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
     Ok(Json(
-        service::reviews::reviewed_pull_requests(&state.db, project_id).await?,
+        service::reviews::reviewed_pull_requests(
+            &state.db,
+            &service::reviews::current_repo(&state.db, project_id).await?,
+            project_id,
+        )
+        .await?,
     ))
 }
 

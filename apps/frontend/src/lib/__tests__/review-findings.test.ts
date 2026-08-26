@@ -11,6 +11,7 @@ import {
   requiresFindingAuthor,
   requiresReviewerSide,
   sortFindings,
+  mergeVerdict,
   summaryRows,
   type FindingSeverity,
   type FindingState,
@@ -168,12 +169,39 @@ describe('マージ判定の材料', () => {
   });
 });
 
+describe('mergeVerdict', () => {
+  const summary = (over: Partial<Parameters<typeof mergeVerdict>[0]>) =>
+    mergeVerdict({
+      pr_number: 618,
+      rounds: 1,
+      counts: [],
+      blocking: 0,
+      latest_head_sha: '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e',
+      mergeable: true,
+      ...over,
+    });
+
+  it('レビューが 1 件も無い PR は「可」と言わない', () => {
+    const verdict = summary({ rounds: 0, latest_head_sha: null, mergeable: false });
+    expect(verdict.title).toBe('未レビュー');
+    expect(verdict.detail).toContain('まだレビューされていません');
+  });
+
+  it('レビュー済みならレビューした commit を添える', () => {
+    expect(summary({}).title).toBe('マージ可');
+    expect(summary({}).detail).toContain('60cdd77');
+    expect(summary({ blocking: 2, mergeable: false }).title).toBe('マージ不可（2 件）');
+    expect(summary({ blocking: 2, mergeable: false }).detail).toContain('60cdd77');
+  });
+});
+
 describe('summaryRows', () => {
   it('件数 0 の組み合わせは出さず、重大度 → 状態の順に並べる', () => {
     const rows = summaryRows({
       pr_number: 618,
       rounds: 2,
       blocking: 2,
+      latest_head_sha: null,
       mergeable: false,
       counts: [
         { severity: 'low', state: 'deferred', count: 3 },

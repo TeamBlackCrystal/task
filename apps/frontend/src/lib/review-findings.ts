@@ -124,6 +124,37 @@ export function findingActions(
   });
 }
 
+/**
+ * マージ可否の見出しと説明。
+ *
+ * 「レビューが 1 件も無い」と「レビュー済みで指摘なし」は別物なので出し分ける
+ * （backend も未レビューの PR を mergeable にしない）。レビューした commit は
+ * 出しておく——手元の HEAD と見比べれば、レビュー後に積まれたコミットに気づける。
+ */
+export function mergeVerdict(summary: ReviewSummary): { title: string; detail: string } {
+  if (summary.rounds === 0) {
+    return {
+      title: '未レビュー',
+      detail: 'まだレビューされていません。レビューを 1 ラウンド出してください',
+    };
+  }
+  const reviewed = summary.latest_head_sha
+    ? `最新ラウンドは ${summary.latest_head_sha.slice(0, 7)} を見ています`
+    : '';
+  if (!summary.mergeable) {
+    return {
+      title: `マージ不可（${summary.blocking} 件）`,
+      detail: ['High / Medium が未解決です。Low / Nit は繰り延べできます', reviewed]
+        .filter(Boolean)
+        .join(' · '),
+    };
+  }
+  return {
+    title: 'マージ可',
+    detail: ['High / Medium の未解決はありません', reviewed].filter(Boolean).join(' · '),
+  };
+}
+
 /** 指摘の位置（`file:line`）。位置情報が無ければ null。 */
 export function findingLocation(finding: ReviewFinding): string | null {
   if (!finding.file) return null;
