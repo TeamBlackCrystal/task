@@ -335,6 +335,7 @@ describe("review commands", () => {
         counts: [],
         blocking: 0,
         latest_head_sha: REVIEWED_HEAD,
+        repository: "acme/app",
         mergeable: true,
       },
       response: { status: 200 },
@@ -349,6 +350,7 @@ describe("review commands", () => {
         counts: [{ severity: "high", state: "open", count: 1 }],
         blocking: 1,
         latest_head_sha: REVIEWED_HEAD,
+        repository: "acme/app",
         mergeable: false,
       },
       response: { status: 200 },
@@ -356,6 +358,29 @@ describe("review commands", () => {
     await runSummary(["--head", REVIEWED_HEAD]);
     // マージ前確認に使えるよう、未解決が残っていれば失敗として終わる
     expect(process.exitCode).toBe(1);
+  });
+
+  it("summary は連携の無いプロジェクトを既定で通さない", async () => {
+    mocks.GET.mockResolvedValue({
+      data: {
+        pr_number: 618,
+        rounds: 1,
+        counts: [],
+        blocking: 0,
+        latest_head_sha: REVIEWED_HEAD,
+        repository: null,
+        mergeable: true,
+      },
+      response: { status: 200 },
+    });
+    await runSummary(["--head", REVIEWED_HEAD]);
+    // 連携を外すと集計の視界が空になり、空のラウンド 1 本で「可」を作れてしまう
+    expect(process.exitCode).toBe(1);
+
+    // 明示的に外したときだけ通す
+    process.exitCode = undefined;
+    await runSummary(["--head", REVIEWED_HEAD, "--allow-unlinked"]);
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("summary はレビューされていない PR を通さない", async () => {
@@ -366,6 +391,7 @@ describe("review commands", () => {
         counts: [],
         blocking: 0,
         latest_head_sha: null,
+        repository: "acme/app",
         mergeable: false,
       },
       response: { status: 200 },
@@ -382,6 +408,7 @@ describe("review commands", () => {
         counts: [],
         blocking: 0,
         latest_head_sha: REVIEWED_HEAD,
+        repository: "acme/app",
         mergeable: true,
       },
       response: { status: 200 },

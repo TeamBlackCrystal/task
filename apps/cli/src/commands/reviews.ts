@@ -43,6 +43,7 @@ type SummaryOptions = OutputOptions & {
   head?: string;
   /** commander が `--no-head-check` から作る（既定は true） */
   headCheck?: boolean;
+  allowUnlinked?: boolean;
 };
 
 function parsePrNumber(raw: string | undefined): number {
@@ -216,7 +217,13 @@ function gateFailure(
   summary: ReviewSummary,
   head: string | null,
   checkHead: boolean,
+  allowUnlinked: boolean,
 ): string | null {
+  // 集計の視界は現在の連携先で決まる。連携が無いと視界が空になり、空のラウンド
+  // 1 本で「レビュー済み・指摘なし」を作れてしまうので、確定しない集計は通さない
+  if (!summary.repository && !allowUnlinked) {
+    return "this project has no GitHub integration, so the reviewed repository is unknown (pass --allow-unlinked to skip)";
+  }
   if (summary.rounds === 0) {
     return "this pull request has not been reviewed yet (no rounds)";
   }
@@ -386,6 +393,10 @@ export function registerReviewCommands(program: Command): void {
       "Commit to compare with the reviewed HEAD (default: git rev-parse HEAD)",
     )
     .option("--no-head-check", "Do not compare the reviewed HEAD with the working tree")
+    .option(
+      "--allow-unlinked",
+      "Accept a summary from a project without a GitHub integration",
+    )
     .action(async (opts: SummaryOptions, cmd) => {
       const output = getOutputOptions(cmd);
       const pr = parsePrNumber(opts.pr);
@@ -403,7 +414,7 @@ export function registerReviewCommands(program: Command): void {
       const summary = unwrapApiResult(result);
       const checkHead = opts.headCheck !== false;
       const head = checkHead ? resolveHead(opts.head) : null;
-      const failure = gateFailure(summary, head, checkHead);
+      const failure = gateFailure(summary, head, checkHead, opts.allowUnlinked === true);
 
       if (output.json) {
         print({ ...summary, head, blocked_reason: failure }, output);
