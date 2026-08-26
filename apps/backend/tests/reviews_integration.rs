@@ -421,6 +421,57 @@ async fn deferring_creates_a_task_and_reverting_closes_it() {
     fx.app.cleanup_user(fx.developer.id).await;
 }
 
+/// 同じ PR へ同時にラウンドを確定しても `round` は重複しない。
+///
+/// 採番から挿入までをプロジェクト行のロックで直列化し、
+/// `UNIQUE (project_id, pr_number, round)` を最後の防波堤に置いている（仕様 §3）。
+/// 番号が重なると R1, R2, … と「どの head を見た判断か」の対応が崩れる。
+#[tokio::test]
+async fn concurrent_rounds_on_the_same_pr_get_distinct_numbers() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let path = fx.reviews_path();
+    let body = |i: i32| {
+        serde_json::json!({
+            "pr_number": 709,
+            "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+            "summary": format!("同時に確定したレビュー {i}"),
+            "findings": [],
+        })
+    };
+    // 5 本を同時に投げる（依存を増やさないよう join! で並べる）
+    let responses = tokio::join!(
+        fx.app.post_json_with_session(&path, body(1)),
+        fx.app.post_json_with_session(&path, body(2)),
+        fx.app.post_json_with_session(&path, body(3)),
+        fx.app.post_json_with_session(&path, body(4)),
+        fx.app.post_json_with_session(&path, body(5)),
+    );
+    let responses = [
+        responses.0,
+        responses.1,
+        responses.2,
+        responses.3,
+        responses.4,
+    ];
+
+    let mut rounds = Vec::new();
+    for res in responses {
+        assert_eq!(res.status(), StatusCode::CREATED, "同時でも起票は成功する");
+        rounds.push(json(res).await["round"].as_i64().expect("round"));
+    }
+    rounds.sort_unstable();
+    assert_eq!(
+        rounds,
+        vec![1, 2, 3, 4, 5],
+        "round が重複しない: {rounds:?}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
 /// マージ前必須の重大度は繰り延べられない。
 ///
 /// 繰り延べはマージ可否の集計から外れるので、High / Medium に許すと
