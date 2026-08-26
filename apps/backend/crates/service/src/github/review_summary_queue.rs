@@ -62,12 +62,15 @@ static RELEASE_SUMMARY_LOCK_SCRIPT: LazyLock<redis::Script> = LazyLock::new(|| {
     )
 });
 
-fn pending_key(project_id: Uuid, pr_number: i32) -> String {
-    format!("{KEY_SUMMARY_PENDING}{project_id}:{pr_number}")
+/// 鍵の単位は (project, リポジトリ, pr)。連携先は差し替えられるので、リポジトリを
+/// 外すと別リポジトリの同番 PR の更新まで一緒に合流させてしまう（仕様 §7）。
+/// 連携の無いプロジェクトでは `repo` は空文字。
+fn pending_key(project_id: Uuid, repo: &str, pr_number: i32) -> String {
+    format!("{KEY_SUMMARY_PENDING}{project_id}:{repo}:{pr_number}")
 }
 
-fn lock_key(project_id: Uuid, pr_number: i32) -> String {
-    format!("{KEY_SUMMARY_LOCK}{project_id}:{pr_number}")
+fn lock_key(project_id: Uuid, repo: &str, pr_number: i32) -> String {
+    format!("{KEY_SUMMARY_LOCK}{project_id}:{repo}:{pr_number}")
 }
 
 /// 更新待ちフラグを立てる（`SET key 1 NX EX SUMMARY_PENDING_TTL_SECS`）。
@@ -81,6 +84,7 @@ fn lock_key(project_id: Uuid, pr_number: i32) -> String {
 pub async fn try_mark_pending(
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
 ) -> Result<bool, anyhow::Error> {
     let mut conn = redis
@@ -90,7 +94,7 @@ pub async fn try_mark_pending(
         .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
 
     let marked: Option<String> = redis::cmd("SET")
-        .arg(pending_key(project_id, pr_number))
+        .arg(pending_key(project_id, repo, pr_number))
         .arg("1")
         .arg("NX")
         .arg("EX")
@@ -113,6 +117,7 @@ pub async fn try_mark_pending(
 pub async fn clear_pending(
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
 ) -> Result<(), anyhow::Error> {
     let mut conn = redis
@@ -122,7 +127,7 @@ pub async fn clear_pending(
         .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
 
     redis::cmd("DEL")
-        .arg(pending_key(project_id, pr_number))
+        .arg(pending_key(project_id, repo, pr_number))
         .query_async::<()>(&mut conn)
         .await
         .map_err(|e| anyhow::anyhow!("redis DEL review summary pending: {e}"))?;
@@ -142,6 +147,7 @@ pub async fn clear_pending(
 pub async fn try_acquire_update_lock(
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
 ) -> Result<Option<String>, anyhow::Error> {
     let mut conn = redis
@@ -152,7 +158,7 @@ pub async fn try_acquire_update_lock(
 
     let token = Uuid::new_v4().to_string();
     let acquired: Option<String> = redis::cmd("SET")
-        .arg(lock_key(project_id, pr_number))
+        .arg(lock_key(project_id, repo, pr_number))
         .arg(&token)
         .arg("NX")
         .arg("EX")
@@ -174,6 +180,7 @@ pub async fn try_acquire_update_lock(
 pub async fn release_update_lock(
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
     token: &str,
 ) -> Result<bool, anyhow::Error> {
@@ -184,7 +191,7 @@ pub async fn release_update_lock(
         .map_err(|e| anyhow::anyhow!("redis acquire: {e}"))?;
 
     let deleted: i32 = RELEASE_SUMMARY_LOCK_SCRIPT
-        .key(lock_key(project_id, pr_number))
+        .key(lock_key(project_id, repo, pr_number))
         .arg(token)
         .invoke_async(&mut conn)
         .await
@@ -203,6 +210,7 @@ pub async fn release_update_lock(
 pub async fn remaining_ttl_secs(
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
 ) -> Result<(i64, i64), anyhow::Error> {
     let mut conn = redis
@@ -219,8 +227,8 @@ pub async fn remaining_ttl_secs(
             .map_err(|e| anyhow::anyhow!("redis TTL: {e}"))
     };
 
-    let pending = ttl_of(pending_key(project_id, pr_number)).await?;
-    let lock = ttl_of(lock_key(project_id, pr_number)).await?;
+    let pending = ttl_of(pending_key(project_id, repo, pr_number)).await?;
+    let lock = ttl_of(lock_key(project_id, repo, pr_number)).await?;
     Ok((pending, lock))
 }
 
@@ -233,10 +241,24 @@ mod tests {
     fn keys_are_scoped_to_the_pull_request() {
         let project_id = Uuid::new_v4();
         for key in [pending_key, lock_key] {
-            assert_ne!(key(project_id, 618), key(project_id, 619));
-            assert_ne!(key(project_id, 618), key(Uuid::new_v4(), 618));
+            assert_ne!(
+                key(project_id, "acme/app", 618),
+                key(project_id, "acme/app", 619)
+            );
+            assert_ne!(
+                key(project_id, "acme/app", 618),
+                key(Uuid::new_v4(), "acme/app", 618)
+            );
+            // 連携先を差し替えたら別の鍵（旧リポジトリの更新と合流させない）
+            assert_ne!(
+                key(project_id, "acme/app", 618),
+                key(project_id, "acme/other", 618)
+            );
         }
         // 「更新待ち」と「実行中」は別のキー空間（片方が他方を消さない）
-        assert_ne!(pending_key(project_id, 618), lock_key(project_id, 618));
+        assert_ne!(
+            pending_key(project_id, "acme/app", 618),
+            lock_key(project_id, "acme/app", 618)
+        );
     }
 }

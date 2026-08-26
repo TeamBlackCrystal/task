@@ -730,16 +730,15 @@ pub struct SummarySnapshot {
 pub async fn summary_snapshot<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
     findings_url: Option<String>,
 ) -> Result<SummarySnapshot, sea_orm::DbErr> {
-    let counts = severity_state_counts(db, project_id, pr_number).await?;
+    let counts = severity_state_counts(db, project_id, repo, pr_number).await?;
     let blocking = blocking_count(&counts);
-    let rounds = round_count(db, project_id, pr_number).await?;
+    let rounds = round_count(db, project_id, repo, pr_number).await?;
 
-    let latest = reviews::Entity::find()
-        .filter(reviews::Column::ProjectId.eq(project_id))
-        .filter(reviews::Column::PrNumber.eq(pr_number))
+    let latest = scoped_rounds(project_id, repo, pr_number)
         .order_by_desc(reviews::Column::Round)
         .one(db)
         .await?;
@@ -766,7 +765,8 @@ pub fn render_summary_comment(snapshot: &SummarySnapshot, updated_at: &str) -> S
     let _ = writeln!(out, "## レビュー指摘");
     let _ = writeln!(out);
 
-    if snapshot.blocking == 0 {
+    // 集計 API と同じ規則（レビューが 1 件も無い PR を「可」にしない）
+    if snapshot.blocking == 0 && snapshot.rounds > 0 {
         let _ = writeln!(out, "**マージ可** — High / Medium の未解決はありません。");
     } else {
         let _ = writeln!(
@@ -835,6 +835,7 @@ pub fn render_summary_comment(snapshot: &SummarySnapshot, updated_at: &str) -> S
 pub async fn cache_pr_meta<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
     title: &str,
     author: Option<&str>,
@@ -843,6 +844,8 @@ pub async fn cache_pr_meta<C: ConnectionTrait>(
         .col_expr(reviews::Column::PrTitle, Expr::value(Some(title)))
         .col_expr(reviews::Column::PrAuthor, Expr::value(author))
         .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
         .filter(reviews::Column::PrNumber.eq(pr_number))
         .exec(db)
         .await?;
@@ -1014,6 +1017,19 @@ mod tests {
         );
         assert!(clean.contains("マージ可"));
         assert!(!clean.contains("マージ不可"));
+
+        // レビューが 1 件も無ければ「可」と書かない（集計 API と同じ規則）
+        let unreviewed = render_summary_comment(
+            &SummarySnapshot {
+                rounds: 0,
+                ..snapshot(vec![])
+            },
+            "2026-08-26 10:00",
+        );
+        assert!(
+            !unreviewed.contains("マージ可"),
+            "未レビューを可と書かない: {unreviewed}"
+        );
 
         // 同じ入力なら同じ本文（毎回の更新で差分が出ると通知が無駄に飛ぶ）
         let again = render_summary_comment(

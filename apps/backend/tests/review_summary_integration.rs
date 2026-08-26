@@ -16,6 +16,8 @@ const REPO_OWNER: &str = "acme";
 const REPO_NAME: &str = "backend";
 const PR_NUMBER: i32 = 618;
 const COMMENT_ID: i64 = 4242;
+/// 鍵の単位に使うリポジトリ（連携先を差し替えると別の鍵になる）
+const REPO_KEY: &str = "acme/backend";
 
 fn unique_installation_id() -> i64 {
     // 同じ DB を共有する他テストと衝突しない範囲で散らす
@@ -356,6 +358,7 @@ async fn consecutive_transitions_coalesce_into_one_summary_update() {
         !service::github::review_summary_queue::try_mark_pending(
             &app.state.redis_client,
             tp.project_id,
+            REPO_KEY,
             PR_NUMBER
         )
         .await
@@ -398,6 +401,7 @@ async fn consecutive_transitions_coalesce_into_one_summary_update() {
         service::github::review_summary_queue::try_mark_pending(
             &app.state.redis_client,
             tp.project_id,
+            REPO_KEY,
             PR_NUMBER
         )
         .await
@@ -421,17 +425,17 @@ async fn the_pending_flag_and_lock_expire_and_release_is_owner_checked() {
     let pr = 618;
 
     assert!(
-        queue::try_mark_pending(redis, project_id, pr)
+        queue::try_mark_pending(redis, project_id, REPO_KEY, pr)
             .await
             .expect("mark pending")
     );
-    let token = queue::try_acquire_update_lock(redis, project_id, pr)
+    let token = queue::try_acquire_update_lock(redis, project_id, REPO_KEY, pr)
         .await
         .expect("acquire lock")
         .expect("空いていれば取れる");
 
     // ワーカーが落ちても、どちらの目印も期限で必ず明ける
-    let (pending_ttl, lock_ttl) = queue::remaining_ttl_secs(redis, project_id, pr)
+    let (pending_ttl, lock_ttl) = queue::remaining_ttl_secs(redis, project_id, REPO_KEY, pr)
         .await
         .expect("ttl");
     assert!(
@@ -445,7 +449,7 @@ async fn the_pending_flag_and_lock_expire_and_release_is_owner_checked() {
 
     // 保持中は取れない
     assert!(
-        queue::try_acquire_update_lock(redis, project_id, pr)
+        queue::try_acquire_update_lock(redis, project_id, REPO_KEY, pr)
             .await
             .expect("acquire lock")
             .is_none(),
@@ -454,43 +458,43 @@ async fn the_pending_flag_and_lock_expire_and_release_is_owner_checked() {
 
     // 期限切れで別のジョブが取り直した状況を作る
     assert!(
-        queue::release_update_lock(redis, project_id, pr, &token)
+        queue::release_update_lock(redis, project_id, REPO_KEY, pr, &token)
             .await
             .expect("release lock")
     );
-    let newer = queue::try_acquire_update_lock(redis, project_id, pr)
+    let newer = queue::try_acquire_update_lock(redis, project_id, REPO_KEY, pr)
         .await
         .expect("acquire lock")
         .expect("解放後は取り直せる");
 
     // 遅れて完走した古いジョブは、取り直されたロックを解放しない
     assert!(
-        !queue::release_update_lock(redis, project_id, pr, &token)
+        !queue::release_update_lock(redis, project_id, REPO_KEY, pr, &token)
             .await
             .expect("release lock"),
         "古いトークンでは解放できない"
     );
     assert!(
-        queue::try_acquire_update_lock(redis, project_id, pr)
+        queue::try_acquire_update_lock(redis, project_id, REPO_KEY, pr)
             .await
             .expect("acquire lock")
             .is_none(),
         "取り直したロックはそのまま残る"
     );
 
-    queue::release_update_lock(redis, project_id, pr, &newer)
+    queue::release_update_lock(redis, project_id, REPO_KEY, pr, &newer)
         .await
         .expect("release lock");
-    queue::clear_pending(redis, project_id, pr)
+    queue::clear_pending(redis, project_id, REPO_KEY, pr)
         .await
         .expect("clear pending");
     assert!(
-        queue::try_mark_pending(redis, project_id, pr)
+        queue::try_mark_pending(redis, project_id, REPO_KEY, pr)
             .await
             .expect("mark pending"),
         "印を落とせば次の更新をまた積める"
     );
-    queue::clear_pending(redis, project_id, pr)
+    queue::clear_pending(redis, project_id, REPO_KEY, pr)
         .await
         .expect("clear pending");
 }
@@ -539,6 +543,7 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
     let held = service::github::review_summary_queue::try_acquire_update_lock(
         &app.state.redis_client,
         tp.project_id,
+        REPO_KEY,
         PR_NUMBER,
     )
     .await
@@ -566,6 +571,7 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
         !service::github::review_summary_queue::try_mark_pending(
             &app.state.redis_client,
             tp.project_id,
+            REPO_KEY,
             PR_NUMBER
         )
         .await
@@ -577,6 +583,7 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
     service::github::review_summary_queue::release_update_lock(
         &app.state.redis_client,
         tp.project_id,
+        REPO_KEY,
         PR_NUMBER,
         &held,
     )

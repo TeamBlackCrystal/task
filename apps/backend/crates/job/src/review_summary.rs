@@ -103,10 +103,13 @@ pub async fn enqueue_best_effort(
     storage: &ReviewSummaryStorage,
     redis: &RedisConnection,
     project_id: Uuid,
+    repo: &str,
     pr_number: i32,
 ) {
-    match service::github::review_summary_queue::try_mark_pending(redis, project_id, pr_number)
-        .await
+    match service::github::review_summary_queue::try_mark_pending(
+        redis, project_id, repo, pr_number,
+    )
+    .await
     {
         Ok(false) => {
             // 既に積まれているジョブが、実行時に最新状態を読み直して反映する
@@ -131,7 +134,8 @@ pub async fn enqueue_best_effort(
         tracing::warn!(error = %e, %project_id, pr_number, "enqueue review summary failed");
         // 積めなかったフラグを残すと、TTL のあいだ以降の更新まで合流で捨てられる
         if let Err(e) =
-            service::github::review_summary_queue::clear_pending(redis, project_id, pr_number).await
+            service::github::review_summary_queue::clear_pending(redis, project_id, repo, pr_number)
+                .await
         {
             tracing::warn!(error = %e, %project_id, pr_number, "clear review summary pending failed");
         }
@@ -139,12 +143,19 @@ pub async fn enqueue_best_effort(
 }
 
 pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(), BoxDynError> {
+    // 投稿先も鍵の単位も「現在の連携先リポジトリ」で決める。ラウンドはどのリポジトリの
+    // PR を見たかを控えているので、連携を差し替えた後は旧リポジトリのラウンドが
+    // この範囲から外れ、旧リポジトリ向けの指摘を新リポジトリへ書き込むことがない（仕様 §7）
+    let repo = service::reviews::current_repo(&state.db, job.project_id).await?;
+    let repo_key = format!("{}/{}", repo.owner, repo.name);
+
     // 同じ PR を更新中のジョブがいる間は投稿しない。並行して走ると、先に古い
     // 状態を読んだ側の書き込みが後から着き、コメントが巻き戻ったまま次の遷移まで
     // 直らない
     let Some(token) = service::github::review_summary_queue::try_acquire_update_lock(
         &state.redis_client,
         job.project_id,
+        &repo_key,
         job.pr_number,
     )
     .await?
@@ -158,11 +169,12 @@ pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(),
         return Err("review summary update is already running".into());
     };
 
-    let result = update_summary(&job, &state).await;
+    let result = update_summary(&job, &state, &repo, &repo_key).await;
 
     if let Err(e) = service::github::review_summary_queue::release_update_lock(
         &state.redis_client,
         job.project_id,
+        &repo_key,
         job.pr_number,
         &token,
     )
@@ -176,13 +188,19 @@ pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(),
 }
 
 /// ロックを取った状態で、最新の集計を読んでコメントへ反映する。
-async fn update_summary(job: &ReviewSummaryJob, state: &JobState) -> Result<(), BoxDynError> {
+async fn update_summary(
+    job: &ReviewSummaryJob,
+    state: &JobState,
+    repo: &service::reviews::RepoRef,
+    repo_key: &str,
+) -> Result<(), BoxDynError> {
     // 状態を読む前に落とす。順序を逆にすると、読んだ後・落とす前の遷移が
     // 合流で捨てられて要約に出ない。先に落として取りこぼす側は
     // ジョブが 1 本余計に積まれるだけで済む
     if let Err(e) = service::github::review_summary_queue::clear_pending(
         &state.redis_client,
         job.project_id,
+        repo_key,
         job.pr_number,
     )
     .await
@@ -227,6 +245,7 @@ async fn update_summary(job: &ReviewSummaryJob, state: &JobState) -> Result<(), 
             service::reviews::cache_pr_meta(
                 &state.db,
                 job.project_id,
+                repo,
                 job.pr_number,
                 &meta.title,
                 meta.user.as_ref().map(|u| u.login.as_str()),
@@ -251,9 +270,25 @@ async fn update_summary(job: &ReviewSummaryJob, state: &JobState) -> Result<(), 
         )
     });
 
-    let snapshot =
-        service::reviews::summary_snapshot(&state.db, job.project_id, job.pr_number, findings_url)
-            .await?;
+    let snapshot = service::reviews::summary_snapshot(
+        &state.db,
+        job.project_id,
+        repo,
+        job.pr_number,
+        findings_url,
+    )
+    .await?;
+    // 現在の連携先で出したラウンドが 1 件も無ければ書かない。連携を差し替えた直後の
+    // PR がこれに当たる（旧リポジトリのラウンドはこの範囲に入らない。仕様 §7）
+    if snapshot.rounds == 0 {
+        tracing::debug!(
+            project_id = %job.project_id,
+            pr = job.pr_number,
+            "no round for the linked repository; skipping review summary"
+        );
+        return Ok(());
+    }
+
     let updated_at = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     let body = service::reviews::render_summary_comment(&snapshot, &updated_at);
 
