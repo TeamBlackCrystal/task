@@ -202,12 +202,17 @@ open ──→ fixed ──→ verified        （修正宣言 → レビュー�
 | `POST /v1/tenants/{t}/projects/{p}/reviews` | ラウンド + 指摘の**一括作成**（1 リクエスト）。成功後に GitHub 要約更新をジョブ投入 |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews?pr=618` | ラウンドの一覧（指摘の件数つき） |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews/{id}` | ラウンドの詳細（指摘含む） |
-| `PATCH /v1/tenants/{t}/projects/{p}/review-findings/{id}` | 状態遷移（`state` と任意のコメント） |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews/summary?pr=618` | PR 単位の集計: 重大度 × 状態の件数、ラウンド数、最新ラウンドの `head_sha`、集計対象のリポジトリ、オーナー代行での棄却件数、「マージ可否」 |
+| `GET  /v1/tenants/{t}/projects/{p}/review-findings?pr=618&state=&severity=` | PR の指摘一覧（状態・重大度で絞り込み）。CLI の `review list` と UI の一覧が使う |
+| `PATCH /v1/tenants/{t}/projects/{p}/review-findings/{id}` | 状態遷移（`state` と任意のコメント） |
 
 - PR 番号は**1 以上の整数**として検証する。実在確認まではしない（それは要約コメントの
   投稿時に判明する。投稿失敗は起票を巻き戻さない）
 - 状態遷移後も要約更新ジョブを投入する
+- 絞り込みクエリに未知の値が混ざっていたら 400。黙って無視すると「絞り込みが
+  効いていない」ことに気づけない
+- ラウンドの採番はプロジェクト行のロックで直列化する
+  （`UNIQUE (project_id, repo_owner, repo_name, pr_number, round)` が最終的な防波堤）
 - 読み取り（ラウンド一覧・指摘一覧・集計）は**既定で現在の連携先のラウンドだけ**を見る
   （§3）。過去の連携先や、連携を張る前に溜めたラウンドを読むために、
   **リポジトリを明示する絞り込みを用意する**。これが無いと「履歴として残る」と言いながら
@@ -505,6 +510,10 @@ task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプ�
   deferred は通常タスクへ自動変換
 - 2026-08-26: GitHub へは App（bot）名義の要約コメント 1 本のみ。インライン投稿は禁止
 - 2026-08-26: スコープは read:review / write:review を新設
+- 2026-08-26: 指摘一覧は `review-findings` を独立したパスに置く（CLI の `review list` と
+  UI の一覧が「ラウンド単位」ではなく「PR 単位」で引くため）
+- 2026-08-26: 差し戻し後も `fixed_by` を残す（差し戻した本人が同じ指摘を verified に
+  進めるのを防ぐ）
 - 2026-08-26: レビューの反復の呼称は「ラウンド」（表示は R1, R2, …）。「巡」表記は使わない
 - 2026-08-26: レビュワーは AI（PAT + CLI）と人間（セッション + Web UI）を同格に扱う。
   ラウンドは確定時一括作成・追記不可で、人間の下書きは UI 側の関心事（サーバーは持たない）

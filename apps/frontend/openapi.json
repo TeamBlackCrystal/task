@@ -344,7 +344,7 @@
       "get": {
         "tags": ["Admin Tenants"],
         "summary": "全テナント一覧（管理者）",
-        "operationId": "list_admin_tenants",
+        "operationId": "list_tenants",
         "responses": {
           "200": {
             "description": "テナント一覧",
@@ -435,7 +435,7 @@
       "get": {
         "tags": ["Admin Tenants"],
         "summary": "テナント詳細（管理者）",
-        "operationId": "get_admin_tenant",
+        "operationId": "get_tenant",
         "parameters": [
           {
             "name": "id",
@@ -536,7 +536,7 @@
       "delete": {
         "tags": ["Admin Tenants"],
         "summary": "テナント強制削除（管理者）",
-        "operationId": "delete_admin_tenant",
+        "operationId": "delete_tenant",
         "parameters": [
           {
             "name": "id",
@@ -1308,7 +1308,7 @@
       "delete": {
         "tags": ["Admin Users"],
         "summary": "パスキー強制削除",
-        "operationId": "delete_admin_user_passkey",
+        "operationId": "delete_passkey",
         "responses": {
           "204": {
             "description": "削除完了"
@@ -2110,97 +2110,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "ログインまたはセッションが必要です",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "この操作は許可されていません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": ["Auth"],
-        "summary": "自分のプロフィール更新",
-        "operationId": "update_me",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProfileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "更新後のアカウント情報",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "入力内容が制約を満たしていません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ServerError"
                 }
               }
             }
@@ -4359,15 +4268,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "code",
-            "in": "query",
-            "description": "インストール時のユーザー認可で GitHub が付ける認可コード。\nこれを交換して得たユーザーアクセストークンで、installation の所有者を確認する。",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
           }
         ],
         "responses": {
@@ -4399,80 +4299,6 @@
       }
     },
     "/v1/personal_tokens": {
-      "get": {
-        "tags": ["Personal Tokens"],
-        "summary": "自分のパーソナルアクセストークンの一覧",
-        "operationId": "list_personal_tokens",
-        "responses": {
-          "200": {
-            "description": "取り消し済みを除く、自分が発行したトークンの一覧",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PersonalTokenResponse"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "ログインまたはセッションが必要です",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "この操作は許可されていません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
       "post": {
         "tags": ["Personal Tokens"],
         "summary": "パーソナルアクセストークンを発行",
@@ -8857,120 +8683,6 @@
         }
       }
     },
-    "/v1/tenants/{tenant_id}/projects/{project_id}/github/connect": {
-      "post": {
-        "tags": ["GitHub"],
-        "summary": "選択したリポジトリを連携",
-        "operationId": "connect_github_repository",
-        "parameters": [
-          {
-            "name": "tenant_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GithubConnectRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "連携完了"
-          },
-          "401": {
-            "description": "ログインまたはセッションが必要です",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "この操作は許可されていません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "リソースが見つかりません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/tenants/{tenant_id}/projects/{project_id}/github/import": {
       "post": {
         "tags": ["GitHub"],
@@ -9337,125 +9049,6 @@
         "responses": {
           "204": {
             "description": "解除完了"
-          },
-          "401": {
-            "description": "ログインまたはセッションが必要です",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "この操作は許可されていません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "リソースが見つかりません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "API 共通のエラー応答ボディ。",
-                  "required": ["message"],
-                  "properties": {
-                    "message": {
-                      "type": "string",
-                      "example": "internal-error"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/tenants/{tenant_id}/projects/{project_id}/github/repositories": {
-      "get": {
-        "tags": ["GitHub"],
-        "summary": "選択トークンに紐づくリポジトリ一覧",
-        "operationId": "list_github_repositories",
-        "parameters": [
-          {
-            "name": "tenant_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "X-Github-Select-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GithubRepositoriesResponse"
-                }
-              }
-            }
           },
           "401": {
             "description": "ログインまたはセッションが必要です",
@@ -10259,7 +9852,7 @@
       "get": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバー一覧",
-        "operationId": "list_project_members",
+        "operationId": "list_members",
         "parameters": [
           {
             "name": "tenant_id",
@@ -10373,7 +9966,7 @@
       "post": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーを追加",
-        "operationId": "add_project_member",
+        "operationId": "add_member",
         "parameters": [
           {
             "name": "tenant_id",
@@ -10516,7 +10109,7 @@
       "put": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーの権限を変更",
-        "operationId": "update_project_member",
+        "operationId": "update_member",
         "parameters": [
           {
             "name": "tenant_id",
@@ -10657,7 +10250,7 @@
       "delete": {
         "tags": ["Project Members"],
         "summary": "プロジェクトメンバーを削除",
-        "operationId": "remove_project_member",
+        "operationId": "remove_member",
         "parameters": [
           {
             "name": "tenant_id",
@@ -11308,6 +10901,796 @@
         "responses": {
           "204": {
             "description": "削除しました（タスクの milestone_id は NULL リセット）"
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings": {
+      "get": {
+        "tags": ["Reviews"],
+        "summary": "PR の指摘一覧（状態・重大度で絞り込み）",
+        "operationId": "list_review_findings",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pr",
+            "in": "path",
+            "description": "対象 PR 番号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "state",
+            "in": "path",
+            "description": "状態での絞り込み（カンマ区切り。例: `open,fixed`）",
+            "required": true,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "severity",
+            "in": "path",
+            "description": "重大度での絞り込み（カンマ区切り。例: `high,medium`）",
+            "required": true,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "指摘一覧（ラウンド順）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FindingResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings/{id}": {
+      "patch": {
+        "tags": ["Reviews"],
+        "summary": "指摘の状態を進める",
+        "operationId": "update_review_finding_state",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "指摘ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFindingStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "更新後の指摘",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "現在の状態からは行えない遷移",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews": {
+      "get": {
+        "tags": ["Reviews"],
+        "summary": "PR のレビューラウンド一覧",
+        "operationId": "list_reviews",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pr",
+            "in": "path",
+            "description": "対象 PR 番号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ラウンド一覧（新しい順）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Reviews"],
+        "summary": "レビューラウンドを起票（指摘の一括作成）",
+        "operationId": "create_review",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "作成されたラウンドと指摘",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "同時起票でラウンド番号が衝突しました",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary": {
+      "get": {
+        "tags": ["Reviews"],
+        "summary": "PR 単位の集計（マージ可否）",
+        "operationId": "get_review_summary",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pr",
+            "in": "path",
+            "description": "対象 PR 番号",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "重大度 × 状態の件数とマージ可否",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSummaryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/{id}": {
+      "get": {
+        "tags": ["Reviews"],
+        "summary": "レビューラウンドの詳細（指摘つき）",
+        "operationId": "get_review",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ラウンドID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ラウンドと指摘",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDetailResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "ログインまたはセッションが必要です",
@@ -19195,6 +19578,28 @@
           }
         }
       },
+      "CreateFindingInput": {
+        "type": "object",
+        "required": ["severity", "title", "body"],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "file": {
+            "type": ["string", "null"]
+          },
+          "line": {
+            "type": ["integer", "null"],
+            "format": "int32"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/FindingSeverity"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "CreateFolderRequest": {
         "type": "object",
         "required": ["name", "parent_id"],
@@ -19351,6 +19756,33 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "CreateReviewRequest": {
+        "type": "object",
+        "description": "ラウンド 1 回ぶんの一括起票。ラウンドと指摘は同じトランザクションで作る。",
+        "required": ["pr_number", "head_sha"],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateFindingInput"
+            },
+            "description": "指摘。空配列も正当（「指摘なし」の記録）"
+          },
+          "head_sha": {
+            "type": "string",
+            "description": "レビューした commit。裏取りした head の記録として必須"
+          },
+          "pr_number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "対象 PR 番号"
+          },
+          "summary": {
+            "type": "string",
+            "description": "総評（markdown）"
           }
         }
       },
@@ -19728,18 +20160,124 @@
           }
         }
       },
-      "GithubConnectRequest": {
+      "FindingResponse": {
         "type": "object",
-        "required": ["select_token", "repo_owner", "repo_name"],
+        "required": [
+          "id",
+          "review_id",
+          "pr_number",
+          "round",
+          "severity",
+          "title",
+          "body",
+          "state",
+          "created_at",
+          "updated_at",
+          "transitions"
+        ],
         "properties": {
-          "repo_name": {
+          "body": {
             "type": "string"
           },
-          "repo_owner": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deferred_task_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "繰り延べ時に自動起票した通常タスク"
+          },
+          "file": {
+            "type": ["string", "null"]
+          },
+          "fixed_by": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "`fixed` を宣言した利用者。`verified` に進めてよいかの判定に使う"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "line": {
+            "type": ["integer", "null"],
+            "format": "int32"
+          },
+          "pr_number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "review_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "round": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/FindingSeverity"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FindingState"
+          },
+          "title": {
             "type": "string"
           },
-          "select_token": {
-            "type": "string"
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FindingTransitionResponse"
+            }
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FindingSeverity": {
+        "type": "string",
+        "description": "指摘の重大度。`High` / `Medium` はマージ前必須、`Low` / `Nit` は繰り延べ可。",
+        "enum": ["high", "medium", "low", "nit"]
+      },
+      "FindingState": {
+        "type": "string",
+        "description": "指摘の状態。\n\n遷移規則は `service::reviews::can_transition` を正とする。`Verified` は終端で、\n誤りだったと分かった場合は新しいラウンドで指摘を出し直す。",
+        "enum": ["open", "fixed", "verified", "deferred", "rejected"]
+      },
+      "FindingTransitionResponse": {
+        "type": "object",
+        "required": ["id", "actor", "to_state", "created_at"],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "from_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FindingState",
+                "description": "起票（登録）は `null`"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note": {
+            "type": ["string", "null"]
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/FindingState"
           }
         }
       },
@@ -19768,30 +20306,6 @@
           },
           "repo_owner": {
             "type": ["string", "null"]
-          }
-        }
-      },
-      "GithubRepositoriesResponse": {
-        "type": "object",
-        "required": ["repositories"],
-        "properties": {
-          "repositories": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GithubRepositoryItem"
-            }
-          }
-        }
-      },
-      "GithubRepositoryItem": {
-        "type": "object",
-        "required": ["owner", "name"],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "owner": {
-            "type": "string"
           }
         }
       },
@@ -20683,6 +21197,118 @@
           }
         }
       },
+      "ReviewDetailResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReviewResponse"
+          },
+          {
+            "type": "object",
+            "required": ["findings"],
+            "properties": {
+              "findings": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FindingResponse"
+                }
+              }
+            }
+          }
+        ],
+        "description": "ラウンドと、そのラウンドで出した指摘。"
+      },
+      "ReviewResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "pr_number",
+          "round",
+          "head_sha",
+          "reviewer",
+          "summary",
+          "created_at",
+          "finding_count"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finding_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "このラウンドで出した指摘の件数",
+            "minimum": 0
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pr_author": {
+            "type": ["string", "null"]
+          },
+          "pr_number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pr_title": {
+            "type": ["string", "null"],
+            "description": "要約コメント投稿時に GitHub から取得してキャッシュした PR タイトル"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reviewer": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "round": {
+            "type": "integer",
+            "format": "int32",
+            "description": "PR 内の連番（1 始まり）。表示は R1, R2, …"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "ReviewSummaryResponse": {
+        "type": "object",
+        "description": "PR 単位の集計。マージ可否をこの 1 レスポンスで判断できる。",
+        "required": ["pr_number", "rounds", "counts", "blocking", "mergeable"],
+        "properties": {
+          "blocking": {
+            "type": "integer",
+            "format": "int64",
+            "description": "マージ判定を塞いでいる指摘の件数（High / Medium かつ open / fixed）",
+            "minimum": 0
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeverityStateCount"
+            },
+            "description": "重大度 × 状態の件数"
+          },
+          "mergeable": {
+            "type": "boolean",
+            "description": "`blocking == 0` か"
+          },
+          "pr_number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rounds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "これまでに走ったラウンド数（R1, R2, … の最大値）"
+          }
+        }
+      },
       "RevokeAllPersonalTokensRequest": {
         "type": "object",
         "required": ["confirm_tenant_id"],
@@ -20706,7 +21332,9 @@
           "read:milestone",
           "write:milestone",
           "read:sprint",
-          "write:sprint"
+          "write:sprint",
+          "read:review",
+          "write:review"
         ]
       },
       "ScopeList": {
@@ -20775,6 +21403,23 @@
           "password": {
             "type": "string",
             "format": "password"
+          }
+        }
+      },
+      "SeverityStateCount": {
+        "type": "object",
+        "required": ["severity", "state", "count"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "severity": {
+            "$ref": "#/components/schemas/FindingSeverity"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FindingState"
           }
         }
       },
@@ -21496,6 +22141,20 @@
           }
         }
       },
+      "UpdateFindingStateRequest": {
+        "type": "object",
+        "description": "指摘の状態遷移。",
+        "required": ["state"],
+        "properties": {
+          "note": {
+            "type": ["string", "null"],
+            "description": "遷移の理由（履歴に残す）"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FindingState"
+          }
+        }
+      },
       "UpdateFolderRequest": {
         "type": "object",
         "required": ["parent_id"],
@@ -21554,25 +22213,6 @@
           },
           "name": {
             "type": ["string", "null"]
-          }
-        }
-      },
-      "UpdateProfileRequest": {
-        "type": "object",
-        "description": "ログイン中ユーザーが自分で編集できる項目。\n\n省略したフィールドは変更しない。`avatar_url` を空にするときは、空文字が URL 検証を\n通らないため、既存の PATCH（`UpdateTaskRequest`）と同じく `clear_*` フラグで指定する。\n`bio` は空文字が有効な値なのでフラグを持たない。",
-        "properties": {
-          "avatar_url": {
-            "type": ["string", "null"]
-          },
-          "bio": {
-            "type": ["string", "null"]
-          },
-          "clear_avatar_url": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": ["string", "null"],
-            "format": "username"
           }
         }
       },

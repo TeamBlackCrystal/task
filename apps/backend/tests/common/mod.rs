@@ -461,6 +461,7 @@ pub struct TestApp {
     router: Router,
 }
 
+#[derive(Clone)]
 pub struct TestUser {
     pub id: Uuid,
     pub email: String,
