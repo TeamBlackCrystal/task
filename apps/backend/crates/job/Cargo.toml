@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
+entity = { path = "../entity" }
 anyhow = { workspace = true }
 service = { path = "../service" }
 apalis = { version = "1.0.0-rc.9", features = ["limit", "retry", "tracing"] }

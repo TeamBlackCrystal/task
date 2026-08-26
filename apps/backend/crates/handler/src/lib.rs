@@ -8,7 +8,7 @@ use common::cache::redis::RedisConnection;
 use common::settings::Settings;
 use job::{
     AlreadyRegisteredEmailStorage, GithubIssueSyncStorage, GithubWebhookStorage,
-    PasswordResetEmailStorage, VerificationEmailStorage,
+    PasswordResetEmailStorage, ReviewSummaryStorage, VerificationEmailStorage,
 };
 use sea_orm::DatabaseConnection;
 use service::{
@@ -38,6 +38,7 @@ pub struct AppState {
     pub github_issue_sync_storage: Arc<GithubIssueSyncStorage>,
     pub password_reset_email_storage: Arc<PasswordResetEmailStorage>,
     pub already_registered_email_storage: Arc<AlreadyRegisteredEmailStorage>,
+    pub review_summary_storage: Arc<ReviewSummaryStorage>,
     pub storage: Arc<dyn StorageBackend>,
     pub drive_config: DriveConfig,
     pub oauth_settings: OAuthSettings,

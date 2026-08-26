@@ -283,6 +283,14 @@ pub async fn create_review(
 
     txn.commit().await?;
 
+    // 要約コメントの反映は非同期。投稿に失敗しても起票は巻き戻さない（仕様 §7）
+    job::review_summary::enqueue_best_effort(
+        &state.review_summary_storage,
+        project_id,
+        review.pr_number,
+    )
+    .await;
+
     let finding_ids: Vec<Uuid> = findings.iter().map(|f| f.id).collect();
     let mut transitions = load_transitions(&state.db, &finding_ids).await?;
     let pr_number = review.pr_number;
@@ -606,6 +614,13 @@ pub async fn update_review_finding_state(
     .await?;
 
     txn.commit().await?;
+
+    job::review_summary::enqueue_best_effort(
+        &state.review_summary_storage,
+        project_id,
+        review.pr_number,
+    )
+    .await;
 
     let transitions = load_transitions(&state.db, &[updated.id])
         .await?

@@ -36,6 +36,9 @@ use job::{
     password_reset_email::{
         self, MAX_RETRIES as PW_RESET_MAX_RETRIES, QUEUE_NAME as PW_RESET_QUEUE,
     },
+    review_summary::{
+        self, MAX_RETRIES as REVIEW_SUMMARY_MAX_RETRIES, QUEUE_NAME as REVIEW_SUMMARY_QUEUE,
+    },
     verification_email::{self, MAX_RETRIES, QUEUE_NAME},
 };
 
@@ -149,6 +152,16 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         .data(github_worker_state)
         .build(github_webhook::process);
 
+    let review_summary_worker_storage = state.review_summary_storage.as_ref().clone();
+    let review_summary_worker_state = job_state.clone();
+    let review_summary_worker = WorkerBuilder::new(format!("{REVIEW_SUMMARY_QUEUE}-worker"))
+        .backend(review_summary_worker_storage)
+        .retry(RetryPolicy::retries(REVIEW_SUMMARY_MAX_RETRIES))
+        .enable_tracing()
+        .concurrency(review_summary::worker_concurrency(settings))
+        .data(review_summary_worker_state)
+        .build(review_summary::process);
+
     let issue_sync_worker_storage = state.github_issue_sync_storage.as_ref().clone();
     let issue_sync_worker = WorkerBuilder::new(format!("{GITHUB_ISSUE_SYNC_QUEUE}-worker"))
         .backend(issue_sync_worker_storage)
@@ -162,6 +175,13 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     let github_worker_handle = tokio::spawn(async move {
         github_worker
             .run_until(wait_for_shutdown(github_shutdown))
+            .await
+    });
+
+    let review_summary_shutdown = shutdown_rx.clone();
+    let review_summary_worker_handle = tokio::spawn(async move {
+        review_summary_worker
+            .run_until(wait_for_shutdown(review_summary_shutdown))
             .await
     });
 
@@ -288,6 +308,12 @@ pub async fn run(state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         Ok(Ok(())) => info!("github issue sync worker stopped"),
         Ok(Err(e)) => warn!("github issue sync worker error: {e}"),
         Err(e) => warn!("github issue sync worker join error: {e}"),
+    }
+
+    match review_summary_worker_handle.await {
+        Ok(Ok(())) => info!("review summary worker stopped"),
+        Ok(Err(e)) => warn!("review summary worker error: {e}"),
+        Err(e) => warn!("review summary worker join error: {e}"),
     }
 
     Ok(())

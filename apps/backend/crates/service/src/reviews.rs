@@ -3,7 +3,7 @@
 //! 仕様は `docs/features/review-findings.md`。ここに置くのは
 //! 「ラウンドの採番」「状態遷移の規則」「繰り延べ先タスクの作成・クローズ」。
 
-use sea_orm::sea_query::LockType;
+use sea_orm::sea_query::{Expr, LockType};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
     QueryOrder, QuerySelect, prelude::Uuid,
@@ -712,6 +712,143 @@ pub async fn round_count<C: ConnectionTrait>(
     Ok(last.unwrap_or(0))
 }
 
+// ── GitHub 要約コメント ──────────────────────────────────────────────────
+
+/// 要約コメントに使う 1 PR ぶんの状態。
+pub struct SummarySnapshot {
+    pub pr_number: i32,
+    pub rounds: i32,
+    pub counts: Vec<(FindingSeverity, FindingState, u64)>,
+    pub blocking: u64,
+    /// 最新ラウンドの総評
+    pub latest_summary: String,
+    /// task 側の指摘一覧への URL（設定が無ければ省く）
+    pub findings_url: Option<String>,
+}
+
+/// PR 単位の状態を 1 レスポンスぶん読み出す。
+pub async fn summary_snapshot<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    pr_number: i32,
+    findings_url: Option<String>,
+) -> Result<SummarySnapshot, sea_orm::DbErr> {
+    let counts = severity_state_counts(db, project_id, pr_number).await?;
+    let blocking = blocking_count(&counts);
+    let rounds = round_count(db, project_id, pr_number).await?;
+
+    let latest = reviews::Entity::find()
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::PrNumber.eq(pr_number))
+        .order_by_desc(reviews::Column::Round)
+        .one(db)
+        .await?;
+
+    Ok(SummarySnapshot {
+        pr_number,
+        rounds,
+        counts,
+        blocking,
+        latest_summary: latest.map(|r| r.summary).unwrap_or_default(),
+        findings_url,
+    })
+}
+
+/// 要約コメントの本文（markdown）を組み立てる。
+///
+/// 先頭のマーカーで自分のコメントを特定するため、行頭に必ず置く。
+/// 件数が 0 の組み合わせは表に出さない（読む側の負荷を上げない）。
+pub fn render_summary_comment(snapshot: &SummarySnapshot, updated_at: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", crate::github::pr_comments::SUMMARY_MARKER);
+    let _ = writeln!(out, "## レビュー指摘");
+    let _ = writeln!(out);
+
+    if snapshot.blocking == 0 {
+        let _ = writeln!(out, "**マージ可** — High / Medium の未解決はありません。");
+    } else {
+        let _ = writeln!(
+            out,
+            "**マージ不可** — High / Medium が {} 件未解決です。",
+            snapshot.blocking
+        );
+    }
+    let _ = writeln!(out);
+
+    let total: u64 = snapshot.counts.iter().map(|(_, _, count)| count).sum();
+    if total == 0 {
+        let _ = writeln!(out, "指摘はありません。");
+    } else {
+        let _ = writeln!(out, "| 重大度 | 状態 | 件数 |");
+        let _ = writeln!(out, "|---|---|---|");
+        // 重大度 → 状態の順で安定させる（同じ状態なら毎回同じ本文になる）
+        for severity in [
+            FindingSeverity::High,
+            FindingSeverity::Medium,
+            FindingSeverity::Low,
+            FindingSeverity::Nit,
+        ] {
+            for state in [
+                FindingState::Open,
+                FindingState::Fixed,
+                FindingState::Verified,
+                FindingState::Deferred,
+                FindingState::Rejected,
+            ] {
+                let count: u64 = snapshot
+                    .counts
+                    .iter()
+                    .filter(|(s, st, _)| *s == severity && *st == state)
+                    .map(|(_, _, count)| *count)
+                    .sum();
+                if count > 0 {
+                    let _ = writeln!(out, "| {severity:?} | {state:?} | {count} |");
+                }
+            }
+        }
+    }
+    let _ = writeln!(out);
+
+    if snapshot.rounds > 0 {
+        let _ = writeln!(out, "ラウンド: R{}（最新）", snapshot.rounds);
+        if !snapshot.latest_summary.trim().is_empty() {
+            let _ = writeln!(out);
+            let _ = writeln!(out, "> {}", snapshot.latest_summary.replace('\n', "\n> "));
+        }
+        let _ = writeln!(out);
+    }
+
+    if let Some(url) = &snapshot.findings_url {
+        let _ = writeln!(out, "指摘の一覧と状態は [task]({url}) 側が権威です。");
+    } else {
+        let _ = writeln!(out, "指摘の一覧と状態は task 側が権威です。");
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out, "<sub>最終更新: {updated_at}</sub>");
+
+    out
+}
+
+/// PR メタ（タイトル・作者）を、そのラウンドへキャッシュする。
+pub async fn cache_pr_meta<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    pr_number: i32,
+    title: &str,
+    author: Option<&str>,
+) -> Result<(), sea_orm::DbErr> {
+    reviews::Entity::update_many()
+        .col_expr(reviews::Column::PrTitle, Expr::value(Some(title)))
+        .col_expr(reviews::Column::PrAuthor, Expr::value(author))
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::PrNumber.eq(pr_number))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,6 +973,61 @@ mod tests {
             assert!(!requires_finding_author(from, to));
             assert!(!requires_reviewer_side(from, to));
         }
+    }
+
+    fn snapshot(counts: Vec<(FindingSeverity, FindingState, u64)>) -> SummarySnapshot {
+        let blocking = blocking_count(&counts);
+        SummarySnapshot {
+            pr_number: 618,
+            rounds: 2,
+            counts,
+            blocking,
+            latest_summary: "総評".into(),
+            findings_url: Some("https://task.example/findings".into()),
+        }
+    }
+
+    /// 要約コメントは「マーカーが行頭にある」「マージ可否が読める」
+    /// 「同じ状態なら同じ本文になる」の 3 つを満たす必要がある。
+    /// マーカーが欠けると更新先を見失い、PR にコメントが積み上がる。
+    #[test]
+    fn summary_comment_starts_with_the_marker_and_states_the_verdict() {
+        let blocked = render_summary_comment(
+            &snapshot(vec![
+                (FindingSeverity::High, Open, 1),
+                (FindingSeverity::Low, Deferred, 2),
+            ]),
+            "2026-08-26 10:00",
+        );
+        assert!(
+            blocked.starts_with(crate::github::pr_comments::SUMMARY_MARKER),
+            "マーカーは行頭に置く: {blocked}"
+        );
+        assert!(blocked.contains("マージ不可"));
+        assert!(blocked.contains("| High | Open | 1 |"));
+        // 件数 0 の組み合わせは出さない
+        assert!(!blocked.contains("| Medium |"));
+
+        let clean = render_summary_comment(
+            &snapshot(vec![(FindingSeverity::High, Verified, 1)]),
+            "2026-08-26 10:00",
+        );
+        assert!(clean.contains("マージ可"));
+        assert!(!clean.contains("マージ不可"));
+
+        // 同じ入力なら同じ本文（毎回の更新で差分が出ると通知が無駄に飛ぶ）
+        let again = render_summary_comment(
+            &snapshot(vec![(FindingSeverity::High, Verified, 1)]),
+            "2026-08-26 10:00",
+        );
+        assert_eq!(clean, again);
+    }
+
+    #[test]
+    fn summary_comment_without_findings_says_so() {
+        let body = render_summary_comment(&snapshot(vec![]), "2026-08-26 10:00");
+        assert!(body.contains("指摘はありません。"));
+        assert!(body.contains("マージ可"));
     }
 
     #[test]
