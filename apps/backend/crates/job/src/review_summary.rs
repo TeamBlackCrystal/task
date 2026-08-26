@@ -32,6 +32,21 @@ use crate::JobState;
 pub const QUEUE_NAME: &str = "review_summary";
 pub const MAX_RETRIES: usize = 3;
 
+/// キューを見に行く間隔。「更新待ち」フラグの TTL は、この刻みで待たされる時間より
+/// 十分に長くないと、ジョブが走り出す前にフラグが切れて合流が効かなくなる。
+pub const POLL_INTERVAL_SECS: u64 = 2;
+
+/// 「更新待ち」フラグの TTL が、キューでの滞留に対して桁で余裕があること。
+///
+/// ここが短いと、ジョブが走り出してフラグを落とす前に期限が切れ、以後の遷移が
+/// それぞれ別のジョブを積む。合流が効かなくなって同じコメントへ連続して書きに
+/// 行くが、失敗はしないので外からは気づけない（仕様 §7）。どちらかの値を
+/// 動かしたらビルドで止める。
+const _: () = assert!(
+    service::github::review_summary_queue::SUMMARY_PENDING_TTL_SECS >= POLL_INTERVAL_SECS * 30,
+    "更新待ちフラグの TTL がキューの滞留に対して短すぎる"
+);
+
 /// 更新対象の PR。ペイロードは ID と番号だけで、トークン等は載せない
 /// （apalis のジョブは Postgres に平文で永続化される）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +66,7 @@ pub fn build_storage(pool: &PgPool, _settings: &Settings) -> ReviewSummaryStorag
     let config = Config::new(QUEUE_NAME).with_poll_interval(
         StrategyBuilder::new()
             .apply(
-                IntervalStrategy::new(Duration::from_secs(2))
+                IntervalStrategy::new(Duration::from_secs(POLL_INTERVAL_SECS))
                     .with_backoff(BackoffConfig::default()),
             )
             .build(),
