@@ -28,6 +28,9 @@ pub enum ReviewError {
     /// `fixed` を宣言した本人が `verified` に進めようとした。
     #[error("the fixer cannot verify their own fix")]
     SelfVerification,
+    /// マージ前必須の重大度を繰り延べようとした。
+    #[error("severity {0:?} cannot be deferred")]
+    NotDeferrable(FindingSeverity),
     #[error("project {0} has no default status; cannot create the deferred task")]
     NoDefaultStatus(Uuid),
     #[error(transparent)]
@@ -39,6 +42,9 @@ impl From<ReviewError> for common::error::AppError {
         match err {
             // 現在の状態からは行えない遷移。入力の形式は正しいので 409
             ReviewError::InvalidTransition { .. } => Self::Conflict,
+            // 遷移そのものは規則にあるが、この指摘の重大度では行えない。
+            // 入力の形式は正しいので InvalidTransition と同じ 409
+            ReviewError::NotDeferrable(_) => Self::Conflict,
             ReviewError::ReviewerOnly | ReviewError::SelfVerification => Self::Forbidden,
             // 既定ステータスが無いプロジェクトでは繰り延べ先タスクを作れない。
             // 利用者が直せる状態の問題なので 409（指摘の状態は変えない）
@@ -84,7 +90,7 @@ pub fn can_transition(from: FindingState, to: FindingState) -> bool {
     match (from, to) {
         // 修正の宣言と、その確認
         (Open, Fixed) | (Fixed, Verified) => true,
-        // 繰り延べと取り消し（Low/Nit 以外も繰り延べ自体は許す。マージ基準は集計側で見る）
+        // 繰り延べと取り消し（繰り延べられる重大度は [`FindingSeverity::can_defer`] で見る）
         (Open, Deferred) | (Deferred, Open) => true,
         // 指摘自体の棄却と再オープン
         (Open, Rejected) | (Rejected, Open) => true,
@@ -131,6 +137,7 @@ pub async fn is_reviewer_side<C: ConnectionTrait>(
 /// 遷移の可否を判定する。DB は読むが書かない。
 ///
 /// - 遷移そのものが規則にない → [`ReviewError::InvalidTransition`]
+/// - マージ前必須の重大度を繰り延べようとした → [`ReviewError::NotDeferrable`]
 /// - レビュー側限定の遷移を修正側が行った → [`ReviewError::ReviewerOnly`]
 /// - `fixed` を宣言した本人が `verified` に進めた → [`ReviewError::SelfVerification`]
 pub async fn ensure_transition_allowed<C: ConnectionTrait>(
@@ -143,6 +150,12 @@ pub async fn ensure_transition_allowed<C: ConnectionTrait>(
     let from = finding.state;
     if !can_transition(from, to) {
         return Err(ReviewError::InvalidTransition { from, to });
+    }
+
+    // 繰り延べはマージ可否の集計から外れるので、High / Medium には許さない
+    // （許すと「High を deferred にしてマージ可」という迂回路ができる）
+    if to == FindingState::Deferred && !finding.severity.can_defer() {
+        return Err(ReviewError::NotDeferrable(finding.severity));
     }
 
     if to == FindingState::Verified && finding.fixed_by == Some(actor_id) {
@@ -424,6 +437,29 @@ mod tests {
         // 同じ状態への遷移は不可（履歴だけが増えるのを防ぐ）
         for state in [Open, Fixed, Verified, Deferred, Rejected] {
             assert!(!can_transition(state, state), "{state:?} -> 自分自身");
+        }
+    }
+
+    /// 繰り延べはマージ可否の集計から外れるため、マージ前必須の重大度には許さない。
+    #[test]
+    fn only_low_and_nit_can_be_deferred() {
+        for severity in [FindingSeverity::High, FindingSeverity::Medium] {
+            assert!(
+                !severity.can_defer(),
+                "{severity:?} は繰り延べられない（マージ基準を迂回できてしまう）"
+            );
+        }
+        for severity in [FindingSeverity::Low, FindingSeverity::Nit] {
+            assert!(severity.can_defer(), "{severity:?} は繰り延べられる");
+        }
+        // 繰り延べを許す重大度は、マージを塞がない重大度と一致する
+        for severity in [
+            FindingSeverity::High,
+            FindingSeverity::Medium,
+            FindingSeverity::Low,
+            FindingSeverity::Nit,
+        ] {
+            assert_eq!(severity.can_defer(), !severity.blocks_merge());
         }
     }
 

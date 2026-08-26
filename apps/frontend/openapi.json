@@ -11234,7 +11234,7 @@
             }
           },
           "409": {
-            "description": "現在の状態からは行えない遷移",
+            "description": "現在の状態からは行えない遷移、または High / Medium の繰り延べ",
             "content": {
               "application/json": {
                 "schema": {

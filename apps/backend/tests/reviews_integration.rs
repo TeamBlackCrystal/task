@@ -421,6 +421,99 @@ async fn deferring_creates_a_task_and_reverting_closes_it() {
     fx.app.cleanup_user(fx.developer.id).await;
 }
 
+/// マージ前必須の重大度は繰り延べられない。
+///
+/// 繰り延べはマージ可否の集計から外れるので、High / Medium に許すと
+/// 「1 回 deferred にすればマージ可」という迂回路ができる（仕様 §3）。
+#[tokio::test]
+async fn high_and_medium_findings_cannot_be_deferred() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 708,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [
+                    { "severity": "high", "title": "認可が抜けている", "body": "根拠" },
+                    { "severity": "medium", "title": "境界値が 1 つずれている", "body": "根拠" },
+                    { "severity": "low", "title": "命名が揺れている", "body": "根拠" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json(res).await;
+    let id_of = |severity: &str| -> String {
+        body["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["severity"] == severity)
+            .unwrap_or_else(|| panic!("{severity} の指摘"))["id"]
+            .as_str()
+            .expect("finding id")
+            .to_string()
+    };
+
+    for severity in ["high", "medium"] {
+        let finding_id = id_of(severity);
+        let res = transition(&fx, &finding_id, "deferred").await;
+        assert_eq!(
+            res.status(),
+            StatusCode::CONFLICT,
+            "{severity} は繰り延べられない"
+        );
+
+        // 状態も変わっていない（拒否したのにタスクだけ起票される、を防ぐ）
+        let listed = json(
+            fx.app
+                .get_with_session(&format!("{}?pr=708", fx.findings_path()))
+                .await,
+        )
+        .await;
+        let finding = listed
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["id"] == finding_id.as_str())
+            .expect("対象の指摘")
+            .clone();
+        assert_eq!(finding["state"], "open");
+        assert!(
+            finding["deferred_task_id"].is_null(),
+            "拒否した繰り延べでタスクを起票しない: {finding}"
+        );
+    }
+
+    // マージ可否は「可」に変わらない
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=708", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["mergeable"], false);
+    assert_eq!(summary["blocking"], 2, "High / Medium は未解決のまま");
+
+    // 対照: Low は繰り延べられ、通常タスクが起票される
+    let res = transition(&fx, &id_of("low"), "deferred").await;
+    assert_eq!(res.status(), StatusCode::OK, "Low は繰り延べられる");
+    let body = json(res).await;
+    assert_eq!(body["state"], "deferred");
+    assert!(
+        body["deferred_task_id"].is_string(),
+        "繰り延べ先タスクがリンクされる: {body}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
 /// 指摘ゼロのラウンドも正当（「指摘なし」の記録）。
 #[tokio::test]
 async fn a_round_without_findings_is_valid() {

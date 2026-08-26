@@ -11010,7 +11010,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description 現在の状態からは行えない遷移 */
+            /** @description 現在の状態からは行えない遷移、または High / Medium の繰り延べ */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -478,7 +478,7 @@ pub async fn list_review_findings(
     responses(
         (status = 200, description = "更新後の指摘", body = FindingResponse),
         (status = 403, description = "レビュー側限定の遷移、または自分の修正の確認", body = ServerError),
-        (status = 409, description = "現在の状態からは行えない遷移", body = ServerError),
+        (status = 409, description = "現在の状態からは行えない遷移、または High / Medium の繰り延べ", body = ServerError),
         CrudErrors,
     )
 )]

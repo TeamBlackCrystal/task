@@ -25,6 +25,14 @@ impl FindingSeverity {
     pub fn blocks_merge(self) -> bool {
         matches!(self, Self::High | Self::Medium)
     }
+
+    /// 繰り延べ（`deferred`）を許す重大度か。
+    ///
+    /// `deferred` はマージ可否の集計から外れる状態なので、マージ前必須の重大度に
+    /// 許すとマージ基準そのものを迂回できてしまう（仕様 §3）。
+    pub fn can_defer(self) -> bool {
+        !self.blocks_merge()
+    }
 }
 
 impl std::str::FromStr for FindingSeverity {
