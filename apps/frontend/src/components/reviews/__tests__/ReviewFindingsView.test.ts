@@ -37,6 +37,7 @@ type MockState = {
   blocking?: number;
   prsStatus?: number;
   patchStatus?: number;
+  patchMessage?: string;
 };
 
 const jsonResponse = (data: unknown, status = 200) =>
@@ -116,7 +117,8 @@ function stubFetch(state: MockState) {
     if (req.method === 'PATCH' && pathname.includes('/review-findings/')) {
       const body = await req.clone().json();
       patched.push({ path: pathname, body });
-      if (state.patchStatus) return jsonResponse({ message: 'error' }, state.patchStatus);
+      if (state.patchStatus)
+        return jsonResponse({ message: state.patchMessage ?? 'error' }, state.patchStatus);
       const id = pathname.split('/').pop();
       state.findings = state.findings.map((f) =>
         f.id === id ? { ...f, state: (body as { state: Finding['state'] }).state } : f,
@@ -239,6 +241,37 @@ describe('ReviewFindingsView', () => {
     for (const label of ['修正した', '確認した', '繰り延べる', '再オープン']) {
       expect(bodyButton(label), label).toBeUndefined();
     }
+  });
+
+  it('サーバーが理由を返した 409 はその文言を出す', async () => {
+    stubFetch({
+      findings: [finding({ severity: 'low' })],
+      patchStatus: 409,
+      patchMessage: 'high の指摘は繰り延べられません（繰り延べは low / nit のみ）',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    bodyButton('繰り延べる')!.click();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('繰り延べは low / nit のみ');
+  });
+
+  it('スラグだけの本文は出さず、状態に応じた説明に落とす', async () => {
+    stubFetch({
+      findings: [finding({ severity: 'low' })],
+      patchStatus: 409,
+      patchMessage: 'conflict',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    bodyButton('繰り延べる')!.click();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('いまの状態からは行えない操作です');
+    expect(wrapper.text()).not.toContain('conflict');
   });
 
   it('403 のときは理由を表示する', async () => {

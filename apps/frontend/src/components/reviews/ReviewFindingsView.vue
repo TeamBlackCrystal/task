@@ -110,6 +110,17 @@ async function invalidateAll() {
   ]);
 }
 
+/**
+ * サーバーが本文に入れた理由。読ませる意味のあるものだけ返す。
+ *
+ * 共通のエラー本文は `conflict` / `forbidden` のようなスラグで、そのまま出しても
+ * 利用者は何も判断できない。理由付きの 409（High の繰り延べなど）だけを拾う。
+ */
+function serverReason(message: string | undefined): string | null {
+  if (!message || /^[a-z][a-z-]*$/.test(message)) return null;
+  return message;
+}
+
 async function transition(finding: ReviewFinding, to: FindingState) {
   transitionError.value = null;
   try {
@@ -121,13 +132,15 @@ async function transition(finding: ReviewFinding, to: FindingState) {
     });
     await invalidateAll();
   } catch (e) {
-    const status = (e as { response?: { status?: number } }).response?.status;
+    const err = e as { response?: { status?: number }; error?: { message?: string } };
+    const status = err.response?.status;
     transitionError.value =
-      status === 403
+      serverReason(err.error?.message) ??
+      (status === 403
         ? 'この操作はレビュー側だけが行えます（自分の修正は自分で確認できません）。'
         : status === 409
           ? 'いまの状態からは行えない操作です。画面を再読み込みしてください。'
-          : '状態を更新できませんでした。';
+          : '状態を更新できませんでした。');
     // 失敗した操作の結果が画面に残らないよう、正しい状態を取り直す
     await invalidateAll();
   }
