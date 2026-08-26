@@ -94,7 +94,7 @@ jobs:
       # wait を false にするか、このステップに `continue-on-error: true` を付ける。
       # branch と commit は vrt-actions が PR の head 情報を優先して解決する。
       - name: Upload to VRT
-        uses: koyori-app/vrt-actions@33bb59b0d8ca9c9ab2e4c2c8df598918e313d023 # main @ 2026-08-26
+        uses: koyori-app/vrt-actions@51e7ec4eed81efd461d2f27055e2cec3f75ccd46 # main @ 2026-08-26
         with:
           token: ${{ secrets.VRT_TOKEN }}
           project: koyori/task
@@ -104,6 +104,11 @@ jobs:
           only-changed: true
           stats-json: apps/frontend/storybook-static/preview-stats.json
           wait: true
+          # main では差分ありを緑にし、PR では赤のままにする。
+          # main へ入った差分は承認待ちであって壊れてはいないので、
+          # チェック一覧の赤を本物の失敗だけに絞る。
+          # 壊れたビルド (failed / rejected) はこの設定でも赤のまま。
+          exit-zero-on-changes: main
           # 既定値 latest だと将来の CLI Release 公開で挙動が変わりうるため、
           # 動作確認済みのバージョンに固定する。更新は Action SHA と同様に明示的な PR で行う。
           cli-version: cli-v0.1.2
