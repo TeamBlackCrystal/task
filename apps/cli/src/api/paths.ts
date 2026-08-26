@@ -109,6 +109,98 @@ export type SearchTasksResponse = {
   total: number;
 };
 
+export type FindingSeverity = "high" | "medium" | "low" | "nit";
+
+export type FindingState =
+  | "open"
+  | "fixed"
+  | "verified"
+  | "deferred"
+  | "rejected";
+
+export type UserSummary = {
+  id: string;
+  username: string;
+  avatar_url?: string | null;
+};
+
+export type Review = {
+  id: string;
+  project_id: string;
+  pr_number: number;
+  /** PR 内の連番（1 始まり）。表示は R1, R2, … */
+  round: number;
+  head_sha: string;
+  reviewer: UserSummary;
+  summary: string;
+  pr_title?: string | null;
+  pr_author?: string | null;
+  created_at: string;
+  finding_count: number;
+};
+
+export type FindingTransition = {
+  id: string;
+  actor: UserSummary;
+  /** 起票（登録）は null */
+  from_state?: FindingState | null;
+  to_state: FindingState;
+  note?: string | null;
+  created_at: string;
+};
+
+export type ReviewFinding = {
+  id: string;
+  review_id: string;
+  pr_number: number;
+  round: number;
+  severity: FindingSeverity;
+  title: string;
+  body: string;
+  file?: string | null;
+  line?: number | null;
+  state: FindingState;
+  deferred_task_id?: string | null;
+  fixed_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  transitions: FindingTransition[];
+};
+
+export type ReviewDetail = Review & {
+  findings: ReviewFinding[];
+};
+
+export type CreateFindingInput = {
+  severity: FindingSeverity;
+  title: string;
+  body: string;
+  file?: string | null;
+  line?: number | null;
+};
+
+export type CreateReviewRequest = {
+  pr_number: number;
+  head_sha: string;
+  summary?: string;
+  findings?: CreateFindingInput[];
+};
+
+export type SeverityStateCount = {
+  severity: FindingSeverity;
+  state: FindingState;
+  count: number;
+};
+
+export type ReviewSummary = {
+  pr_number: number;
+  rounds: number;
+  counts: SeverityStateCount[];
+  /** High / Medium かつ open / fixed の件数 */
+  blocking: number;
+  mergeable: boolean;
+};
+
 export type BulkUpdateFields = {
   status_id?: string;
   assignee_id?: string;
@@ -456,6 +548,75 @@ export interface ApiPaths {
       };
       responses: {
         200: { content: { "application/json": Sprint } };
+      };
+    };
+  };
+  "/v1/tenants/{tenant_id}/projects/{project_id}/reviews": {
+    get: {
+      parameters: {
+        path: { tenant_id: string; project_id: string };
+        query: { pr: number };
+      };
+      responses: {
+        200: { content: { "application/json": Review[] } };
+      };
+    };
+    post: {
+      parameters: {
+        path: { tenant_id: string; project_id: string };
+      };
+      requestBody: {
+        content: { "application/json": CreateReviewRequest };
+      };
+      responses: {
+        201: { content: { "application/json": ReviewDetail } };
+      };
+    };
+  };
+  "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary": {
+    get: {
+      parameters: {
+        path: { tenant_id: string; project_id: string };
+        query: { pr: number };
+      };
+      responses: {
+        200: { content: { "application/json": ReviewSummary } };
+      };
+    };
+  };
+  "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/{id}": {
+    get: {
+      parameters: {
+        path: { tenant_id: string; project_id: string; id: string };
+      };
+      responses: {
+        200: { content: { "application/json": ReviewDetail } };
+      };
+    };
+  };
+  "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings": {
+    get: {
+      parameters: {
+        path: { tenant_id: string; project_id: string };
+        query: { pr: number; state?: string; severity?: string };
+      };
+      responses: {
+        200: { content: { "application/json": ReviewFinding[] } };
+      };
+    };
+  };
+  "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings/{id}": {
+    patch: {
+      parameters: {
+        path: { tenant_id: string; project_id: string; id: string };
+      };
+      requestBody: {
+        content: {
+          "application/json": { state: FindingState; note?: string | null };
+        };
+      };
+      responses: {
+        200: { content: { "application/json": ReviewFinding } };
       };
     };
   };

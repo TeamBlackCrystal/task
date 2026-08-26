@@ -4,6 +4,7 @@ import { registerAuthCommands } from "./commands/auth";
 import { registerConfigCommands } from "./commands/config";
 import { registerMyCommands } from "./commands/my";
 import { registerProjectsCommands } from "./commands/projects";
+import { registerReviewCommands } from "./commands/reviews";
 import { registerSprintsCommands } from "./commands/sprints";
 import { registerTasksCommands } from "./commands/tasks";
 import { CliError } from "./utils/errors";
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
   registerTasksCommands(program);
   registerMyCommands(program);
   registerSprintsCommands(program);
+  registerReviewCommands(program);
 
   try {
     await program.parseAsync(process.argv);

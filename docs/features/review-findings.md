@@ -250,15 +250,19 @@ AI レビュワーの主経路は **JSON 一括投入**（生成しやすく、�
 CLI と同じ一括作成 API を 1 回呼ぶ）。
 
 ```bash
-# レビュー 1 ラウンドぶんを一括起票（ファイル or stdin）
-task review submit --project TASK --pr 618 findings.json
+# レビュー 1 ラウンドぶんを一括起票（ファイル or `-` で標準入力）
+task review submit findings.json --project TASK
+task review submit findings.json --project TASK --pr 618   # JSON の pr を上書き
 
 # 指摘一覧（フィルタつき）
 task review list --project TASK --pr 618 --state open --severity high,medium
 
+# ラウンド一覧（R1, R2, … と head SHA・件数）
+task review rounds --project TASK --pr 618
+
 # 状態遷移
-task review resolve <finding-id> --state fixed
-task review resolve <finding-id> --state deferred   # 通常タスクの自動起票込み
+task review resolve <finding-id> --project TASK --state fixed
+task review resolve <finding-id> --project TASK --state deferred --note "後で直す"
 
 # 集計。マージできない状態なら非 0 で終了する（CI や手元のマージ前確認に使える）
 task review summary --project TASK --pr 618
@@ -269,6 +273,11 @@ task review summary --project TASK --pr 618 --head "${{ github.event.pull_reques
 task review summary --project TASK --pr 618 --no-head-check   # 鮮度を見ない
 task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプロジェクトで使う
 ```
+
+投入 JSON と絞り込みの値は**送信前に CLI 側でも検証する**。綴り違い
+（`severity: "critical"`、`--state closed`）や必須項目の欠落は、どの指摘の
+どの項目かを添えて終了コード 2 で弾く。サーバー側の検証に任せきりにすると、
+AI が生成した JSON の取り違えを直す手がかりが薄くなる。
 
 `summary` は次のいずれかで**非 0 終了**する。ゲートとして使う以上、判断できない
 ときは通さない（fail-closed）。
@@ -544,6 +553,8 @@ task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプ�
   進めるのを防ぐ）
 - 2026-08-26: 指摘一覧への導線 URL は既存の `email_verification_app_url`（アプリの公開 URL）を
   流用する。要約コメント専用の設定は増やさない
+- 2026-08-26: CLI は投入 JSON と絞り込みの値を送信前に検証する（終了コード 2）。
+  `review summary` は未解決が残ると終了コード 1
 - 2026-08-26: レビューの反復の呼称は「ラウンド」（表示は R1, R2, …）。「巡」表記は使わない
 - 2026-08-26: レビュワーは AI（PAT + CLI）と人間（セッション + Web UI）を同格に扱う。
   ラウンドは確定時一括作成・追記不可で、人間の下書きは UI 側の関心事（サーバーは持たない）
