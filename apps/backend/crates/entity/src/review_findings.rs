@@ -26,6 +26,16 @@ impl FindingSeverity {
         matches!(self, Self::High | Self::Medium)
     }
 
+    /// API・メッセージで使う表記（`FromStr` の裏返し）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Nit => "nit",
+        }
+    }
+
     /// 繰り延べ（`deferred`）を許す重大度か。
     ///
     /// `deferred` はマージ可否の集計から外れる状態なので、マージ前必須の重大度に
@@ -72,6 +82,17 @@ pub enum FindingState {
 }
 
 impl FindingState {
+    /// API・メッセージで使う表記（`FromStr` の裏返し）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Fixed => "fixed",
+            Self::Verified => "verified",
+            Self::Deferred => "deferred",
+            Self::Rejected => "rejected",
+        }
+    }
+
     /// マージ判定で「未解決」と数える状態か。
     ///
     /// `Fixed` を未解決に数えるのは、修正の宣言だけでは確認が済んでいないため

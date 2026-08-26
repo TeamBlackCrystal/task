@@ -39,16 +39,27 @@ pub enum ReviewError {
 
 impl From<ReviewError> for common::error::AppError {
     fn from(err: ReviewError) -> Self {
+        // 409 は理由を本文に入れる。共通の `conflict` だけでは、CLI から使う
+        // レビュワー（AI を含む）が「なぜ通らないのか」を判断できない
         match err {
             // 現在の状態からは行えない遷移。入力の形式は正しいので 409
-            ReviewError::InvalidTransition { .. } => Self::Conflict,
+            ReviewError::InvalidTransition { from, to } => Self::ConflictDetail(format!(
+                "{} の指摘を {} にはできません",
+                from.as_str(),
+                to.as_str()
+            )),
             // 遷移そのものは規則にあるが、この指摘の重大度では行えない。
             // 入力の形式は正しいので InvalidTransition と同じ 409
-            ReviewError::NotDeferrable(_) => Self::Conflict,
+            ReviewError::NotDeferrable(severity) => Self::ConflictDetail(format!(
+                "{} の指摘は繰り延べられません（繰り延べは low / nit のみ。マージ前に解消するか、指摘自体を取り下げてください）",
+                severity.as_str()
+            )),
             ReviewError::ReviewerOnly | ReviewError::SelfVerification => Self::Forbidden,
             // 既定ステータスが無いプロジェクトでは繰り延べ先タスクを作れない。
             // 利用者が直せる状態の問題なので 409（指摘の状態は変えない）
-            ReviewError::NoDefaultStatus(_) => Self::Conflict,
+            ReviewError::NoDefaultStatus(_) => Self::ConflictDetail(
+                "プロジェクトに既定ステータスが無いため、繰り延べ先のタスクを作れません".into(),
+            ),
             ReviewError::Db(err) => err.into(),
         }
     }
@@ -438,6 +449,39 @@ mod tests {
         for state in [Open, Fixed, Verified, Deferred, Rejected] {
             assert!(!can_transition(state, state), "{state:?} -> 自分自身");
         }
+    }
+
+    /// 409 は理由を本文に入れる（共通の `conflict` だけでは、CLI から使う
+    /// レビュワーが「なぜ通らないのか」を判断できない）。
+    #[test]
+    fn conflicts_carry_the_reason_in_the_body() {
+        use common::error::AppError;
+
+        let message = |err: ReviewError| match AppError::from(err) {
+            AppError::ConflictDetail(message) => message,
+            other => panic!("409 の詳細になっていない: {other:?}"),
+        };
+
+        let deferring_high = message(ReviewError::NotDeferrable(FindingSeverity::High));
+        assert!(
+            deferring_high.contains("high") && deferring_high.contains("繰り延べ"),
+            "何が繰り延べられないのか分かる: {deferring_high}"
+        );
+
+        let skipping_fixed = message(ReviewError::InvalidTransition {
+            from: Open,
+            to: Verified,
+        });
+        assert!(
+            skipping_fixed.contains("open") && skipping_fixed.contains("verified"),
+            "どの遷移が通らないのか分かる: {skipping_fixed}"
+        );
+
+        // 権限の問題は 403 のまま（本文で理由を出し分けない）
+        assert!(matches!(
+            AppError::from(ReviewError::SelfVerification),
+            AppError::Forbidden
+        ));
     }
 
     /// 繰り延べはマージ可否の集計から外れるため、マージ前必須の重大度には許さない。

@@ -520,6 +520,16 @@ async fn high_and_medium_findings_cannot_be_deferred() {
             "{severity} は繰り延べられない"
         );
 
+        // 理由が本文に出る（CLI から使うレビュワーが対処を選べるように）
+        let message = json(res).await["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains(severity) && message.contains("繰り延べ"),
+            "なぜ通らないのかが分かる: {message}"
+        );
+
         // 状態も変わっていない（拒否したのにタスクだけ起票される、を防ぐ）
         let listed = json(
             fx.app

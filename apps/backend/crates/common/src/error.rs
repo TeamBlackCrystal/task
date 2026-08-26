@@ -28,6 +28,8 @@ pub enum AppError {
     Forbidden,
     #[error("conflict")]
     Conflict,
+    #[error("conflict: {0}")]
+    ConflictDetail(String),
     #[error("bad request")]
     BadRequest,
     #[error("bad request: {0}")]
@@ -78,6 +80,9 @@ impl IntoResponse for AppError {
                 }),
             )
                 .into_response(),
+            AppError::ConflictDetail(msg) => {
+                (StatusCode::CONFLICT, Json(ServerError { message: msg })).into_response()
+            }
             AppError::BadRequest => (
                 StatusCode::BAD_REQUEST,
                 Json(ServerError {
