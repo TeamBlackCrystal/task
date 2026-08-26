@@ -9,7 +9,8 @@
 //!
 //! 同一 (project, pr) の更新要求は 1 本に合流させる（`service::github::review_summary_queue`）。
 //! 遷移のたびに積むと同じコメントへ連続して書き込み、GitHub の
-//! secondary rate limit に当たるため。
+//! secondary rate limit に当たるため。実行区間も同じ単位でロックして直列化する
+//! （並行して走ると、古い状態を読んだ側の書き込みが後から着いてコメントが巻き戻る）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -123,6 +124,44 @@ pub async fn enqueue_best_effort(
 }
 
 pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(), BoxDynError> {
+    // 同じ PR を更新中のジョブがいる間は投稿しない。並行して走ると、先に古い
+    // 状態を読んだ側の書き込みが後から着き、コメントが巻き戻ったまま次の遷移まで
+    // 直らない
+    let Some(token) = service::github::review_summary_queue::try_acquire_update_lock(
+        &state.redis_client,
+        job.project_id,
+        job.pr_number,
+    )
+    .await?
+    else {
+        // 「更新待ち」の印は落とさない。この再試行が拾い直し、そのとき最新状態を読む
+        tracing::info!(
+            project_id = %job.project_id,
+            pr = job.pr_number,
+            "another review summary update is running; retrying later"
+        );
+        return Err("review summary update is already running".into());
+    };
+
+    let result = update_summary(&job, &state).await;
+
+    if let Err(e) = service::github::review_summary_queue::release_update_lock(
+        &state.redis_client,
+        job.project_id,
+        job.pr_number,
+        &token,
+    )
+    .await
+    {
+        // 残すと TTL のあいだ後続が全部再試行に回る
+        tracing::warn!(error = %e, project_id = %job.project_id, pr = job.pr_number, "release review summary lock failed");
+    }
+
+    result
+}
+
+/// ロックを取った状態で、最新の集計を読んでコメントへ反映する。
+async fn update_summary(job: &ReviewSummaryJob, state: &JobState) -> Result<(), BoxDynError> {
     // 状態を読む前に落とす。順序を逆にすると、読んだ後・落とす前の遷移が
     // 合流で捨てられて要約に出ない。先に落として取りこぼす側は
     // ジョブが 1 本余計に積まれるだけで済む
