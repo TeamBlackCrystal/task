@@ -1,0 +1,162 @@
+# backend の検証（fmt / clippy / test / OpenAPI 差分）を Forgejo Actions で回す。
+#
+# GitHub 側（.github/workflows/backend-*.yml, openapi-drift-check.yml）と同じ内容を、
+# Forgejo の runner でも通るように書き直したもの。Forgejo は .forgejo/workflows が
+# あればそちらだけを読むため、GitHub 側と二重には走らない。
+#
+# GitHub 側との違いと理由:
+#   - runs-on: docker（runner の既定ラベル。実イメージは runner の config で決める）
+#   - ジョブを分けず 1 本にまとめる。runner が 1 台の構成では、ジョブごとに
+#     cargo のビルドをやり直すより、同じ target を使い回す方が速い
+#   - sccache を使わない。GitHub Actions のキャッシュ API に乗る仕組みで、
+#     instance 側の対応が読めないため（cargo のキャッシュだけで足りる）
+#   - cargo build --release は入れていない。デバッグビルドで clippy と test が
+#     通っており、リリースビルドは GitHub 側の Backend Build と Docker Build が見る
+#   - OpenAPI の差分検査を同居させている。ビルド済みの target を使い回せる
+
+name: Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - 'apps/frontend/openapi.json'
+      - 'rust-toolchain.toml'
+      - '.forgejo/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'apps/backend/**'
+      - 'apps/frontend/openapi.json'
+      - 'rust-toolchain.toml'
+      - '.forgejo/workflows/backend.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: docker
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres@sha256:2203e6282d9e7de7c24d7da234e2a744fb325df366a3fd8ed940e8abbee39527 # 17.10-trixie
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: valkey/valkey@sha256:c6d4637d757379a2ff040148b95c85936d85a06c129eafa5fbe582f9e720e12f # 8.1.8-trixie
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # ジョブ自体がコンテナで走るので、サービスへはポート公開ではなく
+      # サービス名で届く（GitHub のホストランナーでの localhost とはここが違う）。
+      DATABASE_URL: postgresql://test:test@postgres:5432/test
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: localhost
+      SMTP_PORT: "587"
+      SMTP_USERNAME: test
+      SMTP_PASSWORD: test
+      SMTP_FROM: test@example.com
+      EMAIL_VERIFICATION_APP_URL: http://localhost:3000
+      PERSONAL_TOKEN_SECRET: "00000000000000000000000000000000"
+      RECOVERY_CODE_SECRET: "00000000000000000000000000000000"
+      TOTP_ENCRYPTION_KEY: "01234567890123456789012345678901"
+      ARGON2_TEST_MODE: "true"
+      SQLX_OFFLINE: "true"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # runner のイメージは instance 任せなので、必要なものを自前で入れる。
+      # コンテナでは root で走ることが多く sudo が無いため、両方に備える。
+      # mold は apps/backend/.cargo/config.toml がリンカに指定しており、無いと
+      # リンクが必要なクレートで失敗する。
+      - name: Install build tools
+        run: |
+          set -eux
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends mold jq curl ca-certificates
+
+      # toolchain は rust-toolchain.toml に一本化する。
+      # 引数なしの install が「アクティブな toolchain」= rust-toolchain.toml を読む。
+      - name: Install Rust
+        run: |
+          set -eux
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --no-modify-path --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install
+
+      - name: Cache cargo
+        uses: https://github.com/actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/backend/target
+          key: forgejo-cargo-${{ runner.os }}-${{ hashFiles('apps/backend/Cargo.lock') }}
+          restore-keys: |
+            forgejo-cargo-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        working-directory: apps/backend
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: apps/backend
+
+      # 統合テストは実 Postgres / Redis を使う。GitHub 側は cargo nextest だが、
+      # ここでは追加のツール取得を増やさないよう cargo test を使う
+      # （--test-threads=1 はどちらも同じ）。
+      - name: Run tests
+        run: cargo test --workspace -- --test-threads=1
+        working-directory: apps/backend
+
+      - name: Export OpenAPI from backend
+        run: cargo run --bin export_openapi -- /tmp/exported-openapi.json
+        working-directory: apps/backend
+
+      - name: Compare with committed openapi.json
+        run: |
+          set -euo pipefail
+          jq -S '.' apps/frontend/openapi.json > /tmp/committed-openapi.json
+          jq -S '.' /tmp/exported-openapi.json > /tmp/exported-openapi-normalized.json
+
+          if diff -q /tmp/committed-openapi.json /tmp/exported-openapi-normalized.json >/dev/null; then
+            echo "OpenAPI contract is in sync."
+            exit 0
+          fi
+
+          echo "apps/frontend/openapi.json is out of sync with the backend API." >&2
+          echo "" >&2
+          echo "After changing the backend API, regenerate and commit openapi.json:" >&2
+          echo "  cd apps/frontend && pnpm openapi && node_modules/.bin/vp fmt" >&2
+          echo "  git add apps/frontend/openapi.json" >&2
+          echo "" >&2
+          echo "Diff (normalized):" >&2
+          diff -u /tmp/committed-openapi.json /tmp/exported-openapi-normalized.json | head -200 || true
+          exit 1
