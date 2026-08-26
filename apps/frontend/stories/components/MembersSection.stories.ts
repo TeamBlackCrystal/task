@@ -216,7 +216,8 @@ export const AddFlow: Story = {
     await user.click(canvas.getByLabelText('テナントメンバーから追加'));
     const option = await page.findByRole('option', { name: 'carol' });
     await user.click(option);
-    await user.click(canvas.getByRole('button', { name: '追加' }));
+    // ポップアップの閉じアニメーション中は他要素が a11y ツリーから隠れるため findByRole で待つ
+    await user.click(await canvas.findByRole('button', { name: '追加' }));
 
     await expect(canvas.findByText('carol')).resolves.toBeInTheDocument();
     const [post] = requestsOf('POST');
