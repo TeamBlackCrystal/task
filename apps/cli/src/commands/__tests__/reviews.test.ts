@@ -312,18 +312,10 @@ describe("review commands", () => {
     expect(mocks.PATCH).not.toHaveBeenCalled();
   });
 
-  it("summary はマージ可なら 0、未解決が残れば非 0 で終わる", async () => {
-    mocks.GET.mockResolvedValue({
-      data: {
-        pr_number: 618,
-        rounds: 1,
-        counts: [],
-        blocking: 0,
-        mergeable: true,
-      },
-      response: { status: 200 },
-    });
-    await program().parseAsync([
+  const REVIEWED_HEAD = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
+
+  const runSummary = (extra: string[] = []) =>
+    program().parseAsync([
       "node",
       "task",
       "review",
@@ -332,7 +324,22 @@ describe("review commands", () => {
       "APP",
       "--pr",
       "618",
+      ...extra,
     ]);
+
+  it("summary はレビュー済みで未解決ゼロ・HEAD 一致のときだけ 0 で終わる", async () => {
+    mocks.GET.mockResolvedValue({
+      data: {
+        pr_number: 618,
+        rounds: 1,
+        counts: [],
+        blocking: 0,
+        latest_head_sha: REVIEWED_HEAD,
+        mergeable: true,
+      },
+      response: { status: 200 },
+    });
+    await runSummary(["--head", REVIEWED_HEAD]);
     expect(process.exitCode).toBeUndefined();
 
     mocks.GET.mockResolvedValue({
@@ -341,21 +348,50 @@ describe("review commands", () => {
         rounds: 2,
         counts: [{ severity: "high", state: "open", count: 1 }],
         blocking: 1,
+        latest_head_sha: REVIEWED_HEAD,
         mergeable: false,
       },
       response: { status: 200 },
     });
-    await program().parseAsync([
-      "node",
-      "task",
-      "review",
-      "summary",
-      "--project",
-      "APP",
-      "--pr",
-      "618",
-    ]);
+    await runSummary(["--head", REVIEWED_HEAD]);
     // マージ前確認に使えるよう、未解決が残っていれば失敗として終わる
     expect(process.exitCode).toBe(1);
+  });
+
+  it("summary はレビューされていない PR を通さない", async () => {
+    mocks.GET.mockResolvedValue({
+      data: {
+        pr_number: 618,
+        rounds: 0,
+        counts: [],
+        blocking: 0,
+        latest_head_sha: null,
+        mergeable: false,
+      },
+      response: { status: 200 },
+    });
+    await runSummary(["--head", REVIEWED_HEAD]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("summary はレビュー後にコミットが積まれていれば通さない", async () => {
+    mocks.GET.mockResolvedValue({
+      data: {
+        pr_number: 618,
+        rounds: 1,
+        counts: [],
+        blocking: 0,
+        latest_head_sha: REVIEWED_HEAD,
+        mergeable: true,
+      },
+      response: { status: 200 },
+    });
+    await runSummary(["--head", "0000000000000000000000000000000000000000"]);
+    expect(process.exitCode).toBe(1);
+
+    // --no-head-check なら鮮度を見ない（明示的に外したときだけ）
+    process.exitCode = undefined;
+    await runSummary(["--no-head-check"]);
+    expect(process.exitCode).toBeUndefined();
   });
 });

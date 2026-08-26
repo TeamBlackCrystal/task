@@ -198,6 +198,9 @@ export type ReviewSummary = {
   counts: SeverityStateCount[];
   /** High / Medium かつ open / fixed の件数 */
   blocking: number;
+  /** 最新ラウンドがレビューした commit（ラウンドが無ければ null） */
+  latest_head_sha: string | null;
+  /** ラウンドが 1 件以上あり、かつ blocking が 0 か */
   mergeable: boolean;
 };
 

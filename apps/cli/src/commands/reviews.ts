@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { getClient, getTenantId } from "../api/client";
@@ -36,7 +37,13 @@ type ResolveOptions = OutputOptions & {
   state?: string;
   note?: string;
 };
-type SummaryOptions = OutputOptions & { project?: string; pr?: string };
+type SummaryOptions = OutputOptions & {
+  project?: string;
+  pr?: string;
+  head?: string;
+  /** commander が `--no-head-check` から作る（既定は true） */
+  headCheck?: boolean;
+};
 
 function parsePrNumber(raw: string | undefined): number {
   const value = Number(raw);
@@ -186,10 +193,48 @@ function formatFinding(finding: ReviewFinding): string {
   ].join("\t");
 }
 
-function formatSummary(summary: ReviewSummary): string {
-  const verdict = summary.mergeable
-    ? "mergeable"
-    : `blocked (${summary.blocking} high/medium unresolved)`;
+/**
+ * 照合する HEAD。`--head` があればそれ、無ければ実行ディレクトリの HEAD。
+ *
+ * GitHub へ取りに行かないのは、CI でも手元でも「いま検査している木」の SHA が
+ * そこにあるからで、余計な依存と権限を増やさないため（仕様 §6）。
+ */
+function resolveHead(explicit: string | undefined): string | null {
+  if (explicit) return explicit.trim() || null;
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** マージ前ゲートとしての判定。通してよい理由が揃わなければ通さない。 */
+function gateFailure(
+  summary: ReviewSummary,
+  head: string | null,
+  checkHead: boolean,
+): string | null {
+  if (summary.rounds === 0) {
+    return "this pull request has not been reviewed yet (no rounds)";
+  }
+  if (!summary.mergeable) {
+    return `${summary.blocking} high/medium finding(s) still unresolved`;
+  }
+  if (!checkHead) return null;
+  if (!head) {
+    return "cannot determine the HEAD to compare (pass --head or --no-head-check)";
+  }
+  if (summary.latest_head_sha !== head) {
+    return `reviewed ${summary.latest_head_sha ?? "(none)"} but HEAD is ${head}; re-review is needed`;
+  }
+  return null;
+}
+
+function formatSummary(summary: ReviewSummary, failure: string | null): string {
+  const verdict = failure ? `blocked (${failure})` : "mergeable";
   const lines = [
     `PR #${summary.pr_number}\trounds: R${summary.rounds}\t${verdict}`,
   ];
@@ -332,10 +377,15 @@ export function registerReviewCommands(program: Command): void {
   review
     .command("summary")
     .description(
-      "Show the merge verdict for a PR (exits 1 while high/medium remain)",
+      "Show the merge verdict for a PR (exits 1 unless it is reviewed, clean, and up to date)",
     )
     .requiredOption("--project <key>", "Project key or UUID")
     .requiredOption("--pr <number>", "PR number")
+    .option(
+      "--head <sha>",
+      "Commit to compare with the reviewed HEAD (default: git rev-parse HEAD)",
+    )
+    .option("--no-head-check", "Do not compare the reviewed HEAD with the working tree")
     .action(async (opts: SummaryOptions, cmd) => {
       const output = getOutputOptions(cmd);
       const pr = parsePrNumber(opts.pr);
@@ -351,13 +401,17 @@ export function registerReviewCommands(program: Command): void {
         },
       );
       const summary = unwrapApiResult(result);
+      const checkHead = opts.headCheck !== false;
+      const head = checkHead ? resolveHead(opts.head) : null;
+      const failure = gateFailure(summary, head, checkHead);
+
       if (output.json) {
-        print(summary, output);
+        print({ ...summary, head, blocked_reason: failure }, output);
       } else {
-        console.log(formatSummary(summary));
+        console.log(formatSummary(summary, failure));
       }
-      // マージ前確認に使えるよう、未解決が残っていれば非 0 で終わる
-      if (!summary.mergeable) {
+      // マージ前ゲートとして使えるよう、通してよい理由が揃わなければ非 0 で終わる
+      if (failure) {
         process.exitCode = 1;
       }
     });
