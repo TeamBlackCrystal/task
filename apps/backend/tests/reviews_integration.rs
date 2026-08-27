@@ -428,7 +428,11 @@ async fn deferring_creates_a_task_and_reverting_closes_it() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = json(res).await;
     assert_eq!(body["state"], "open");
-    assert!(body["deferred_task_id"].is_null(), "リンクは外れる: {body}");
+    assert_eq!(
+        body["deferred_task_id"],
+        task_id.to_string(),
+        "リンクは残す（次の繰り延べで開き直すため）: {body}"
+    );
 
     let task = tasks::Entity::find_by_id(task_id)
         .one(&fx.app.state.db)
@@ -670,6 +674,37 @@ async fn rounds_are_scoped_to_the_linked_repository() {
     assert_eq!(summary["blocking"], 0, "旧リポジトリの High は数えない");
     assert_eq!(summary["mergeable"], true);
 
+    // リポジトリを明示すれば、旧リポジトリのラウンドも読める（履歴が読めないと
+    // 出した本人が整理もできない。仕様 §5）
+    let old_rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711&repo=acme/old-repo", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(old_rounds.as_array().expect("rounds").len(), 1);
+    assert_eq!(old_rounds[0]["summary"], "総評");
+    let old_summary = json(
+        fx.app
+            .get_with_session(&format!(
+                "{}/summary?pr=711&repo=acme/old-repo",
+                fx.reviews_path()
+            ))
+            .await,
+    )
+    .await;
+    assert_eq!(old_summary["blocking"], 1, "旧リポジトリの High が見える");
+    assert_eq!(old_summary["repository"], "acme/old-repo");
+
+    // 形式が違えば 400（黙って現在の連携先へ落とさない）
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{}?pr=711&repo=acme", fx.reviews_path()))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
     // 旧リポジトリの指摘は消えていない（連携解除で失われない）
     let finding = review_findings::Entity::find_by_id(finding_id.parse::<Uuid>().expect("uuid"))
         .one(&fx.app.state.db)
@@ -713,6 +748,18 @@ async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
     assert_eq!(res.status(), StatusCode::OK, "作成者が消えたら代行できる");
     let body = json(res).await;
     assert_eq!(body["state"], "rejected");
+
+    // 代行の痕跡は集計に残る（除名 → 代行 → 再招待をしても消えない）
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        summary["owner_override_rejections"], 1,
+        "オーナー代行での棄却が数えられる: {summary}"
+    );
     // 誰が代行したかは履歴に残る
     let transitions = body["transitions"].as_array().expect("transitions");
     let last = transitions.last().expect("last transition");
@@ -902,6 +949,80 @@ async fn high_and_medium_findings_cannot_be_deferred() {
     assert!(
         body["deferred_task_id"].is_string(),
         "繰り延べ先タスクがリンクされる: {body}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 繰り延べを往復しても有効なタスクは 1 件。削除されていたら代替を起票する。
+///
+/// 「常に同じ物理タスク」ではなく「同時に存在する有効なタスクは 1 件」が不変条件
+/// （仕様 §3）。タスクの削除はソフトデリートで外部キーが外れないため、生死は
+/// リンク先の `deleted_at` で見る。
+#[tokio::test]
+async fn deferring_again_reuses_the_task_unless_it_was_deleted() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 714, "low", "命名が揺れている").await;
+
+    let first: Uuid =
+        json(transition(&fx, &finding_id, "deferred").await).await["deferred_task_id"]
+            .as_str()
+            .expect("繰り延べ先タスク")
+            .parse()
+            .expect("uuid");
+
+    // 往復しても新しいタスクを作らず、同じタスクを開き直す
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK
+    );
+    let again = json(transition(&fx, &finding_id, "deferred").await).await;
+    assert_eq!(
+        again["deferred_task_id"],
+        first.to_string(),
+        "同じタスクを使い回す: {again}"
+    );
+    let task = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert!(task.completed_at.is_none(), "開き直したので未完了に戻る");
+
+    // 人がタスクを消したら、次の繰り延べは代替を 1 件起票してリンクを差し替える
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK
+    );
+    let mut active: tasks::ActiveModel = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row")
+        .into();
+    active.deleted_at = Set(Some(chrono::Utc::now().into()));
+    active.update(&fx.app.state.db).await.expect("delete task");
+
+    let replaced = json(transition(&fx, &finding_id, "deferred").await).await;
+    let replacement = replaced["deferred_task_id"]
+        .as_str()
+        .expect("代替タスク")
+        .to_string();
+    assert_ne!(
+        replacement,
+        first.to_string(),
+        "削除済みタスクを復活させず、代替を起票する: {replaced}"
+    );
+    let deleted = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert!(
+        deleted.deleted_at.is_some(),
+        "消したタスクは消えたまま（黙って復活しない）"
     );
 
     fx.app.cleanup_user(fx.reviewer.id).await;

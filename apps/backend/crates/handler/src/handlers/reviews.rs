@@ -6,9 +6,10 @@ use axum::{
     http::StatusCode,
 };
 use axum_valid::Valid;
+use sea_orm::sea_query::LockType;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, TransactionTrait, prelude::Uuid,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait, prelude::Uuid,
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -24,16 +25,56 @@ use payload::reviews::*;
 pub struct PrQuery {
     /// 対象 PR 番号
     pub pr: i32,
+    /// 見るリポジトリ（`owner/name`）。既定は現在の連携先
+    ///
+    /// 連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+    /// 読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+    pub repo: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct FindingListQuery {
     /// 対象 PR 番号
     pub pr: i32,
+    /// 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ）
+    pub repo: Option<String>,
     /// 状態での絞り込み（カンマ区切り。例: `open,fixed`）
     pub state: Option<String>,
     /// 重大度での絞り込み（カンマ区切り。例: `high,medium`）
     pub severity: Option<String>,
+}
+
+/// 読み取りの視界を決める。`repo` の指定があればそれ、無ければ現在の連携先。
+///
+/// 指定は `owner/name`。空文字は「連携が無かった頃のラウンド」を指す。
+/// 形式が違えば 400（黙って現在の連携先へ落とすと、読めていないことに気づけない）。
+async fn resolve_repo_scope(
+    state: &AppState,
+    project_id: Uuid,
+    repo: Option<&str>,
+) -> Result<service::reviews::RepoRef, AppError> {
+    let Some(raw) = repo else {
+        return Ok(service::reviews::current_repo(&state.db, project_id).await?);
+    };
+    if raw.is_empty() {
+        return Ok(service::reviews::RepoRef::unlinked());
+    }
+    let Some((owner, name)) = raw.split_once('/') else {
+        return Err(AppError::BadRequestDetail(format!(
+            "repo は owner/name の形で指定してください（受け取った値: {raw}）"
+        )));
+    };
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return Err(AppError::BadRequestDetail(format!(
+            "repo は owner/name の形で指定してください（受け取った値: {raw}）"
+        )));
+    }
+    Ok(service::reviews::RepoRef {
+        // 過去の連携の行は残っていないことがあるので、控えの文字列だけで絞る
+        integration_id: None,
+        owner: owner.to_string(),
+        name: name.to_string(),
+    })
 }
 
 /// カンマ区切りのクエリを列挙値へ。未知の値が混ざっていたら 400 にする
@@ -268,9 +309,9 @@ pub async fn list_reviews(
 ) -> Result<Json<Vec<ReviewResponse>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
-    // 一覧が見るのは現在の連携先のラウンドだけ。連携を差し替えた後に旧リポジトリの
-    // 同番 PR のラウンドが混ざらないようにする（仕様 §3）
-    let repo = service::reviews::current_repo(&state.db, project_id).await?;
+    // 一覧が見るのは既定で現在の連携先のラウンドだけ。連携を差し替えた後に旧リポジトリの
+    // 同番 PR のラウンドが混ざらないようにする（仕様 §3。`repo` で明示もできる）
+    let repo = resolve_repo_scope(&state, project_id, query.repo.as_deref()).await?;
     let rounds = reviews::Entity::find()
         .filter(reviews::Column::ProjectId.eq(project_id))
         .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
@@ -323,13 +364,16 @@ pub async fn get_review_summary(
 ) -> Result<Json<ReviewSummaryResponse>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
-    let repo = service::reviews::current_repo(&state.db, project_id).await?;
+    let repo = resolve_repo_scope(&state, project_id, query.repo.as_deref()).await?;
     let counts =
         service::reviews::severity_state_counts(&state.db, project_id, &repo, query.pr).await?;
     let blocking = service::reviews::blocking_count(&counts);
     let rounds = service::reviews::round_count(&state.db, project_id, &repo, query.pr).await?;
     let latest_head_sha =
         service::reviews::latest_head_sha(&state.db, project_id, &repo, query.pr).await?;
+    let owner_override_rejections =
+        service::reviews::owner_override_rejection_count(&state.db, project_id, &repo, query.pr)
+            .await?;
 
     Ok(Json(ReviewSummaryResponse {
         pr_number: query.pr,
@@ -344,6 +388,7 @@ pub async fn get_review_summary(
             .collect(),
         blocking,
         latest_head_sha,
+        owner_override_rejections,
         repository: repo
             .is_linked()
             .then(|| format!("{}/{}", repo.owner, repo.name)),
@@ -436,7 +481,7 @@ pub async fn list_review_findings(
     let states = parse_csv::<FindingState>(query.state.as_deref())?;
     let severities = parse_csv::<FindingSeverity>(query.severity.as_deref())?;
 
-    let repo = service::reviews::current_repo(&state.db, project_id).await?;
+    let repo = resolve_repo_scope(&state, project_id, query.repo.as_deref()).await?;
     let rounds = reviews::Entity::find()
         .filter(reviews::Column::ProjectId.eq(project_id))
         .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
@@ -516,7 +561,11 @@ pub async fn update_review_finding_state(
 
     let txn = state.db.begin().await?;
 
+    // 指摘の行を掴んでから状態を読む。掴まないと、同じ open の指摘へ deferred が
+    // 同時に届いたとき双方が繰り延べ先タスクを起票し、後勝ちのリンクだけが残って
+    // もう 1 件が参照されない孤児になる（仕様 §3）
     let finding = review_findings::Entity::find_by_id(finding_id)
+        .lock(LockType::Update)
         .one(&txn)
         .await?
         .ok_or(AppError::NotFound)?;

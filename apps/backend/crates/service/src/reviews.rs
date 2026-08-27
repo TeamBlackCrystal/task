@@ -319,6 +319,47 @@ pub async fn ensure_transition_allowed<C: ConnectionTrait>(
     Ok(())
 }
 
+/// 繰り延べ先タスクが「有効」か——同じプロジェクトにあり、削除されていないか。
+///
+/// タスクの削除はソフトデリート（`deleted_at`）で `deferred_task_id` の外部キーは
+/// 外れないため、リンクが残っているかでは判定できない。リンクだけを見て再オープン
+/// すると、利用者が消したタスクを黙って復活させてしまう（仕様 §3）。
+async fn find_live_deferred_task<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    task_id: Uuid,
+) -> Result<Option<tasks::Model>, sea_orm::DbErr> {
+    tasks::Entity::find_by_id(task_id)
+        .filter(tasks::Column::ProjectId.eq(project_id))
+        .filter(tasks::Column::DeletedAt.is_null())
+        .one(db)
+        .await
+}
+
+/// 畳んであった繰り延べ先タスクを開き直す。
+///
+/// 繰り延べを往復するたびに起票すると `seq_id` と通知を消費してタスク一覧が同じ内容で
+/// 埋まるので、有効なタスクが残っていれば使い回す（仕様 §3）。
+async fn reopen_deferred_task<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    task: tasks::Model,
+) -> Result<(), ReviewError> {
+    let default_status = project_statuses::Entity::find()
+        .filter(project_statuses::Column::ProjectId.eq(project_id))
+        .filter(project_statuses::Column::IsDefault.eq(true))
+        .one(db)
+        .await?
+        .ok_or(ReviewError::NoDefaultStatus(project_id))?;
+
+    let mut active: tasks::ActiveModel = task.into();
+    active.status_id = Set(default_status.id);
+    active.completed_at = Set(None);
+    active.updated_at = Set(chrono::Utc::now().into());
+    active.update(db).await?;
+    Ok(())
+}
+
 /// 繰り延べ先の通常タスクを起票する。
 ///
 /// 指摘の内容をタスク本文に写し、優先度は Low 固定。ステータスはプロジェクトの
@@ -438,16 +479,33 @@ pub async fn apply_transition<C: ConnectionTrait>(
     let from = finding.state;
     let now = chrono::Utc::now();
 
-    // 繰り延べの出入りで、リンク先タスクを作る／畳む
+    // 繰り延べの出入りで、リンク先タスクを作る／畳む。
+    // 不変条件は「常に同じ物理タスク」ではなく「同時に存在する有効なタスクは 1 件」
     let mut deferred_task_id = finding.deferred_task_id;
     if to == FindingState::Deferred {
-        let task = create_deferred_task(db, review.project_id, &finding, review, actor_id).await?;
-        deferred_task_id = Some(task.id);
-    } else if from == FindingState::Deferred {
-        if let Some(task_id) = finding.deferred_task_id {
-            close_deferred_task(db, review.project_id, task_id).await?;
+        // 前回のタスクが残っていれば開き直し、消えていれば代替を 1 件起票する
+        let live = match finding.deferred_task_id {
+            Some(task_id) => find_live_deferred_task(db, review.project_id, task_id).await?,
+            None => None,
+        };
+        match live {
+            Some(task) => {
+                let task_id = task.id;
+                reopen_deferred_task(db, review.project_id, task).await?;
+                deferred_task_id = Some(task_id);
+            }
+            None => {
+                let task =
+                    create_deferred_task(db, review.project_id, &finding, review, actor_id).await?;
+                deferred_task_id = Some(task.id);
+            }
         }
-        deferred_task_id = None;
+    } else if from == FindingState::Deferred
+        && let Some(task_id) = finding.deferred_task_id
+    {
+        close_deferred_task(db, review.project_id, task_id).await?;
+        // リンクは残す。次の繰り延べで開き直せるようにするため
+        // （消えていれば代替を起票してリンクを差し替える）
     }
 
     let finding_id = finding.id;
@@ -488,6 +546,46 @@ pub async fn record_transition<C: ConnectionTrait>(
     .insert(db)
     .await?;
     Ok(())
+}
+
+/// オーナー代行で棄却された指摘の件数。
+///
+/// 代行の条件（作成者がテナントから居なくなっていること）はオーナー自身が除名で
+/// 作れるので、防ぐ代わりに痕跡を残す（仕様 §2 / §5）。数え方は「`rejected` へ
+/// 遷移させたのがその指摘を出したラウンドの作成者以外」——代行できるのは
+/// オーナーだけなので、これで代行だけが数えられる。
+pub async fn owner_override_rejection_count<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+) -> Result<u64, sea_orm::DbErr> {
+    let rounds = scoped_rounds(project_id, repo, pr_number).all(db).await?;
+    if rounds.is_empty() {
+        return Ok(0);
+    }
+    let reviewer_by_review: std::collections::HashMap<Uuid, Uuid> =
+        rounds.iter().map(|r| (r.id, r.reviewer_id)).collect();
+
+    let rows: Vec<(Uuid, Uuid)> = entity::review_finding_transitions::Entity::find()
+        .inner_join(review_findings::Entity)
+        .filter(review_findings::Column::ReviewId.is_in(reviewer_by_review.keys().copied()))
+        .filter(entity::review_finding_transitions::Column::ToState.eq(FindingState::Rejected))
+        .select_only()
+        .column(review_findings::Column::ReviewId)
+        .column(entity::review_finding_transitions::Column::ActorId)
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|(review_id, actor_id)| {
+            reviewer_by_review
+                .get(review_id)
+                .is_some_and(|reviewer_id| reviewer_id != actor_id)
+        })
+        .count() as u64)
 }
 
 /// PR 単位の集計（重大度 × 状態の件数）。

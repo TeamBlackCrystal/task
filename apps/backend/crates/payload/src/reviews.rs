@@ -208,6 +208,11 @@ pub struct ReviewSummaryResponse {
     /// 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる
     #[schema(nullable)]
     pub latest_head_sha: Option<String>,
+    /// オーナー代行で棄却された指摘の件数
+    ///
+    /// 代行の条件（作成者の不在）はオーナー自身が作れるので、マージ可否を読む
+    /// その場所に痕跡を出す（仕様 §2 / §5）。
+    pub owner_override_rejections: u64,
     /// 集計対象のリポジトリ（`owner/name`）。GitHub 連携が無ければ `null`
     ///
     /// 連携を外すと集計の視界が空になるので、ゲートとして使う側は

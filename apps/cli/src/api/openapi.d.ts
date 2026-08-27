@@ -2906,6 +2906,14 @@ export interface components {
              *     レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。
              */
             mergeable: boolean;
+            /**
+             * Format: int64
+             * @description オーナー代行で棄却された指摘の件数
+             *
+             *     代行の条件（作成者の不在）はオーナー自身が作れるので、マージ可否を読む
+             *     その場所に痕跡を出す（仕様 §2 / §5）。
+             */
+            owner_override_rejections: number;
             /** Format: int32 */
             pr_number: number;
             /**
@@ -10890,6 +10898,8 @@ export interface operations {
                 project_id: string;
                 /** @description 対象 PR 番号 */
                 pr: number;
+                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
+                repo: string | null;
                 /** @description 状態での絞り込み（カンマ区切り。例: `open,fixed`） */
                 state: string | null;
                 /** @description 重大度での絞り込み（カンマ区切り。例: `high,medium`） */
@@ -11057,6 +11067,13 @@ export interface operations {
                 project_id: string;
                 /** @description 対象 PR 番号 */
                 pr: number;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo: string | null;
             };
             cookie?: never;
         };
@@ -11218,6 +11235,13 @@ export interface operations {
                 project_id: string;
                 /** @description 対象 PR 番号 */
                 pr: number;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo: string | null;
             };
             cookie?: never;
         };
