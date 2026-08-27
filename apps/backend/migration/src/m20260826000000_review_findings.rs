@@ -33,6 +33,14 @@ impl MigrationTrait for Migration {
                 summary     TEXT NOT NULL DEFAULT '',
                 pr_title    VARCHAR,
                 pr_author   VARCHAR,
+                -- 要約ジョブが GitHub から読んだ現在の head と、その確認時刻。
+                -- 画面の鮮度表示（レビューが古い／鮮度不明）に使う。push では
+                -- 更新されないので、時刻とセットで持って「いつ時点か」を示す
+                pr_head_sha        VARCHAR,
+                pr_head_checked_at TIMESTAMPTZ,
+                -- 投稿済み要約コメントの控え。次回から探索せずに直接更新する
+                -- （探索は初回と控えを失ったときだけ）
+                summary_comment_id BIGINT,
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
                 UNIQUE (project_id, repo_owner, repo_name, pr_number, round)
             )

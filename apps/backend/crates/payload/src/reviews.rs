@@ -208,6 +208,15 @@ pub struct ReviewSummaryResponse {
     /// 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる
     #[schema(nullable)]
     pub latest_head_sha: Option<String>,
+    /// 要約ジョブが最後に GitHub で確かめた現在の head（未確認なら `null`）
+    ///
+    /// 画面はこれと `latest_head_sha` を比べて「レビューが古い」を出す。
+    /// push では更新されないので、`pr_head_checked_at` と併せて読む（仕様 §5 / §8）。
+    #[schema(nullable)]
+    pub cached_pr_head_sha: Option<String>,
+    /// 上を確かめた時刻（未確認なら `null`）
+    #[schema(value_type = Option<String>, format = "date-time", nullable)]
+    pub pr_head_checked_at: Option<DateTime<Utc>>,
     /// オーナー代行で棄却された指摘の件数
     ///
     /// 代行の条件（作成者の不在）はオーナー自身が作れるので、マージ可否を読む

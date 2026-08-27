@@ -21321,6 +21321,10 @@
             "description": "マージ判定を塞いでいる指摘の件数（High / Medium かつ open / fixed）",
             "minimum": 0
           },
+          "cached_pr_head_sha": {
+            "type": ["string", "null"],
+            "description": "要約ジョブが最後に GitHub で確かめた現在の head（未確認なら `null`）\n\n画面はこれと `latest_head_sha` を比べて「レビューが古い」を出す。\npush では更新されないので、`pr_head_checked_at` と併せて読む（仕様 §5 / §8）。"
+          },
           "counts": {
             "type": "array",
             "items": {
@@ -21341,6 +21345,11 @@
             "format": "int64",
             "description": "オーナー代行で棄却された指摘の件数\n\n代行の条件（作成者の不在）はオーナー自身が作れるので、マージ可否を読む\nその場所に痕跡を出す（仕様 §2 / §5）。",
             "minimum": 0
+          },
+          "pr_head_checked_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "上を確かめた時刻（未確認なら `null`）"
           },
           "pr_number": {
             "type": "integer",

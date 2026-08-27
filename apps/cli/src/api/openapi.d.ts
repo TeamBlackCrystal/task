@@ -2896,6 +2896,13 @@ export interface components {
              * @description マージ判定を塞いでいる指摘の件数（High / Medium かつ open / fixed）
              */
             blocking: number;
+            /**
+             * @description 要約ジョブが最後に GitHub で確かめた現在の head（未確認なら `null`）
+             *
+             *     画面はこれと `latest_head_sha` を比べて「レビューが古い」を出す。
+             *     push では更新されないので、`pr_head_checked_at` と併せて読む（仕様 §5 / §8）。
+             */
+            cached_pr_head_sha?: string | null;
             /** @description 重大度 × 状態の件数 */
             counts: components["schemas"]["SeverityStateCount"][];
             /** @description 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる */
@@ -2914,6 +2921,11 @@ export interface components {
              *     その場所に痕跡を出す（仕様 §2 / §5）。
              */
             owner_override_rejections: number;
+            /**
+             * Format: date-time
+             * @description 上を確かめた時刻（未確認なら `null`）
+             */
+            pr_head_checked_at?: string | null;
             /** Format: int32 */
             pr_number: number;
             /**

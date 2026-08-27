@@ -220,6 +220,10 @@ pub async fn create_review(
         summary: Set(payload.summary),
         pr_title: Set(None),
         pr_author: Set(None),
+        // 要約ジョブが投稿時に埋める（鮮度の確認とコメントの控え）
+        pr_head_sha: Set(None),
+        pr_head_checked_at: Set(None),
+        summary_comment_id: Set(None),
         created_at: Set(now.into()),
     }
     .insert(&txn)
@@ -374,6 +378,8 @@ pub async fn get_review_summary(
     let owner_override_rejections =
         service::reviews::owner_override_rejection_count(&state.db, project_id, &repo, query.pr)
             .await?;
+    let (cached_pr_head_sha, pr_head_checked_at) =
+        service::reviews::cached_pr_head(&state.db, project_id, &repo, query.pr).await?;
 
     Ok(Json(ReviewSummaryResponse {
         pr_number: query.pr,
@@ -388,6 +394,8 @@ pub async fn get_review_summary(
             .collect(),
         blocking,
         latest_head_sha,
+        cached_pr_head_sha,
+        pr_head_checked_at,
         owner_override_rejections,
         repository: repo
             .is_linked()

@@ -28,6 +28,12 @@ pub struct Model {
     pub pr_title: Option<String>,
     #[sea_orm(nullable)]
     pub pr_author: Option<String>,
+    #[sea_orm(nullable)]
+    pub pr_head_sha: Option<String>,
+    #[sea_orm(nullable)]
+    pub pr_head_checked_at: Option<DateTimeWithTimeZone>,
+    #[sea_orm(nullable)]
+    pub summary_comment_id: Option<i64>,
     pub created_at: DateTimeWithTimeZone,
     #[sea_orm(
         belongs_to,

@@ -646,6 +646,33 @@ pub async fn latest_head_sha<C: ConnectionTrait>(
     Ok(latest)
 }
 
+/// 要約ジョブが最後に GitHub で確かめた head と、その時刻。
+///
+/// 画面はこれと最新ラウンドの `head_sha` を比べて「レビューが古い」を出す。
+/// push では更新されないので、時刻を添えて「いつ時点の確認か」を示す（仕様 §5 / §8）。
+pub async fn cached_pr_head<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+) -> Result<(Option<String>, Option<chrono::DateTime<chrono::Utc>>), sea_orm::DbErr> {
+    let row: Option<(
+        Option<String>,
+        Option<chrono::DateTime<chrono::FixedOffset>>,
+    )> = scoped_rounds(project_id, repo, pr_number)
+        .select_only()
+        .column(reviews::Column::PrHeadSha)
+        .column(reviews::Column::PrHeadCheckedAt)
+        .order_by_desc(reviews::Column::Round)
+        .into_tuple()
+        .one(db)
+        .await?;
+    Ok(match row {
+        Some((sha, at)) => (sha, at.map(|t| t.with_timezone(&chrono::Utc))),
+        None => (None, None),
+    })
+}
+
 /// PR 内のラウンド数（= 最大の round）。
 pub async fn round_count<C: ConnectionTrait>(
     db: &C,
