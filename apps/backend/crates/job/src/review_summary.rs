@@ -231,8 +231,9 @@ async fn update_summary(
     .await?;
 
     // 表示用の PR メタは取れたときだけ更新する。取れなくても要約は出す
-    // （PR 番号だけで用は足りるので、ここで止めると本題を落とす）
-    match service::github::pr_comments::fetch_pull_request(
+    // （PR 番号だけで用は足りるので、ここで止めると本題を落とす）。
+    // 同じ応答に現在の head が入っているので、鮮度の照合にも使う（仕様 §7）
+    let current_head_sha = match service::github::pr_comments::fetch_pull_request(
         &state.http_client,
         &token,
         &integration.repo_owner,
@@ -242,6 +243,7 @@ async fn update_summary(
     .await
     {
         Ok(meta) => {
+            let head = meta.head.as_ref().map(|h| h.sha.clone());
             service::reviews::cache_pr_meta(
                 &state.db,
                 job.project_id,
@@ -249,13 +251,18 @@ async fn update_summary(
                 job.pr_number,
                 &meta.title,
                 meta.user.as_ref().map(|u| u.login.as_str()),
+                head.as_deref(),
             )
             .await?;
+            head
         }
         Err(e) => {
+            // 取れなければ鮮度を確かめられない。本文は「鮮度不明」になり、
+            // マージ可は出さない（仕様 §7）
             tracing::warn!(error = %e, pr = job.pr_number, "fetch pull request meta failed");
+            None
         }
-    }
+    };
 
     // 指摘一覧への導線。アプリの公開 URL は既存の
     // `email_verification_app_url`（メール本文のリンクに使うもの）を流用する
@@ -275,6 +282,7 @@ async fn update_summary(
         job.project_id,
         repo,
         job.pr_number,
+        current_head_sha,
         findings_url,
     )
     .await?;
@@ -289,18 +297,43 @@ async fn update_summary(
         return Ok(());
     }
 
+    // マーカーはプロジェクトごと。同じリポジトリを見る別プロジェクトのコメントと
+    // 取り違えない（仕様 §7）
+    let marker = service::github::pr_comments::summary_marker(job.project_id);
     let updated_at = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
-    let body = service::reviews::render_summary_comment(&snapshot, &updated_at);
+    let body = service::reviews::render_summary_comment(&snapshot, &marker, &updated_at);
+
+    // 控えがあれば探索を飛ばす。無ければ「マーカー一致 かつ 自分の bot」で探す
+    let known_comment_id =
+        service::reviews::summary_comment_id(&state.db, job.project_id, repo, job.pr_number)
+            .await?;
+    let bot_login = format!("{}[bot]", github.github_app_name);
 
     let comment_id = service::github::pr_comments::upsert_summary_comment(
         &state.http_client,
         &token,
-        &integration.repo_owner,
-        &integration.repo_name,
-        job.pr_number,
-        &body,
+        &service::github::pr_comments::SummaryCommentTarget {
+            owner: &integration.repo_owner,
+            repo: &integration.repo_name,
+            number: job.pr_number,
+            marker: &marker,
+            bot_login: &bot_login,
+            known_comment_id,
+            body: &body,
+        },
     )
     .await?;
+
+    if known_comment_id != Some(comment_id) {
+        service::reviews::cache_summary_comment_id(
+            &state.db,
+            job.project_id,
+            repo,
+            job.pr_number,
+            comment_id,
+        )
+        .await?;
+    }
 
     tracing::info!(
         project_id = %job.project_id,

@@ -720,10 +720,30 @@ pub struct SummarySnapshot {
     pub rounds: i32,
     pub counts: Vec<(FindingSeverity, FindingState, u64)>,
     pub blocking: u64,
+    /// 最新ラウンドがレビューした commit
+    pub latest_head_sha: Option<String>,
+    /// 投稿時に GitHub から読んだ現在の head（取れなければ `None`）
+    pub current_head_sha: Option<String>,
+    /// オーナー代行で棄却された件数
+    pub owner_override_rejections: u64,
     /// 最新ラウンドの総評
     pub latest_summary: String,
     /// task 側の指摘一覧への URL（設定が無ければ省く）
     pub findings_url: Option<String>,
+}
+
+impl SummarySnapshot {
+    /// レビューした commit と現在の head が一致しているか。
+    ///
+    /// `None` は「確かめられなかった」——PR メタが取れなかったか、ラウンドが無い。
+    /// 一致を確かめられないときにマージ可を出さないための三値（仕様 §7）。
+    #[must_use]
+    pub fn head_is_fresh(&self) -> Option<bool> {
+        match (&self.latest_head_sha, &self.current_head_sha) {
+            (Some(reviewed), Some(current)) => Some(reviewed == current),
+            _ => None,
+        }
+    }
 }
 
 /// PR 単位の状態を 1 レスポンスぶん読み出す。
@@ -732,23 +752,32 @@ pub async fn summary_snapshot<C: ConnectionTrait>(
     project_id: Uuid,
     repo: &RepoRef,
     pr_number: i32,
+    current_head_sha: Option<String>,
     findings_url: Option<String>,
 ) -> Result<SummarySnapshot, sea_orm::DbErr> {
     let counts = severity_state_counts(db, project_id, repo, pr_number).await?;
     let blocking = blocking_count(&counts);
     let rounds = round_count(db, project_id, repo, pr_number).await?;
+    let owner_override_rejections =
+        owner_override_rejection_count(db, project_id, repo, pr_number).await?;
 
     let latest = scoped_rounds(project_id, repo, pr_number)
         .order_by_desc(reviews::Column::Round)
         .one(db)
         .await?;
+    let (latest_summary, latest_head_sha) = latest
+        .map(|r| (r.summary, Some(r.head_sha)))
+        .unwrap_or_default();
 
     Ok(SummarySnapshot {
         pr_number,
         rounds,
         counts,
         blocking,
-        latest_summary: latest.map(|r| r.summary).unwrap_or_default(),
+        latest_head_sha,
+        current_head_sha,
+        owner_override_rejections,
+        latest_summary,
         findings_url,
     })
 }
@@ -757,17 +786,41 @@ pub async fn summary_snapshot<C: ConnectionTrait>(
 ///
 /// 先頭のマーカーで自分のコメントを特定するため、行頭に必ず置く。
 /// 件数が 0 の組み合わせは表に出さない（読む側の負荷を上げない）。
-pub fn render_summary_comment(snapshot: &SummarySnapshot, updated_at: &str) -> String {
+fn short_sha(sha: Option<&str>) -> String {
+    sha.map_or_else(|| "(不明)".to_string(), |s| s.chars().take(7).collect())
+}
+
+pub fn render_summary_comment(
+    snapshot: &SummarySnapshot,
+    marker: &str,
+    updated_at: &str,
+) -> String {
     use std::fmt::Write as _;
 
     let mut out = String::new();
-    let _ = writeln!(out, "{}", crate::github::pr_comments::SUMMARY_MARKER);
+    let _ = writeln!(out, "{marker}");
     let _ = writeln!(out, "## レビュー指摘");
     let _ = writeln!(out);
 
-    // 集計 API と同じ規則（レビューが 1 件も無い PR を「可」にしない）
-    if snapshot.blocking == 0 && snapshot.rounds > 0 {
+    // 集計 API と同じ規則（レビューが 1 件も無い PR を「可」にしない）に加えて、
+    // レビュー後にコミットが積まれていないことを確かめる。確かめられないときも
+    // 可を出さない（仕様 §7）
+    if snapshot.blocking == 0 && snapshot.rounds > 0 && snapshot.head_is_fresh() == Some(true) {
         let _ = writeln!(out, "**マージ可** — High / Medium の未解決はありません。");
+    } else if snapshot.blocking == 0 && snapshot.rounds > 0 {
+        let _ = match snapshot.head_is_fresh() {
+            Some(false) => writeln!(
+                out,
+                "**レビュー後に更新あり** — High / Medium の未解決はありませんが、\
+                 レビューした commit（{}）より後にコミットが積まれています。",
+                short_sha(snapshot.latest_head_sha.as_deref())
+            ),
+            _ => writeln!(
+                out,
+                "**鮮度不明** — High / Medium の未解決はありませんが、現在の HEAD を\
+                 確認できませんでした。"
+            ),
+        };
     } else {
         let _ = writeln!(
             out,
@@ -811,8 +864,23 @@ pub fn render_summary_comment(snapshot: &SummarySnapshot, updated_at: &str) -> S
     }
     let _ = writeln!(out);
 
+    if snapshot.owner_override_rejections > 0 {
+        // 代行の条件はオーナー自身が作れるので、マージ可否を読むその場所に痕跡を出す
+        let _ = writeln!(
+            out,
+            "オーナー代行での棄却: {} 件",
+            snapshot.owner_override_rejections
+        );
+        let _ = writeln!(out);
+    }
+
     if snapshot.rounds > 0 {
-        let _ = writeln!(out, "ラウンド: R{}（最新）", snapshot.rounds);
+        let _ = writeln!(
+            out,
+            "ラウンド: R{}（最新。{} を見た判断）",
+            snapshot.rounds,
+            short_sha(snapshot.latest_head_sha.as_deref())
+        );
         if !snapshot.latest_summary.trim().is_empty() {
             let _ = writeln!(out);
             let _ = writeln!(out, "> {}", snapshot.latest_summary.replace('\n', "\n> "));
@@ -839,10 +907,60 @@ pub async fn cache_pr_meta<C: ConnectionTrait>(
     pr_number: i32,
     title: &str,
     author: Option<&str>,
+    head_sha: Option<&str>,
 ) -> Result<(), sea_orm::DbErr> {
     reviews::Entity::update_many()
         .col_expr(reviews::Column::PrTitle, Expr::value(Some(title)))
         .col_expr(reviews::Column::PrAuthor, Expr::value(author))
+        // head は確認時刻とセットで持つ。push では更新されないので、
+        // 「いつ時点の確認か」が無いと画面が鮮度を語れない（仕様 §5 / §8）
+        .col_expr(reviews::Column::PrHeadSha, Expr::value(head_sha))
+        .col_expr(
+            reviews::Column::PrHeadCheckedAt,
+            Expr::value(head_sha.map(|_| chrono::Utc::now())),
+        )
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
+        .filter(reviews::Column::PrNumber.eq(pr_number))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// 投稿済み要約コメントの控え（最新ラウンドの行に持つ）。
+pub async fn summary_comment_id<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+) -> Result<Option<i64>, sea_orm::DbErr> {
+    let row: Option<Option<i64>> = scoped_rounds(project_id, repo, pr_number)
+        .select_only()
+        .column(reviews::Column::SummaryCommentId)
+        .order_by_desc(reviews::Column::Round)
+        .into_tuple()
+        .one(db)
+        .await?;
+    Ok(row.flatten())
+}
+
+/// 投稿できた要約コメントの ID を控える。
+///
+/// 次回から探索を飛ばして直接更新するため。捨てるのは編集が 404 を返したときだけで、
+/// 一時障害では捨てない（捨てるとコメントが増える。仕様 §7）。
+pub async fn cache_summary_comment_id<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    repo: &RepoRef,
+    pr_number: i32,
+    comment_id: i64,
+) -> Result<(), sea_orm::DbErr> {
+    reviews::Entity::update_many()
+        .col_expr(
+            reviews::Column::SummaryCommentId,
+            Expr::value(Some(comment_id)),
+        )
         .filter(reviews::Column::ProjectId.eq(project_id))
         .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
         .filter(reviews::Column::RepoName.eq(repo.name.clone()))
@@ -978,6 +1096,9 @@ mod tests {
         }
     }
 
+    const MARKER: &str = "<!-- koyori-review-summary:test -->";
+    const REVIEWED: &str = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
+
     fn snapshot(counts: Vec<(FindingSeverity, FindingState, u64)>) -> SummarySnapshot {
         let blocking = blocking_count(&counts);
         SummarySnapshot {
@@ -985,6 +1106,10 @@ mod tests {
             rounds: 2,
             counts,
             blocking,
+            // 既定は「レビューした commit = 現在の head」（鮮度は満たしている）
+            latest_head_sha: Some(REVIEWED.into()),
+            current_head_sha: Some(REVIEWED.into()),
+            owner_override_rejections: 0,
             latest_summary: "総評".into(),
             findings_url: Some("https://task.example/findings".into()),
         }
@@ -1000,10 +1125,11 @@ mod tests {
                 (FindingSeverity::High, Open, 1),
                 (FindingSeverity::Low, Deferred, 2),
             ]),
+            MARKER,
             "2026-08-26 10:00",
         );
         assert!(
-            blocked.starts_with(crate::github::pr_comments::SUMMARY_MARKER),
+            blocked.starts_with(MARKER),
             "マーカーは行頭に置く: {blocked}"
         );
         assert!(blocked.contains("マージ不可"));
@@ -1013,6 +1139,7 @@ mod tests {
 
         let clean = render_summary_comment(
             &snapshot(vec![(FindingSeverity::High, Verified, 1)]),
+            MARKER,
             "2026-08-26 10:00",
         );
         assert!(clean.contains("マージ可"));
@@ -1022,8 +1149,10 @@ mod tests {
         let unreviewed = render_summary_comment(
             &SummarySnapshot {
                 rounds: 0,
+                latest_head_sha: None,
                 ..snapshot(vec![])
             },
+            MARKER,
             "2026-08-26 10:00",
         );
         assert!(
@@ -1034,14 +1163,65 @@ mod tests {
         // 同じ入力なら同じ本文（毎回の更新で差分が出ると通知が無駄に飛ぶ）
         let again = render_summary_comment(
             &snapshot(vec![(FindingSeverity::High, Verified, 1)]),
+            MARKER,
             "2026-08-26 10:00",
         );
         assert_eq!(clean, again);
     }
 
+    /// レビュー後にコミットが積まれていたら「マージ可」と書かない。
+    /// 現在の head を確かめられなかったときも書かない（仕様 §7）。
+    #[test]
+    fn summary_comment_does_not_say_mergeable_when_the_review_is_stale() {
+        let stale = render_summary_comment(
+            &SummarySnapshot {
+                current_head_sha: Some("0000000000000000000000000000000000000000".into()),
+                ..snapshot(vec![(FindingSeverity::High, Verified, 1)])
+            },
+            MARKER,
+            "2026-08-26 10:00",
+        );
+        assert!(
+            !stale.contains("マージ可"),
+            "古い判定を可と書かない: {stale}"
+        );
+        assert!(stale.contains("レビュー後に更新あり"));
+
+        let unknown = render_summary_comment(
+            &SummarySnapshot {
+                current_head_sha: None,
+                ..snapshot(vec![(FindingSeverity::High, Verified, 1)])
+            },
+            MARKER,
+            "2026-08-26 10:00",
+        );
+        assert!(
+            !unknown.contains("マージ可"),
+            "確かめられないときも可と書かない: {unknown}"
+        );
+        assert!(unknown.contains("鮮度不明"));
+    }
+
+    /// オーナー代行での棄却は件数を出す（0 なら出さない）。
+    #[test]
+    fn summary_comment_shows_owner_override_rejections() {
+        let plain = render_summary_comment(&snapshot(vec![]), MARKER, "2026-08-26 10:00");
+        assert!(!plain.contains("オーナー代行"));
+
+        let overridden = render_summary_comment(
+            &SummarySnapshot {
+                owner_override_rejections: 2,
+                ..snapshot(vec![])
+            },
+            MARKER,
+            "2026-08-26 10:00",
+        );
+        assert!(overridden.contains("オーナー代行での棄却: 2 件"));
+    }
+
     #[test]
     fn summary_comment_without_findings_says_so() {
-        let body = render_summary_comment(&snapshot(vec![]), "2026-08-26 10:00");
+        let body = render_summary_comment(&snapshot(vec![]), MARKER, "2026-08-26 10:00");
         assert!(body.contains("指摘はありません。"));
         assert!(body.contains("マージ可"));
     }

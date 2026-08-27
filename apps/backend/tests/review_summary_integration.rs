@@ -18,13 +18,17 @@ const PR_NUMBER: i32 = 618;
 const COMMENT_ID: i64 = 4242;
 /// 鍵の単位に使うリポジトリ（連携先を差し替えると別の鍵になる）
 const REPO_KEY: &str = "acme/backend";
+/// テストの GitHub App 名（`GITHUB_APP_NAME`）から作られる bot の login
+const BOT_LOGIN: &str = "task-app[bot]";
+/// ラウンドが見た commit。PR メタの head と揃えると「鮮度あり」になる
+const REVIEWED_HEAD: &str = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
 
 fn unique_installation_id() -> i64 {
     // 同じ DB を共有する他テストと衝突しない範囲で散らす
     (Uuid::new_v4().as_u128() % 1_000_000) as i64 + 8_000_000
 }
 
-async fn mount_mocks(server: &MockServer, existing_comment: bool) {
+async fn mount_mocks(server: &MockServer, existing_comment: bool, marker: &str) {
     Mock::given(method("POST"))
         .and(path_regex(r"^/app/installations/\d+/access_tokens$"))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
@@ -40,7 +44,8 @@ async fn mount_mocks(server: &MockServer, existing_comment: bool) {
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "title": "feat: レビュー指摘管理",
-            "user": { "login": "yupix" }
+            "user": { "login": "yupix" },
+            "head": { "sha": REVIEWED_HEAD }
         })))
         .mount(server)
         .await;
@@ -51,7 +56,8 @@ async fn mount_mocks(server: &MockServer, existing_comment: bool) {
             { "id": 1, "body": "無関係なコメント" },
             {
                 "id": COMMENT_ID,
-                "body": format!("{}\n古い要約", service::github::pr_comments::SUMMARY_MARKER)
+                "body": format!("{}\n古い要約", marker),
+                "user": { "login": BOT_LOGIN, "type": "Bot" }
             },
         ])
     } else {
@@ -155,13 +161,13 @@ async fn review_summary_comment_is_created_once_and_then_edited() {
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
     }
-    mount_mocks(&mock_server, false).await;
-
     let mut app = TestApp::new_with_github().await;
     let reviewer = app.insert_user_default().await;
     let tp = app.insert_tenant_project(reviewer.id).await;
     seed_statuses(&app, tp.project_id).await;
     link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, false, &marker).await;
 
     app.reset_session_client();
     app.login_session_no_content(&reviewer.email, &reviewer.password)
@@ -205,10 +211,7 @@ async fn review_summary_comment_is_created_once_and_then_edited() {
         posted.iter().filter(|b| b.get("body").is_some()).collect();
     assert_eq!(posted.len(), 1, "要約コメントは 1 本だけ作る");
     let body = posted[0]["body"].as_str().expect("comment body");
-    assert!(
-        body.starts_with(service::github::pr_comments::SUMMARY_MARKER),
-        "マーカーが行頭にある: {body}"
-    );
+    assert!(body.starts_with(&marker), "マーカーが行頭にある: {body}");
     assert!(body.contains("マージ不可"), "High が未解決: {body}");
     assert!(body.contains("| High | Open | 1 |"), "件数表が出る: {body}");
 
@@ -234,13 +237,13 @@ async fn an_existing_summary_comment_is_updated_in_place() {
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
     }
-    mount_mocks(&mock_server, true).await;
-
     let mut app = TestApp::new_with_github().await;
     let reviewer = app.insert_user_default().await;
     let tp = app.insert_tenant_project(reviewer.id).await;
     seed_statuses(&app, tp.project_id).await;
     link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, true, &marker).await;
 
     app.reset_session_client();
     app.login_session_no_content(&reviewer.email, &reviewer.password)
@@ -281,7 +284,7 @@ async fn an_existing_summary_comment_is_updated_in_place() {
     let patched = bodies_of(&mock_server, wiremock::http::Method::PATCH).await;
     assert_eq!(patched.len(), 1, "同じコメントを 1 回だけ編集する");
     let body = patched[0]["body"].as_str().expect("comment body");
-    assert!(body.starts_with(service::github::pr_comments::SUMMARY_MARKER));
+    assert!(body.starts_with(&marker));
     assert!(body.contains("マージ可"), "指摘なしならマージ可: {body}");
     assert!(body.contains("指摘はありません。"));
 
@@ -300,13 +303,13 @@ async fn consecutive_transitions_coalesce_into_one_summary_update() {
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
     }
-    mount_mocks(&mock_server, false).await;
-
     let mut app = TestApp::new_with_github().await;
     let reviewer = app.insert_user_default().await;
     let tp = app.insert_tenant_project(reviewer.id).await;
     seed_statuses(&app, tp.project_id).await;
     link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, false, &marker).await;
 
     app.reset_session_client();
     app.login_session_no_content(&reviewer.email, &reviewer.password)
@@ -511,13 +514,13 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
     }
-    mount_mocks(&mock_server, true).await;
-
     let mut app = TestApp::new_with_github().await;
     let reviewer = app.insert_user_default().await;
     let tp = app.insert_tenant_project(reviewer.id).await;
     seed_statuses(&app, tp.project_id).await;
     link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, true, &marker).await;
 
     app.reset_session_client();
     app.login_session_no_content(&reviewer.email, &reviewer.password)
@@ -607,7 +610,88 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
     app.cleanup_user(reviewer.id).await;
 }
 
-/// GitHub 連携の無いプロジェクトでは投稿しない（起票・管理自体は成功している）。
+/// 第三者が同じマーカーのコメントを先に置いていても、それを更新しに行かない。
+///
+/// マーカーは PR の参加者なら誰でも本文に書ける。App は他人のコメントを編集できないので、
+/// 掴んでしまうと更新が失敗し続け、失敗はベストエフォートで握り潰されるため正式な要約が
+/// 永久に作られない（仕様 §7）。
+#[serial_test::serial]
+#[tokio::test]
+async fn a_third_party_marker_does_not_hijack_the_summary_comment() {
+    let mock_server = MockServer::start().await;
+    // SAFETY: serial アトリビュートにより他テストとの並列実行を防いでいる。
+    unsafe {
+        std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
+    }
+
+    let mut app = TestApp::new_with_github().await;
+    let reviewer = app.insert_user_default().await;
+    let tp = app.insert_tenant_project(reviewer.id).await;
+    seed_statuses(&app, tp.project_id).await;
+    link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+
+    // 共通のモックを敷いたうえで、一覧だけ「第三者が先取りしたコメント」に差し替える
+    mount_mocks(&mock_server, false, &marker).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/repos/{REPO_OWNER}/{REPO_NAME}/issues/{PR_NUMBER}/comments"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": 999,
+                "body": format!("{}\nにせの要約", marker),
+                "user": { "login": "someone", "type": "User" }
+            }])),
+        )
+        .mount(&mock_server)
+        .await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&reviewer.email, &reviewer.password)
+        .await;
+    let res = app
+        .post_json_with_session(
+            &format!(
+                "/v1/tenants/{}/projects/{}/reviews",
+                tp.tenant_id, tp.project_id
+            ),
+            serde_json::json!({
+                "pr_number": PR_NUMBER,
+                "head_sha": REVIEWED_HEAD,
+                "summary": "総評",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let state = job_state(&app);
+    job::review_summary::process(
+        job::ReviewSummaryJob {
+            project_id: tp.project_id,
+            pr_number: PR_NUMBER,
+        },
+        apalis::prelude::Data::new(state),
+    )
+    .await
+    .expect("post review summary");
+
+    // 第三者のコメント（999）を編集しに行かず、自分のコメントを新規に作る
+    let patched = bodies_of(&mock_server, wiremock::http::Method::PATCH).await;
+    assert!(
+        patched.is_empty(),
+        "他人のコメントを更新しようとしない: {patched:?}"
+    );
+    let posted = bodies_of(&mock_server, wiremock::http::Method::POST).await;
+    let posted: Vec<&serde_json::Value> =
+        posted.iter().filter(|b| b.get("body").is_some()).collect();
+    assert_eq!(posted.len(), 1, "自分の要約を新規に作る");
+
+    app.cleanup_user(reviewer.id).await;
+}
+
+/// GitHub 連携の無いプロジェクトでは投稿しない（起票・管理自体は task 側で完結する）。
 #[serial_test::serial]
 #[tokio::test]
 async fn a_project_without_integration_skips_the_comment() {
@@ -616,13 +700,13 @@ async fn a_project_without_integration_skips_the_comment() {
     unsafe {
         std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
     }
-    mount_mocks(&mock_server, false).await;
-
     let mut app = TestApp::new_with_github().await;
     let reviewer = app.insert_user_default().await;
     let tp = app.insert_tenant_project(reviewer.id).await;
     seed_statuses(&app, tp.project_id).await;
     // 連携は張らない
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, false, &marker).await;
 
     app.reset_session_client();
     app.login_session_no_content(&reviewer.email, &reviewer.password)
