@@ -1,0 +1,86 @@
+# frontend の検証（fmt / lint / typecheck / unit test / build）を Forgejo Actions で回す。
+#
+# GitHub 側（.github/workflows/frontend-*.yml）と同じ内容。ジョブを分けないのは、
+# runner が 1 台の構成では pnpm install を 5 回やり直す方が高くつくため。
+#
+# 順序に意味がある: fmt:check は生成物（src/generated/api.d.ts）が無い状態で走らせる。
+# lint 以降は生成された型が要るので、その手前で openapi:generate を挟む。
+
+name: Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/frontend/**'
+      - '.forgejo/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'apps/frontend/**'
+      - '.forgejo/workflows/frontend.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: docker
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: https://github.com/actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: https://github.com/pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: apps/frontend/package.json
+
+      - name: Get pnpm store path
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+        working-directory: apps/frontend
+
+      - name: Cache pnpm store
+        uses: https://github.com/actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: forgejo-pnpm-frontend-${{ runner.os }}-${{ hashFiles('apps/frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            forgejo-pnpm-frontend-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/frontend
+
+      - name: Check formatting
+        run: pnpm fmt:check
+        working-directory: apps/frontend
+
+      - name: Generate OpenAPI types
+        run: pnpm run openapi:generate
+        working-directory: apps/frontend
+
+      - name: Run lint
+        run: pnpm lint
+        working-directory: apps/frontend
+
+      - name: Run typecheck
+        run: pnpm vue-tsc --noEmit
+        working-directory: apps/frontend
+
+      - name: Run unit tests
+        run: pnpm test:unit
+        working-directory: apps/frontend
+
+      - name: Build
+        run: pnpm build
+        working-directory: apps/frontend
