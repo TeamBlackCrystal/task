@@ -170,28 +170,64 @@ describe('マージ判定の材料', () => {
 });
 
 describe('mergeVerdict', () => {
+  const REVIEWED = '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e';
+
   const summary = (over: Partial<Parameters<typeof mergeVerdict>[0]>) =>
     mergeVerdict({
       pr_number: 618,
       rounds: 1,
       counts: [],
       blocking: 0,
-      latest_head_sha: '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e',
+      latest_head_sha: REVIEWED,
+      // 既定は「連携あり・レビューした commit が現在の head」＝可を出してよい状態
+      repository: 'acme/app',
+      cached_pr_head_sha: REVIEWED,
+      pr_head_checked_at: '2026-08-28T10:00:00Z',
+      owner_override_rejections: 0,
       mergeable: true,
       ...over,
     });
 
+  it('連携が無ければ「可」と言わない（集計の視界が空になるため）', () => {
+    const verdict = summary({ repository: null });
+    expect(verdict.kind).toBe('unlinked');
+    expect(verdict.title).toBe('リポジトリ未確定');
+  });
+
   it('レビューが 1 件も無い PR は「可」と言わない', () => {
     const verdict = summary({ rounds: 0, latest_head_sha: null, mergeable: false });
+    expect(verdict.kind).toBe('unreviewed');
     expect(verdict.title).toBe('未レビュー');
     expect(verdict.detail).toContain('まだレビューされていません');
   });
 
-  it('レビュー済みならレビューした commit を添える', () => {
-    expect(summary({}).title).toBe('マージ可');
-    expect(summary({}).detail).toContain('60cdd77');
-    expect(summary({ blocking: 2, mergeable: false }).title).toBe('マージ不可（2 件）');
-    expect(summary({ blocking: 2, mergeable: false }).detail).toContain('60cdd77');
+  it('レビュー後にコミットが積まれていれば「可」と言わない', () => {
+    const verdict = summary({ cached_pr_head_sha: 'ffffffffffffffffffffffffffffffffffffffff' });
+    expect(verdict.kind).toBe('stale');
+    expect(verdict.title).toBe('レビューが古い');
+    expect(verdict.detail).toContain('fffffff');
+  });
+
+  it('現在の HEAD を確かめられていなければ「可」と言わない', () => {
+    const verdict = summary({ cached_pr_head_sha: null });
+    expect(verdict.kind).toBe('unknown-freshness');
+    expect(verdict.title).toBe('鮮度不明');
+  });
+
+  it('可のときはレビューした commit と確認時刻を添える', () => {
+    const verdict = summary({});
+    expect(verdict.kind).toBe('mergeable');
+    expect(verdict.title).toBe('マージ可');
+    expect(verdict.detail).toContain('60cdd77');
+    // キャッシュは push で更新されないので、いつ時点の確認かを必ず出す
+    expect(verdict.detail).toContain('GitHub 確認');
+  });
+
+  it('未解決が残っていれば件数つきで不可', () => {
+    const verdict = summary({ blocking: 2, mergeable: false });
+    expect(verdict.kind).toBe('blocked');
+    expect(verdict.title).toBe('マージ不可（2 件）');
+    expect(verdict.detail).toContain('60cdd77');
   });
 });
 
@@ -202,6 +238,10 @@ describe('summaryRows', () => {
       rounds: 2,
       blocking: 2,
       latest_head_sha: null,
+      repository: 'acme/app',
+      cached_pr_head_sha: null,
+      pr_head_checked_at: null,
+      owner_override_rejections: 0,
       mergeable: false,
       counts: [
         { severity: 'low', state: 'deferred', count: 3 },

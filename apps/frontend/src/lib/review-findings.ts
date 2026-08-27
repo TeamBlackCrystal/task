@@ -131,9 +131,33 @@ export function findingActions(
  * （backend も未レビューの PR を mergeable にしない）。レビューした commit は
  * 出しておく——手元の HEAD と見比べれば、レビュー後に積まれたコミットに気づける。
  */
-export function mergeVerdict(summary: ReviewSummary): { title: string; detail: string } {
+export type MergeVerdictKind =
+  | 'unlinked'
+  | 'unreviewed'
+  | 'blocked'
+  | 'stale'
+  | 'unknown-freshness'
+  | 'mergeable';
+
+/** 「可」を出してよいのは `mergeable` だけ。ほかはすべてゲートとして通さない。 */
+export function mergeVerdict(summary: ReviewSummary): {
+  kind: MergeVerdictKind;
+  title: string;
+  detail: string;
+} {
+  // 連携が無いと集計の視界が空になり、空のラウンド 1 本で「可」を作れてしまう。
+  // CLI だけで塞いでも、人間の主経路である画面が素通しなら意味がない（仕様 §8）
+  if (!summary.repository) {
+    return {
+      kind: 'unlinked',
+      title: 'リポジトリ未確定',
+      detail:
+        'GitHub 連携が無いため、どのリポジトリの PR を見た集計か決まりません。マージの判断には使えません',
+    };
+  }
   if (summary.rounds === 0) {
     return {
+      kind: 'unreviewed',
       title: '未レビュー',
       detail: 'まだレビューされていません。レビューを 1 ラウンド出してください',
     };
@@ -143,15 +167,44 @@ export function mergeVerdict(summary: ReviewSummary): { title: string; detail: s
     : '';
   if (!summary.mergeable) {
     return {
+      kind: 'blocked',
       title: `マージ不可（${summary.blocking} 件）`,
       detail: ['High / Medium が未解決です。Low / Nit は繰り延べできます', reviewed]
         .filter(Boolean)
         .join(' · '),
     };
   }
+  // ここから先は未解決ゼロ。レビュー後にコミットが積まれていないかを見る。
+  // 判定は片道降格——「可」以外へ落とすのにだけ使い、「可」の保証には使わない
+  if (!summary.cached_pr_head_sha) {
+    return {
+      kind: 'unknown-freshness',
+      title: '鮮度不明',
+      detail: ['High / Medium の未解決はありませんが、現在の HEAD を確認できていません', reviewed]
+        .filter(Boolean)
+        .join(' · '),
+    };
+  }
+  if (summary.cached_pr_head_sha !== summary.latest_head_sha) {
+    return {
+      kind: 'stale',
+      title: 'レビューが古い',
+      detail: [
+        `レビュー後にコミットが積まれています（現在 ${summary.cached_pr_head_sha.slice(0, 7)}）`,
+        reviewed,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    };
+  }
+  // キャッシュは push では更新されないので、いつ時点の確認かを必ず添える
+  const checkedAt = summary.pr_head_checked_at
+    ? `GitHub 確認: ${new Date(summary.pr_head_checked_at).toLocaleString('ja-JP')} 時点`
+    : '';
   return {
+    kind: 'mergeable',
     title: 'マージ可',
-    detail: ['High / Medium の未解決はありません', reviewed].filter(Boolean).join(' · '),
+    detail: ['High / Medium の未解決はありません', reviewed, checkedAt].filter(Boolean).join(' · '),
   };
 }
 

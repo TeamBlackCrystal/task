@@ -233,23 +233,34 @@ async function onRoundCreated() {
               v-if="summary"
               class="flex items-center gap-3 rounded-lg border p-4"
               :class="
-                summary.mergeable
+                mergeVerdict(summary).kind === 'mergeable'
                   ? 'border-green-600/40 bg-green-600/5'
                   : 'border-destructive/40 bg-destructive/5'
               "
               data-testid="merge-gate"
             >
               <component
-                :is="summary.mergeable ? PhCheckCircle : PhWarningCircle"
+                :is="mergeVerdict(summary).kind === 'mergeable' ? PhCheckCircle : PhWarningCircle"
                 class="size-5 shrink-0"
                 :class="
-                  summary.mergeable ? 'text-green-700 dark:text-green-400' : 'text-destructive'
+                  mergeVerdict(summary).kind === 'mergeable'
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-destructive'
                 "
               />
               <div class="flex flex-col">
                 <span class="text-sm font-medium">{{ mergeVerdict(summary).title }}</span>
                 <span class="text-muted-foreground text-xs">
                   {{ mergeVerdict(summary).detail }}
+                </span>
+                <span
+                  v-if="summary.repository || summary.owner_override_rejections > 0"
+                  class="text-muted-foreground mt-0.5 text-xs"
+                >
+                  <template v-if="summary.repository">{{ summary.repository }}</template>
+                  <template v-if="summary.owner_override_rejections > 0">
+                    · オーナー代行での棄却 {{ summary.owner_override_rejections }} 件
+                  </template>
                 </span>
               </div>
               <div class="ml-auto flex flex-wrap justify-end gap-1">

@@ -11015,11 +11015,11 @@
           },
           {
             "name": "repo",
-            "in": "path",
+            "in": "query",
             "description": "見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ）",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": ["string", "null"]
+              "type": "string"
             }
           },
           {
@@ -11311,11 +11311,11 @@
           },
           {
             "name": "repo",
-            "in": "path",
+            "in": "query",
             "description": "見るリポジトリ（`owner/name`）。既定は現在の連携先\n\n連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を\n読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": ["string", "null"]
+              "type": "string"
             }
           }
         ],
@@ -11693,11 +11693,11 @@
           },
           {
             "name": "repo",
-            "in": "path",
+            "in": "query",
             "description": "見るリポジトリ（`owner/name`）。既定は現在の連携先\n\n連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を\n読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": ["string", "null"]
+              "type": "string"
             }
           }
         ],

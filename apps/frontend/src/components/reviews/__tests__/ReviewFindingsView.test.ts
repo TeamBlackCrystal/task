@@ -42,6 +42,11 @@ type MockState = {
   roundReviewerId?: string;
   /** これまでのラウンド数（0 = 未レビュー） */
   rounds?: number;
+  /** 集計対象のリポジトリ。null で「連携なし」を作る */
+  repository?: string | null;
+  /** 要約ジョブが確かめた現在の head。null で「鮮度不明」を作る */
+  cachedHeadSha?: string | null;
+  ownerOverrideRejections?: number;
 };
 
 const REVIEWED_HEAD = '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e';
@@ -99,6 +104,11 @@ function stubFetch(state: MockState) {
         })),
         blocking,
         latest_head_sha: rounds > 0 ? REVIEWED_HEAD : null,
+        // 既定は「連携あり・レビューした commit が現在の head」＝可を出してよい状態
+        repository: state.repository === undefined ? 'acme/app' : state.repository,
+        cached_pr_head_sha: state.cachedHeadSha === undefined ? REVIEWED_HEAD : state.cachedHeadSha,
+        pr_head_checked_at: '2026-08-28T10:00:00Z',
+        owner_override_rejections: state.ownerOverrideRejections ?? 0,
         mergeable: rounds > 0 && blocking === 0,
       });
     }
@@ -281,6 +291,44 @@ describe('ReviewFindingsView', () => {
 
     expect(wrapper.text()).toContain('マージ可');
     expect(wrapper.text()).toContain(REVIEWED_HEAD.slice(0, 7));
+  });
+
+  it('連携が無ければ「マージ可」を出さない', async () => {
+    stubFetch({ findings: [], repository: null });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const gate = wrapper.get('[data-testid="merge-gate"]').text();
+    expect(gate).toContain('リポジトリ未確定');
+    expect(gate).not.toContain('マージ可');
+  });
+
+  it('レビュー後にコミットが積まれていれば「マージ可」を出さない', async () => {
+    stubFetch({ findings: [], cachedHeadSha: 'ffffffffffffffffffffffffffffffffffffffff' });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const gate = wrapper.get('[data-testid="merge-gate"]').text();
+    expect(gate).toContain('レビューが古い');
+    expect(gate).not.toContain('マージ可');
+  });
+
+  it('現在の HEAD を確かめられていなければ「マージ可」を出さない', async () => {
+    stubFetch({ findings: [], cachedHeadSha: null });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const gate = wrapper.get('[data-testid="merge-gate"]').text();
+    expect(gate).toContain('鮮度不明');
+    expect(gate).not.toContain('マージ可');
+  });
+
+  it('オーナー代行での棄却は件数を出す', async () => {
+    stubFetch({ findings: [], ownerOverrideRejections: 2 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="merge-gate"]').text()).toContain('オーナー代行での棄却 2 件');
   });
 
   it('verified の指摘には操作ボタンを出さない（終端）', async () => {
