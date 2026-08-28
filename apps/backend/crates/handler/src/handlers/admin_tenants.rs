@@ -21,6 +21,9 @@ use payload::tenants::TenantResponse;
 #[utoipa::path(
     get,
     path = "/",
+    // tenants::list_tenants と関数名が同じで operationId が重複すると、
+    // openapi-typescript の生成型が両者のユニオンになる（OpenAPI 仕様違反）
+    operation_id = "list_admin_tenants",
     tag = "Admin Tenants",
     summary = "全テナント一覧（管理者）",
     responses(
@@ -45,6 +48,7 @@ pub async fn list_tenants(
 #[utoipa::path(
     get,
     path = "/{id}",
+    operation_id = "get_admin_tenant",
     tag = "Admin Tenants",
     summary = "テナント詳細（管理者）",
     params(("id" = Uuid, Path, description = "テナントID")),
@@ -69,6 +73,7 @@ pub async fn get_tenant(
 #[utoipa::path(
     delete,
     path = "/{id}",
+    operation_id = "delete_admin_tenant",
     tag = "Admin Tenants",
     summary = "テナント強制削除（管理者）",
     params(("id" = Uuid, Path, description = "テナントID")),

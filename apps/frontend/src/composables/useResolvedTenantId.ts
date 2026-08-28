@@ -17,8 +17,7 @@ export function useResolvedTenantId(tenantDisplayId: MaybeRefOrGetter<string>) {
     queryFn: async ({ signal }) => {
       const { data, error } = await fetchClient.GET(LIST_TENANTS_PATH, { signal });
       if (error) throw error;
-      if (!data) return [] as TenantResponse[];
-      return (Array.isArray(data) ? data : data.tenants) as TenantResponse[];
+      return (data ?? []) as TenantResponse[];
     },
     enabled: computed(() => !!displayId.value),
     staleTime: 60_000,

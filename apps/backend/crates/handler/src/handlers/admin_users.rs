@@ -544,6 +544,8 @@ pub async fn reset_2fa(
 #[utoipa::path(
     delete,
     path = "/{id}/passkeys/{passkey_id}",
+    // passkeys::delete_passkey と関数名が同じなため operationId を明示して重複を避ける
+    operation_id = "delete_admin_user_passkey",
     tag = "Admin Users",
     summary = "パスキー強制削除",
     responses(
