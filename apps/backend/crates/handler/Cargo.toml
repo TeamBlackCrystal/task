@@ -11,6 +11,7 @@ payload = { path = "../payload" }
 service = { path = "../service" }
 anyhow = { workspace = true }
 auth-core = { workspace = true }
+forge-core = { workspace = true }
 forge-github = { workspace = true }
 apalis-postgres = { version = "1.0.0-rc.8", default-features = false, features = ["migrate", "tokio-comp", "time"] }
 axum = { workspace = true, features = ["multipart"] }

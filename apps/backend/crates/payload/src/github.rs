@@ -10,6 +10,10 @@ pub struct GithubCallbackQuery {
     /// GitHub が送る操作種別。"request" はオーナー承認待ちであり連携未完了。
     #[serde(default)]
     pub setup_action: Option<String>,
+    /// インストール時のユーザー認可で GitHub が付ける認可コード。
+    /// これを交換して得たユーザーアクセストークンで、installation の所有者を確認する。
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -27,4 +31,22 @@ pub struct GithubIntegrationResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GithubInstallUrlResponse {
     pub url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GithubRepositoryItem {
+    pub owner: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GithubRepositoriesResponse {
+    pub repositories: Vec<GithubRepositoryItem>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct GithubConnectRequest {
+    pub select_token: String,
+    pub repo_owner: String,
+    pub repo_name: String,
 }

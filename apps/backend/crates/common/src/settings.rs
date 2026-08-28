@@ -13,6 +13,12 @@ pub struct GithubAppSettings {
     pub github_app_webhook_secret: String,
     #[validate(length(min = 1, message = "github_app_name is required"))]
     pub github_app_name: String,
+    /// GitHub App の Client ID。インストール時のユーザー認可（`code` の交換）に使う。
+    #[validate(length(min = 1, message = "github_app_client_id is required"))]
+    pub github_app_client_id: String,
+    /// GitHub App の Client secret。
+    #[validate(length(min = 1, message = "github_app_client_secret is required"))]
+    pub github_app_client_secret: String,
     #[validate(length(
         min = 32,
         message = "github_token_encryption_key must be at least 32 characters"
@@ -280,6 +286,8 @@ mod tests {
             github_app_private_key: test_github_private_key(),
             github_app_webhook_secret: "webhook-secret".into(),
             github_app_name: "task-app".into(),
+            github_app_client_id: "Iv1.testclientid".into(),
+            github_app_client_secret: "test-client-secret".into(),
             github_token_encryption_key: "b".repeat(32),
             github_app_frontend_base_url: "http://localhost:3000".into(),
         }

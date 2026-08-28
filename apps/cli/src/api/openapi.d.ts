@@ -1111,6 +1111,23 @@ export interface paths {
         patch: operations["update_custom_field"];
         trace?: never;
     };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/github/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 選択したリポジトリを連携 */
+        post: operations["connect_github_repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant_id}/projects/{project_id}/github/import": {
         parameters: {
             query?: never;
@@ -1158,6 +1175,23 @@ export interface paths {
         post?: never;
         /** GitHub 連携解除 */
         delete: operations["delete_github_integration"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/github/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 選択トークンに紐づくリポジトリ一覧 */
+        get: operations["list_github_repositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2386,6 +2420,11 @@ export interface components {
             /** Format: int64 */
             used_bytes: number;
         };
+        GithubConnectRequest: {
+            repo_name: string;
+            repo_owner: string;
+            select_token: string;
+        };
         GithubInstallUrlResponse: {
             url: string;
         };
@@ -2395,6 +2434,13 @@ export interface components {
             connected_at?: string | null;
             repo_name?: string | null;
             repo_owner?: string | null;
+        };
+        GithubRepositoriesResponse: {
+            repositories: components["schemas"]["GithubRepositoryItem"][];
+        };
+        GithubRepositoryItem: {
+            name: string;
+            owner: string;
         };
         /** @enum {string} */
         ImportConflict: "skip" | "overwrite";
@@ -6318,6 +6364,11 @@ export interface operations {
                 state: string;
                 /** @description GitHub が送る操作種別。"request" はオーナー承認待ちであり連携未完了。 */
                 setup_action?: string;
+                /**
+                 * @description インストール時のユーザー認可で GitHub が付ける認可コード。
+                 *     これを交換して得たユーザーアクセストークンで、installation の所有者を確認する。
+                 */
+                code?: string;
             };
             header?: never;
             path?: never;
@@ -9267,6 +9318,79 @@ export interface operations {
             };
         };
     };
+    connect_github_repository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description 連携完了 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
     import_github_issues: {
         parameters: {
             query?: never;
@@ -9508,6 +9632,78 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    list_github_repositories: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Github-Select-Token": string;
+            };
+            path: {
+                tenant_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubRepositoriesResponse"];
+                };
             };
             /** @description ログインまたはセッションが必要です */
             401: {

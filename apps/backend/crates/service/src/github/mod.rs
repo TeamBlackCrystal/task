@@ -17,7 +17,9 @@ pub use import_lock::{
     IMPORT_LOCK_TTL_SECS, get_import_slot_token, release_import_slot, try_acquire_import_slot,
 };
 pub use install_state::{
-    GithubOAuthStatePayload, TTL_SECS, consume_state, new_state_token, store_state,
+    GithubOAuthStatePayload, RepoSelectPayload, TTL_SECS, consume_state,
+    delete_pending_installation_if, new_state_token, peek_pending_installation, peek_select_token,
+    store_pending_installation, store_select_token, store_state,
 };
-pub use repositories::{fetch_primary_repository, select_primary_repository};
+pub use repositories::{contains_repository, select_primary_repository};
 pub use sync::{apply_issue, import_project, push_task};

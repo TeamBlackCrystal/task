@@ -1,45 +1,26 @@
 //! インストール先リポジトリの選定。
 //!
 //! このアプリは「1 プロジェクト = 1 リポジトリ」を前提にしているため、
-//! インストールが複数のリポジトリにアクセスできる場合は自動で決めずに拒否する。
+//! インストールが複数のリポジトリにアクセスできる場合は自動で決めず、
+//! ユーザーに選ばせる（選択 UI は callback が発行する選択トークン経由）。
 //! この前提はアプリ固有なので `forge-github` 側には置かない。
 
-use anyhow::anyhow;
 use forge_core::Repository;
-use forge_github::GithubApp;
 
-/// インストール先リポジトリを選定する（テスト可能な純関数）。
-/// 1. リポジトリが 1 件 → そのまま返す
-/// 2. preferred_owner と一致するリポジトリが 1 件のみ → それを返す
-/// 3. それ以外（複数一致・ゼロ件）→ ユーザーの明示的選択が必要なため `None`
-pub fn select_primary_repository<'a>(
-    repositories: &'a [Repository],
-    preferred_owner: &str,
-) -> Option<&'a Repository> {
-    if repositories.len() == 1 {
-        return repositories.first();
+/// 未選択のまま自動で連携してよいリポジトリを返す。
+/// アクセスできるリポジトリが 1 件のときだけ自動選択し、複数なら `None`（要選択）。
+pub fn select_primary_repository(repositories: &[Repository]) -> Option<&Repository> {
+    match repositories {
+        [only] => Some(only),
+        _ => None,
     }
-    let mut matches = repositories.iter().filter(|r| r.owner == preferred_owner);
-    let first = matches.next()?;
-    if matches.next().is_some() {
-        return None; // 複数一致
-    }
-    Some(first)
 }
 
-pub async fn fetch_primary_repository(
-    app: &GithubApp,
-    installation_access_token: &str,
-    preferred_owner: &str,
-) -> Result<(String, String), anyhow::Error> {
-    let repositories = app.list_repositories(installation_access_token).await?;
-    let repo = select_primary_repository(&repositories, preferred_owner).ok_or_else(|| {
-        anyhow!(
-            "installation has access to {} repositories; select one explicitly",
-            repositories.len()
-        )
-    })?;
-    Ok((repo.owner.clone(), repo.name.clone()))
+/// 選択されたリポジトリが、その installation の可視範囲に含まれるか検証する。
+pub fn contains_repository(repositories: &[Repository], owner: &str, name: &str) -> bool {
+    repositories
+        .iter()
+        .any(|r| r.owner == owner && r.name == name)
 }
 
 #[cfg(test)]
@@ -52,25 +33,27 @@ mod tests {
 
     #[test]
     fn select_primary_repository_returns_none_for_multiple_repos() {
-        let repos = vec![
-            repo("other-org", "app"),
-            repo("myorg", "backend"),
-            repo("myorg", "frontend"),
-        ];
-        assert!(select_primary_repository(&repos, "myorg").is_none());
+        let repos = vec![repo("myorg", "backend"), repo("myorg", "frontend")];
+        assert!(select_primary_repository(&repos).is_none());
+    }
+
+    #[test]
+    fn select_primary_repository_returns_none_for_empty() {
+        assert!(select_primary_repository(&[]).is_none());
     }
 
     #[test]
     fn select_primary_repository_auto_selects_single_repo() {
         let repos = vec![repo("other-org", "app")];
-        let chosen = select_primary_repository(&repos, "myorg").unwrap();
+        let chosen = select_primary_repository(&repos).unwrap();
         assert_eq!(chosen.to_string(), "other-org/app");
     }
 
     #[test]
-    fn select_primary_repository_prefers_account_owner() {
-        let repos = vec![repo("other", "app"), repo("acme", "backend")];
-        let chosen = select_primary_repository(&repos, "acme").unwrap();
-        assert_eq!(chosen.to_string(), "acme/backend");
+    fn contains_repository_matches_owner_and_name() {
+        let repos = vec![repo("acme", "backend"), repo("acme", "frontend")];
+        assert!(contains_repository(&repos, "acme", "frontend"));
+        assert!(!contains_repository(&repos, "acme", "unknown"));
+        assert!(!contains_repository(&repos, "other", "backend"));
     }
 }

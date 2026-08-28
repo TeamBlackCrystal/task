@@ -8,7 +8,8 @@ use axum::{
 use hmac::{Hmac, KeyInit, Mac};
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
 };
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -24,8 +25,8 @@ use job::github_webhook::{self, GithubWebhookJob};
 use payload::github::*;
 use service::github::{
     github_app,
-    install_state::{self, GithubOAuthStatePayload, TTL_SECS},
-    repositories::fetch_primary_repository,
+    install_state::{self, GithubOAuthStatePayload, RepoSelectPayload, TTL_SECS},
+    repositories::{contains_repository, select_primary_repository},
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -91,6 +92,16 @@ async fn settings_redirect_url(
         "{base}/{}/projects/{}/settings?section=integrations",
         tenant.display_id, project.key
     ))
+}
+
+/// callback の失敗を、設定画面へ理由付きで戻すリダイレクトにする。
+///
+/// callback は GitHub からの着地点なので、素のエラーを返すとユーザーは何も分からない
+/// GitHub のページに取り残される。理由コードは frontend が文言に落とす。
+///
+/// 呼び出し側がそのまま `return` できるよう、ハンドラーの戻り値の形で返す。
+fn callback_error_redirect(redirect_to: &str, reason: &str) -> Result<Response, AppError> {
+    Ok(Redirect::temporary(&format!("{redirect_to}&github_error={reason}")).into_response())
 }
 
 /// GitHub Webhook 署名検証（HMAC-SHA256, ConstantTimeEq）。
@@ -200,78 +211,552 @@ pub async fn github_callback(
     require_project_in_tenant(&state, payload.tenant_id, payload.project_id).await?;
 
     let app = github_app(&state.http_client, github);
+    // GitHub からの着地点なので、以降の失敗は素のエラーではなく設定画面へ理由付きで戻す。
+    let redirect_to =
+        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+
     // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
     // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
-    let installation = app
+    //
+    // リポジトリ選択を放棄したインストールは、DB に行が無いまま古くなるため鮮度チェックに
+    // 落ちる。そのプロジェクトの選択待ちとして控えてある ID と一致する場合だけ、束縛済みと
+    // 同じ扱いにして通す。一致しなければ通常の新規インストール判定に戻すので、別の
+    // インストールへ乗り換える動線を塞がない。
+    let expected_installation_id = match payload.installation_id {
+        Some(bound) => Some(bound),
+        None => {
+            let pending =
+                install_state::peek_pending_installation(&state.redis_client, payload.project_id)
+                    .await
+                    .map_err(AppError::Internal)?
+                    .filter(|pending| *pending == query.installation_id);
+            match pending {
+                Some(id) => Some(id),
+                // 同じテナントの別プロジェクトが既に使っているインストールなら、そのテナントが
+                // 正規に入れたものだと分かっている。1 インストールに複数リポジトリが見える
+                // 構成では「同じ org の別リポジトリを別プロジェクトへ」が普通に起きるので、
+                // 鮮度チェックだけで弾くと 10 分を過ぎた時点で連携できなくなる。
+                None if installation_used_in_tenant(
+                    &state,
+                    payload.tenant_id,
+                    query.installation_id,
+                )
+                .await? =>
+                {
+                    Some(query.installation_id)
+                }
+                None => None,
+            }
+        }
+    };
+
+    // 所有者確認。新規に束縛するときだけ行う。
+    //
+    // installation_id はクエリで差し込めるので、これが無いと「他人が入れた
+    // インストール」をそのまま自分のプロジェクトへ紐付けられる。インストール時の
+    // ユーザー認可で GitHub が付ける code を交換し、そのユーザーが見えるインストールに
+    // 当該 ID が含まれることを GitHub 自身に答えさせる。User インストールでも
+    // Organization インストールでも同じ経路で確かめられる。
+    //
+    // 束縛先が既に決まっている（expected_installation_id が Some）ときは省く。
+    // その束縛に入るのは「state に載せた連携済みの ID」「このプロジェクトの選択待ちの
+    // 控え」「同じテナントが使用中のインストール」のいずれか。この所有者確認の導入後に
+    // 作られた束縛なら、どれも確認済みの callback からしか生まれない。導入前からある
+    // github_integrations 行は鮮度チェックだけで作られており、この不変条件の対象外。
+    // ここで code を要求すると、リポジトリを足して戻る・選び直すといった復旧の動線が、
+    // GitHub が code を付け直すかどうかに左右される。
+    if expected_installation_id.is_none() {
+        let Some(code) = query.code.as_deref() else {
+            tracing::warn!(
+                installation_id = query.installation_id,
+                "github callback: no authorization code; enable user authorization on the app"
+            );
+            return callback_error_redirect(&redirect_to, "installation_authorization_required");
+        };
+        match app
+            .verify_installation_access(code, query.installation_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    installation_id = query.installation_id,
+                    "github callback: installation does not belong to the authenticated user"
+                );
+                return callback_error_redirect(&redirect_to, "installation_forbidden");
+            }
+            // 拒否ではなく GitHub 側の不調。アンインストールを促さないよう理由を分ける。
+            Err(e) => {
+                tracing::warn!(error = %e, "github callback: installation ownership check failed");
+                return callback_error_redirect(&redirect_to, "github_unavailable");
+            }
+        }
+    }
+
+    let installation = match app
         .verify_installation(
             query.installation_id,
-            payload.installation_id,
+            expected_installation_id,
             chrono::Duration::seconds(TTL_SECS as i64),
         )
         .await
-        .map_err(|e| {
+    {
+        Ok(installation) => installation,
+        Err(e) => {
             tracing::warn!(error = %e, "github callback installation verification failed");
-            AppError::BadRequest
-        })?;
+            // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
+            // 選択を放棄したまま控えが切れたインストールもここに来る（対処は入れ直し）。
+            // 一時障害でアンインストールを促さないよう、拒否と不調は分ける。
+            let reason = if is_installation_rejected(&e) {
+                "installation_rejected"
+            } else {
+                "github_unavailable"
+            };
+            return callback_error_redirect(&redirect_to, reason);
+        }
+    };
 
-    let access = app
-        .installation_access_token(installation.id)
+    // 検証は通っているので、ここで落ちても戻れるように控えておく
+    // （控えが無いと、鮮度が切れたあと入れ直すまで連携できなくなる）。
+    let unavailable = async |e: anyhow::Error| -> Result<Response, AppError> {
+        tracing::warn!(error = %e, "github callback: github api unavailable");
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
+        )
         .await
         .map_err(AppError::Internal)?;
-    let account_login = installation.account_login;
-    let (repo_owner, repo_name) = fetch_primary_repository(&app, &access.token, &account_login)
+        callback_error_redirect(&redirect_to, "github_unavailable")
+    };
+    let access = match app.installation_access_token(installation.id).await {
+        Ok(access) => access,
+        Err(e) => return unavailable(e).await,
+    };
+    let repositories = match app.list_repositories(&access.token).await {
+        Ok(repositories) => repositories,
+        Err(e) => return unavailable(e).await,
+    };
+
+    // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
+    // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
+    if repositories.is_empty() {
+        // リポジトリを足して戻ってきたとき、鮮度チェックで弾かれないよう控えておく。
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
+        )
         .await
         .map_err(AppError::Internal)?;
+        tracing::warn!(
+            installation_id = query.installation_id,
+            "github callback: installation has no accessible repositories"
+        );
+        return callback_error_redirect(&redirect_to, "no_repositories");
+    }
 
+    // 複数見えるときは連携せず、選択トークンを発行して設定ページへ戻す。
+    // installation_id はトークン側（Redis）に束縛し、リクエストでは受け取らない。
+    let Some(repo) = select_primary_repository(&repositories) else {
+        let select_token = install_state::new_state_token();
+        install_state::store_select_token(
+            &state.redis_client,
+            &select_token,
+            &RepoSelectPayload {
+                tenant_id: payload.tenant_id,
+                project_id: payload.project_id,
+                user_id: auth.user_id,
+                installation_id: query.installation_id,
+            },
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        install_state::store_pending_installation(
+            &state.redis_client,
+            payload.project_id,
+            query.installation_id,
+        )
+        .await
+        .map_err(AppError::Internal)?;
+        // トークンはクエリではなくフラグメントに載せる。
+        // フラグメントは次の HTTP リクエストに乗らないので、
+        // frontend / CDN のアクセスログにトークンが残らない
+        // （ブラウザ履歴には一時的に残るが、frontend が読んだ直後に URL から落とす）。
+        return Ok(
+            Redirect::temporary(&format!("{redirect_to}#github_select={select_token}"))
+                .into_response(),
+        );
+    };
+
+    upsert_integration(
+        &state,
+        github,
+        payload.project_id,
+        auth.user_id,
+        query.installation_id,
+        &repo.owner,
+        &repo.name,
+        &access,
+    )
+    .await?;
+    // 連携は済んでいるので、後片付けの失敗で着地点をエラーにしない（TTL で切れる）。
+    if let Err(e) = install_state::delete_pending_installation_if(
+        &state.redis_client,
+        payload.project_id,
+        query.installation_id,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
+
+    Ok(Redirect::temporary(&redirect_to).into_response())
+}
+
+/// 連携レコードの UPSERT。callback（自動選択）と選択確定 API で共有する。
+///
+/// 解除（`delete_github_integration`）と同じ installation_id キーの advisory lock を
+/// 取ってから書き込む。解除側が「共有判定 → アンインストール → 行削除」を行う間に
+/// ここが連携行を増減させると、アンインストール済みの installation を指す行だけが
+/// 残る（またはその逆の）競合が成立するため、installation の全変更経路で直列化する。
+#[allow(clippy::too_many_arguments)]
+async fn upsert_integration(
+    state: &AppState,
+    github: &GithubAppSettings,
+    project_id: Uuid,
+    user_id: Uuid,
+    installation_id: i64,
+    repo_owner: &str,
+    repo_name: &str,
+    access: &forge_github::InstallationAccessToken,
+) -> Result<(), AppError> {
     let token_enc =
         auth_core::crypto::encrypt_token(&github.github_token_encryption_key, &access.token)
             .map_err(AppError::Internal)?;
 
     let now = chrono::Utc::now();
-    let existing = github_integrations::Entity::find()
-        .filter(github_integrations::Column::ProjectId.eq(payload.project_id))
-        .one(&state.db)
-        .await?;
 
-    if let Some(model) = existing {
-        // 再連携: created_by / created_at は変更しない
-        let repo_changed = model.repo_owner != repo_owner || model.repo_name != repo_name;
+    // ロックすべき「現在行の installation_id」は読むまで分からないので、
+    // 事前読み → ロック → 読み直しで確定し、ずれていたら取り直す。
+    let mut previous_installation_id = github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(&state.db)
+        .await?
+        .map(|m| m.installation_id);
+
+    loop {
         let txn = state.db.begin().await?;
-        if repo_changed {
-            // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
-            // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
-            github_issue_links::Entity::delete_many()
-                .filter(github_issue_links::Column::ProjectId.eq(payload.project_id))
-                .exec(&txn)
+
+        // 別の installation へ付け替える場合は新旧両方を昇順でロックする
+        // （複数ロックの取得順を固定しないとデッドロックし得る）。
+        // transaction-scoped advisory lock なので commit / rollback 時に必ず解放される。
+        let mut lock_ids = vec![installation_id];
+        if let Some(old) = previous_installation_id
+            && old != installation_id
+        {
+            lock_ids.push(old);
+        }
+        lock_ids.sort_unstable();
+        for id in &lock_ids {
+            common::db::execute_bound(&txn, "SELECT pg_advisory_xact_lock(?)", vec![(*id).into()])
                 .await?;
         }
-        let mut active: github_integrations::ActiveModel = model.into();
-        active.installation_id = Set(query.installation_id);
-        active.repo_owner = Set(repo_owner);
-        active.repo_name = Set(repo_name);
-        active.access_token_enc = Set(token_enc);
-        active.token_expires_at = Set(access.expires_at);
-        active.update(&txn).await?;
-        txn.commit().await?;
-    } else {
-        github_integrations::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            project_id: Set(payload.project_id),
-            installation_id: Set(query.installation_id),
-            repo_owner: Set(repo_owner),
-            repo_name: Set(repo_name),
-            access_token_enc: Set(token_enc),
-            token_expires_at: Set(access.expires_at),
-            created_by: Set(auth.user_id),
-            created_at: Set(now.into()),
+
+        // ロック待ちの間に行が変わっていたら、その installation_id のロックを取り直す。
+        let existing = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(project_id))
+            .lock_exclusive()
+            .one(&txn)
+            .await?;
+        if let Some(current) = existing.as_ref().map(|m| m.installation_id)
+            && !lock_ids.contains(&current)
+        {
+            previous_installation_id = Some(current);
+            txn.rollback().await?;
+            continue;
         }
-        .insert(&state.db)
-        .await?;
+
+        if let Some(model) = existing {
+            // 再連携: created_by / created_at は変更しない
+            let repo_changed = model.repo_owner != repo_owner || model.repo_name != repo_name;
+            if repo_changed {
+                // 旧リポジトリの Issue に紐づくリンクを残すと、書き戻しや再インポートが
+                // 新リポジトリの同番号 Issue を上書きする。連携先変更と同一トランザクションで消す。
+                github_issue_links::Entity::delete_many()
+                    .filter(github_issue_links::Column::ProjectId.eq(project_id))
+                    .exec(&txn)
+                    .await?;
+            }
+            let mut active: github_integrations::ActiveModel = model.into();
+            active.installation_id = Set(installation_id);
+            active.repo_owner = Set(repo_owner.to_owned());
+            active.repo_name = Set(repo_name.to_owned());
+            active.access_token_enc = Set(token_enc.clone());
+            active.token_expires_at = Set(access.expires_at);
+            active.update(&txn).await?;
+        } else {
+            github_integrations::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                project_id: Set(project_id),
+                installation_id: Set(installation_id),
+                repo_owner: Set(repo_owner.to_owned()),
+                repo_name: Set(repo_name.to_owned()),
+                access_token_enc: Set(token_enc.clone()),
+                token_expires_at: Set(access.expires_at),
+                created_by: Set(user_id),
+                created_at: Set(now.into()),
+            }
+            .insert(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        return Ok(());
+    }
+}
+
+/// そのテナントのどれかのプロジェクトが、既にこのインストールを使っているか。
+async fn installation_used_in_tenant(
+    state: &AppState,
+    tenant_id: Uuid,
+    installation_id: i64,
+) -> Result<bool, AppError> {
+    let used = github_integrations::Entity::find()
+        .filter(github_integrations::Column::InstallationId.eq(installation_id))
+        .inner_join(projects::Entity)
+        .filter(projects::Column::TenantId.eq(tenant_id))
+        .one(&state.db)
+        .await?
+        .is_some();
+    Ok(used)
+}
+
+/// インストールが GitHub 側から消えているか。
+///
+/// ponytail: forge-github がステータスをエラー型に持たないため文字列で判定している。
+/// 型で受け取れるようになったら差し替える。
+fn is_installation_gone(error: &anyhow::Error) -> bool {
+    // 403（サスペンド）はレート制限とも区別できないため、ここには含めない。
+    let message = error.to_string();
+    message.contains("failed: 404") || message.contains("failed: 410")
+}
+
+/// installation の検証が「拒否」なのか、GitHub 側の不調なのか。
+///
+/// ponytail: forge-github が理由を型で返さないため文字列で判定している。
+fn is_installation_rejected(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("installation id")
+        || message.contains("too old")
+        || is_installation_gone(error)
+}
+
+/// 選択トークンを検証し、束縛された installation のリポジトリ一覧を取得する。
+async fn resolve_select_token(
+    state: &AppState,
+    auth: &AuthUser,
+    tenant_id: Uuid,
+    project_id: Uuid,
+    payload: Option<RepoSelectPayload>,
+) -> Result<
+    (
+        RepoSelectPayload,
+        Vec<forge_core::Repository>,
+        forge_github::InstallationAccessToken,
+    ),
+    AppError,
+> {
+    let github = state.settings.require_github_app()?;
+    let payload = payload.ok_or(AppError::BadRequest)?;
+    // トークンは tenant / project / user / installation に束縛されている。
+    // 経路（パス）とずれていたら他人のインストールを紐付ける試みなので拒否する。
+    if payload.user_id != auth.user_id {
+        return Err(AppError::Forbidden);
+    }
+    if payload.tenant_id != tenant_id || payload.project_id != project_id {
+        return Err(AppError::BadRequest);
     }
 
-    let redirect_to =
-        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
-    Ok(Redirect::temporary(&redirect_to).into_response())
+    let app = github_app(&state.http_client, github);
+    // インストールがもう無い（アンインストール / 停止）なら選択トークンは死んでいるので
+    // 4xx で返す。一時障害まで 4xx にすると、フロントが有効なトークンを捨ててしまう。
+    let access = app
+        .installation_access_token(payload.installation_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                installation_id = payload.installation_id,
+                "github installation access token failed"
+            );
+            if is_installation_gone(&e) {
+                AppError::BadRequest
+            } else {
+                AppError::Internal(e)
+            }
+        })?;
+    let repositories = app
+        .list_repositories(&access.token)
+        .await
+        .map_err(AppError::Internal)?;
+    Ok((payload, repositories, access))
+}
+
+/// 選択トークンを載せるリクエストヘッダー。
+///
+/// callback はトークンをクエリではなくフラグメントで返している（クエリだと
+/// frontend / CDN のアクセスログと Referer に残るため）。ここでクエリに載せ直すと
+/// backend とその手前のプロキシのアクセスログに残り、その手当てが台無しになるので、
+/// ヘッダーで受け取る。
+const SELECT_TOKEN_HEADER: &str = "X-Github-Select-Token";
+
+fn select_token_from_headers(headers: &HeaderMap) -> Result<&str, AppError> {
+    headers
+        .get(SELECT_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .ok_or(AppError::BadRequest)
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/repositories",
+    tag = "GitHub",
+    summary = "選択トークンに紐づくリポジトリ一覧",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("project_id" = Uuid, Path),
+        ("X-Github-Select-Token" = String, Header),
+    ),
+    responses((status = 200, body = GithubRepositoriesResponse), CrudErrors)
+)]
+pub async fn list_github_repositories(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<GithubRepositoriesResponse>, AppError> {
+    state.settings.require_github_app()?;
+    auth.require_session()?;
+    require_tenant_owner(&state, tenant_id, auth.user_id).await?;
+    require_project_in_tenant(&state, tenant_id, project_id).await?;
+
+    let select_token = select_token_from_headers(&headers)?;
+    // 一覧は何度でも開けるようトークンを消費しない（確定は POST /connect 側）。
+    let stored = install_state::peek_select_token(&state.redis_client, select_token)
+        .await
+        .map_err(AppError::Internal)?;
+    let (_, repositories, _) =
+        resolve_select_token(&state, &auth, tenant_id, project_id, stored).await?;
+
+    Ok(Json(GithubRepositoriesResponse {
+        repositories: repositories
+            .into_iter()
+            .map(|r| GithubRepositoryItem {
+                owner: r.owner,
+                name: r.name,
+            })
+            .collect(),
+    }))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/connect",
+    tag = "GitHub",
+    summary = "選択したリポジトリを連携",
+    params(
+        ("tenant_id" = Uuid, Path),
+        ("project_id" = Uuid, Path),
+    ),
+    request_body = GithubConnectRequest,
+    responses((status = 204, description = "連携完了"), CrudErrors)
+)]
+pub async fn connect_github_repository(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<GithubConnectRequest>,
+) -> Result<StatusCode, AppError> {
+    let github = state.settings.require_github_app()?;
+    auth.require_session()?;
+    require_tenant_owner(&state, tenant_id, auth.user_id).await?;
+    require_project_in_tenant(&state, tenant_id, project_id).await?;
+
+    let stored = install_state::peek_select_token(&state.redis_client, &body.select_token)
+        .await
+        .map_err(AppError::Internal)?;
+    let (payload, repositories, access) =
+        resolve_select_token(&state, &auth, tenant_id, project_id, stored).await?;
+
+    // 別タブに残った古い選択トークンで、連携先が黙って巻き戻るのを防ぐ。
+    // 連携済みなら、その installation に対するトークンでなければ受け付けない。
+    if let Some(current) = github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(&state.db)
+        .await?
+        && current.installation_id != payload.installation_id
+    {
+        return Err(AppError::BadRequest);
+    }
+
+    // 送られてきたリポジトリが、その installation の可視範囲にあることを必ず確認する。
+    if !contains_repository(&repositories, &body.repo_owner, &body.repo_name) {
+        return Err(AppError::BadRequest);
+    }
+
+    // 検証を通った 1 リクエストだけを DB 更新へ通す（再利用防止）。
+    // ここまで消さないので、検証で弾かれたユーザーは選び直せる。
+    // 同じトークンでの POST が同時に来ても、取れなかった側はここで止まる。
+    let Some((claimed, select_token_ttl)) =
+        install_state::claim_select_token(&state.redis_client, &body.select_token)
+            .await
+            .map_err(AppError::Internal)?
+    else {
+        return Err(AppError::BadRequest);
+    };
+
+    if let Err(e) = upsert_integration(
+        &state,
+        github,
+        project_id,
+        auth.user_id,
+        claimed.installation_id,
+        &body.repo_owner,
+        &body.repo_name,
+        &access,
+    )
+    .await
+    {
+        // 連携できていないので、選び直せるようにトークンを戻す（有効期限は延ばさない）。
+        if let Err(restore_err) = install_state::restore_select_token(
+            &state.redis_client,
+            &body.select_token,
+            &claimed,
+            select_token_ttl,
+        )
+        .await
+        {
+            tracing::warn!(error = %restore_err, "restore github repo select token failed");
+        }
+        return Err(e);
+    }
+
+    // 連携できたので控えを捨てる。
+    // 連携自体は成功しているので、後片付けの失敗ではエラーを返さない（TTL で切れる）。
+    if let Err(e) = install_state::delete_pending_installation_if(
+        &state.redis_client,
+        project_id,
+        claimed.installation_id,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]
@@ -445,7 +930,7 @@ pub async fn delete_github_integration(
         return Err(AppError::NotFound);
     };
 
-    let installation_id = row.installation_id;
+    let mut installation_id = row.installation_id;
     // 再連携と競合して後続のロックを消さないよう、解除処理より前の所有権を控える。
     let import_lock_token =
         match service::github::get_import_slot_token(&state.redis_client, project_id).await {
@@ -456,18 +941,73 @@ pub async fn delete_github_integration(
             }
         };
 
-    // GitHub 側を先に解除する（404/410 は冪等成功として delete_installation 内で処理済み）。
-    // DB を先に削除すると GitHub 側の失敗時に installation_id が失われ再試行不能になる。
-    github_app(&state.http_client, github)
-        .delete_installation(installation_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, installation_id, "github delete_installation failed");
-            AppError::Internal(e)
-        })?;
+    loop {
+        let txn = state.db.begin().await?;
 
-    let active: github_integrations::ActiveModel = row.into();
-    active.delete(&state.db).await?;
+        // 同じ installation の変更を直列化する（連携側 `upsert_integration` と同じキー）。
+        // 共有する 2 プロジェクトを同時に解除して両方が shared=true と判断し
+        // GitHub App だけ残す競合や、共有判定の後に連携行が増減する競合を防ぐ。
+        // transaction-scoped advisory lock なので commit / rollback 時に必ず解放される。
+        common::db::execute_bound(
+            &txn,
+            "SELECT pg_advisory_xact_lock(?)",
+            vec![installation_id.into()],
+        )
+        .await?;
+
+        // ロック待ちの間に再連携で installation が変わっていたら、新しい ID のロックを
+        // 取り直す。古い ID のロック下で新しい installation を解除してはいけない。
+        let Some(locked_row) = github_integrations::Entity::find()
+            .filter(github_integrations::Column::ProjectId.eq(project_id))
+            .lock_exclusive()
+            .one(&txn)
+            .await?
+        else {
+            return Err(AppError::NotFound);
+        };
+        if locked_row.installation_id != installation_id {
+            installation_id = locked_row.installation_id;
+            txn.rollback().await?;
+            continue;
+        }
+
+        // ロック取得後の最新状態で共有判定する。アンインストールはアカウント単位なので、
+        // 他プロジェクトが使っている間は GitHub 側を消さない。
+        let shared = github_integrations::Entity::find()
+            .filter(github_integrations::Column::InstallationId.eq(installation_id))
+            .filter(github_integrations::Column::ProjectId.ne(project_id))
+            .one(&txn)
+            .await?
+            .is_some();
+
+        // GitHub 側を先に解除する（404/410 は冪等成功として処理済み）。DB を先に消すと、
+        // GitHub 側の失敗時に installation_id が失われ再試行不能になる。
+        if !shared {
+            github_app(&state.http_client, github)
+                .delete_installation(installation_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, installation_id, "github delete_installation failed");
+                    AppError::Internal(e)
+                })?;
+        }
+
+        let active: github_integrations::ActiveModel = locked_row.into();
+        active.delete(&txn).await?;
+        txn.commit().await?;
+        break;
+    }
+
+    // 解除は済んでいるので、後片付けの失敗で失敗扱いにしない（TTL で切れる）。
+    if let Err(e) = install_state::delete_pending_installation_if(
+        &state.redis_client,
+        project_id,
+        installation_id,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, "discard pending github installation failed; TTL will expire it");
+    }
 
     // 解除前のリポジトリに対応する取り込み枠を残すと、再連携後の取り込みが
     // 実行中と誤判定される。後片付けの失敗で解除自体は失敗させない。
