@@ -48,6 +48,8 @@ type MockState = {
   listStatus?: number;
   /** 400 以上を設定すると GET tenant members（追加候補）が失敗する */
   tenantListStatus?: number;
+  /** ログイン中の利用者。自分を外すときの警告に使う */
+  viewerId?: string;
   addStatus?: number;
   updateStatus?: number;
   deleteStatus?: number;
@@ -67,6 +69,14 @@ function stubFetch(state: MockState) {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     const memberItemMatch = pathname.match(/\/projects\/[^/]+\/members\/([^/]+)$/);
 
+    if (req.method === 'GET' && pathname.endsWith('/v1/auth/me')) {
+      return jsonResponse({
+        id: state.viewerId ?? ALICE_ID,
+        username: 'alice',
+        email: 'alice@example.com',
+        avatar_url: null,
+      });
+    }
     if (req.method === 'GET' && pathname.endsWith(`/v1/tenants/${TENANT_ID}/members`)) {
       if (state.tenantListStatus) {
         return jsonResponse({ message: 'error' }, state.tenantListStatus);
@@ -218,6 +228,49 @@ describe('MembersSection', () => {
     expect(wrapper.text()).not.toContain('追加できるテナントメンバーがいません。');
     // メンバー一覧は読めているので出したまま
     expect(wrapper.get('[data-testid="member-list"]').text()).toContain('alice');
+  });
+
+  it('自分を外すときは、以後この画面を開けなくなることを伝える', async () => {
+    stubFetch({
+      members: [projectMember(ALICE_ID, 'alice', 'Admin'), projectMember(BOB_ID, 'bob', 'Admin')],
+      tenantMembers: [],
+      viewerId: ALICE_ID,
+    });
+    mountSection();
+    await flushPromises();
+
+    document.body
+      .querySelector<HTMLButtonElement>('button[aria-label="メンバー「alice」を削除"]')
+      ?.click();
+    await flushPromises();
+    expect(document.body.textContent).toContain('以後この設定画面は開けなくなります');
+
+    // 他人を外すときは出さない
+    clickBodyButton('キャンセル');
+    await flushPromises();
+    document.body
+      .querySelector<HTMLButtonElement>('button[aria-label="メンバー「bob」を削除"]')
+      ?.click();
+    await flushPromises();
+    expect(document.body.textContent).not.toContain('以後この設定画面は開けなくなります');
+  });
+
+  it('最後の 1 人を外すときは、テナント全体に開くことを伝える', async () => {
+    stubFetch({
+      members: [projectMember(BOB_ID, 'bob', 'Admin')],
+      tenantMembers: [],
+      viewerId: ALICE_ID,
+    });
+    mountSection();
+    await flushPromises();
+
+    document.body
+      .querySelector<HTMLButtonElement>('button[aria-label="メンバー「bob」を削除"]')
+      ?.click();
+    await flushPromises();
+
+    // 「アクセスを絞る画面」の削除が、逆にアクセスを広げる側へ倒れることを伝える
+    expect(document.body.textContent).toContain('テナントメンバー全員が開けるようになります');
   });
 
   it('ロール変更の 409 は最後の管理者であることを伝える', async () => {

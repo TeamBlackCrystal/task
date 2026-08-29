@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { apiClient } from '@/lib/api-vue-query';
+import { LIST_PROJECTS_PATH, apiClient, useMeQuery } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
 
 type ProjectMemberResponse = components['schemas']['ProjectMemberResponse'];
@@ -82,8 +82,27 @@ const addMutation = apiClient.useMutation('post', MEMBERS_PATH);
 const updateMutation = apiClient.useMutation('put', MEMBER_PATH);
 const removeMutation = apiClient.useMutation('delete', MEMBER_PATH);
 
+const meQuery = useMeQuery();
+
+/** 対象が自分か。自分を外すとこの画面を開けなくなるので、削除の前に伝える。 */
+function isSelf(member: ProjectMemberResponse) {
+  return member.user_id === meQuery.data.value?.id;
+}
+
+/**
+ * メンバーの増減はプロジェクトの見え方も変える。
+ *
+ * - 自分を外せば、そのプロジェクトは一覧から消える
+ * - 最後の 1 人を外せば `project_members` が 0 件になり、テナントメンバー全員に開く
+ *
+ * どちらもプロジェクト一覧の中身が変わるので、メンバーだけでなく一覧も無効化する
+ * （しないと、サイドバーや設定の他セクションが古い権限のまま操作できる顔で残る）。
+ */
 async function invalidateMembers() {
-  await queryClient.invalidateQueries({ queryKey: ['get', MEMBERS_PATH] });
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['get', MEMBERS_PATH] }),
+    queryClient.invalidateQueries({ queryKey: ['get', LIST_PROJECTS_PATH] }),
+  ]);
 }
 
 function errorStatus(e: unknown): number | undefined {
@@ -347,6 +366,13 @@ function initials(username: string) {
           <DialogDescription>
             「{{ removeTarget.user.username }}」をこのプロジェクトから外します。
             担当タスクの割り当ては残りますが、ウォッチしていたタスクの通知は解除されます。
+          </DialogDescription>
+          <DialogDescription v-if="members.length === 1" class="text-destructive">
+            これが最後のメンバーです。外すとメンバー指定が無くなり、このプロジェクトは
+            テナントメンバー全員が開けるようになります。
+          </DialogDescription>
+          <DialogDescription v-if="isSelf(removeTarget)" class="text-destructive">
+            自分をこのプロジェクトから外します。以後この設定画面は開けなくなります。
           </DialogDescription>
         </DialogHeader>
         <p v-if="removeError" role="alert" class="text-sm text-destructive">{{ removeError }}</p>
