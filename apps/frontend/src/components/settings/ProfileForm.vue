@@ -9,6 +9,7 @@ import HydrationSafeForm from '@/components/HydrationSafeForm.vue';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { meQueryOptions, useUpdateProfileMutation } from '@/lib/api-vue-query';
+import { codePointLength } from '@/lib/code-points';
 import { avatarInitials } from '@/lib/initials';
 import type { components } from '@/generated/api';
 
@@ -23,11 +24,6 @@ const AVATAR_URL_MAX = 2048;
 function isHttpsUrl(value: string) {
   const lowered = value.toLowerCase();
   return lowered.startsWith('https://');
-}
-
-/** backend の `chars().count()` と同じく、UTF-16 ではなくコードポイント単位で数える。 */
-function codePointLength(value: string) {
-  return Array.from(value).length;
 }
 
 function validateUsername(raw: string) {

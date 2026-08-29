@@ -6,6 +6,9 @@ use crate::AppState;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::<AppState>::new()
         .routes(routes!(
+            crate::handlers::personal_tokens::list_personal_tokens
+        ))
+        .routes(routes!(
             crate::handlers::personal_tokens::create_personal_token
         ))
         .routes(routes!(

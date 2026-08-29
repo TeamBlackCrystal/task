@@ -13,7 +13,7 @@ const items: NavItem[] = [
   { title: 'プロフィール', icon: PhUser, href: '/settings/profile' },
   { title: '環境設定', icon: PhSlidersHorizontal },
   { title: '通知', icon: PhBell },
-  { title: 'アクセストークン', icon: PhKey },
+  { title: 'アクセストークン', icon: PhKey, href: '/settings/tokens' },
   { title: 'セッション', icon: PhDevices },
 ];
 
