@@ -716,6 +716,65 @@ async fn rounds_are_scoped_to_the_linked_repository() {
     fx.app.cleanup_user(fx.developer.id).await;
 }
 
+/// レビュー側の判定もリポジトリで絞る。
+///
+/// ラウンド番号はリポジトリごとに 1 から振り直されるので、絞らないと旧リポジトリで
+/// R1 を出しただけの利用者が、新リポジトリの同じ PR 番号でもレビュー側と判定される。
+#[tokio::test]
+async fn the_reviewer_side_is_scoped_to_the_linked_repository() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    // reviewer は旧リポジトリでだけラウンドを出す
+    let old_integration = link_repo(&fx, "acme", "old-repo").await;
+    submit_round(&fx, 711, "high", "旧リポジトリの指摘").await;
+
+    github_integrations::Entity::delete_by_id(old_integration)
+        .exec(&fx.app.state.db)
+        .await
+        .expect("delete integration");
+    link_repo(&fx, "acme", "new-repo").await;
+
+    // 新リポジトリの PR #711 は developer がレビューする（同じく R1 から始まる）
+    fx.login(&fx.developer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 711, "high", "新リポジトリの指摘").await;
+    assert_eq!(
+        transition(&fx, &finding_id, "fixed").await.status(),
+        StatusCode::OK
+    );
+
+    // 旧リポジトリの R1 しか持たない reviewer は、新リポジトリの
+    // fixed → verified を行えない
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::FORBIDDEN,
+        "旧リポジトリのラウンドでレビュー側を名乗れない"
+    );
+
+    // 現在の連携先でラウンドを出せば進められる（過剰に拒否していない）
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 711,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "新リポジトリの再レビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::OK
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
 /// 作成者がテナントから居なくなった指摘は、オーナーが取り下げを代行できる。
 ///
 /// 取り下げは本来「出した本人だけ」。除名・退会で主体が消えると、誤った High を

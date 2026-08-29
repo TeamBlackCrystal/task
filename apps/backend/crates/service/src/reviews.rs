@@ -102,6 +102,15 @@ impl RepoRef {
     pub fn is_linked(&self) -> bool {
         !self.owner.is_empty() && !self.name.is_empty()
     }
+
+    /// そのラウンドが見ていたリポジトリ。現在の連携先とは限らない。
+    pub fn of_round(review: &reviews::Model) -> Self {
+        Self {
+            integration_id: review.integration_id,
+            owner: review.repo_owner.clone(),
+            name: review.repo_name.clone(),
+        }
+    }
 }
 
 /// プロジェクトの現在の連携先。連携が無ければ [`RepoRef::unlinked`]。
@@ -204,19 +213,22 @@ pub fn requires_finding_author(from: FindingState, to: FindingState) -> bool {
 
 /// `actor` が対象 PR のレビュー側か。
 ///
-/// 「その指摘を含むラウンドの作成者」か「同じ PR のより新しいラウンドの作成者」。
-/// 修正だけを行う利用者を締め出すのが目的で、レビューを一度でも出した人は
-/// 以後の確認も行える。
+/// 「その指摘を含むラウンドの作成者」か「同じリポジトリの同じ PR のより新しい
+/// ラウンドの作成者」。修正だけを行う利用者を締め出すのが目的で、レビューを
+/// 一度でも出した人は以後の確認も行える。
+///
+/// ラウンド番号はリポジトリごとに 1 から振り直されるので、絞りにリポジトリを
+/// 含めないと、旧リポジトリ（あるいは連携前の空リポジトリ）で PR #10 の R3 を
+/// 出した人が、新リポジトリの PR #10 でもレビュー側と判定される（仕様 §3）。
 pub async fn is_reviewer_side<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
+    repo: &RepoRef,
     pr_number: i32,
     round: i32,
     actor_id: Uuid,
 ) -> Result<bool, sea_orm::DbErr> {
-    let found = reviews::Entity::find()
-        .filter(reviews::Column::ProjectId.eq(project_id))
-        .filter(reviews::Column::PrNumber.eq(pr_number))
+    let found = scoped_rounds(project_id, repo, pr_number)
         .filter(reviews::Column::Round.gte(round))
         .filter(reviews::Column::ReviewerId.eq(actor_id))
         .one(db)
@@ -307,6 +319,7 @@ pub async fn ensure_transition_allowed<C: ConnectionTrait>(
         && !is_reviewer_side(
             db,
             review.project_id,
+            &RepoRef::of_round(review),
             review.pr_number,
             review.round,
             actor_id,
