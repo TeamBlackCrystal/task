@@ -568,6 +568,10 @@ pub async fn record_transition<C: ConnectionTrait>(
 /// 作れるので、防ぐ代わりに痕跡を残す（仕様 §2 / §5）。数え方は「`rejected` へ
 /// 遷移させたのがその指摘を出したラウンドの作成者以外」——代行できるのは
 /// オーナーだけなので、これで代行だけが数えられる。
+///
+/// 数えるのは**指摘の件数**であって遷移の回数ではない。`rejected → open` は
+/// 通るので、同じ指摘を open と rejected の間で往復させると遷移は何度でも増える。
+/// 回数で出すと、指摘 1 件の痕跡が「代行での棄却 5 件」に見える。
 pub async fn owner_override_rejection_count<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
@@ -581,25 +585,29 @@ pub async fn owner_override_rejection_count<C: ConnectionTrait>(
     let reviewer_by_review: std::collections::HashMap<Uuid, Uuid> =
         rounds.iter().map(|r| (r.id, r.reviewer_id)).collect();
 
-    let rows: Vec<(Uuid, Uuid)> = entity::review_finding_transitions::Entity::find()
+    let rows: Vec<(Uuid, Uuid, Uuid)> = entity::review_finding_transitions::Entity::find()
         .inner_join(review_findings::Entity)
         .filter(review_findings::Column::ReviewId.is_in(reviewer_by_review.keys().copied()))
         .filter(entity::review_finding_transitions::Column::ToState.eq(FindingState::Rejected))
         .select_only()
         .column(review_findings::Column::ReviewId)
         .column(entity::review_finding_transitions::Column::ActorId)
+        .column(entity::review_finding_transitions::Column::FindingId)
         .into_tuple()
         .all(db)
         .await?;
 
-    Ok(rows
+    let findings: std::collections::HashSet<Uuid> = rows
         .into_iter()
-        .filter(|(review_id, actor_id)| {
+        .filter(|(review_id, actor_id, _)| {
             reviewer_by_review
                 .get(review_id)
                 .is_some_and(|reviewer_id| reviewer_id != actor_id)
         })
-        .count() as u64)
+        .map(|(_, _, finding_id)| finding_id)
+        .collect();
+
+    Ok(findings.len() as u64)
 }
 
 /// PR 単位の集計（重大度 × 状態の件数）。

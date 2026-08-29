@@ -819,6 +819,30 @@ async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
         summary["owner_override_rejections"], 1,
         "オーナー代行での棄却が数えられる: {summary}"
     );
+
+    // 往復させても件数は増えない。数えるのは指摘の件数であって遷移の回数ではない
+    // （rejected → open は通るので、回数で数えると指摘 1 件が何件にも見える）
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK,
+        "代行で棄却した指摘は open へ戻せる"
+    );
+    assert_eq!(
+        transition(&fx, &finding_id, "rejected").await.status(),
+        StatusCode::OK,
+        "戻したものをもう一度代行で棄却できる"
+    );
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        summary["owner_override_rejections"], 1,
+        "同じ指摘を往復させても 1 件のまま: {summary}"
+    );
+
     // 誰が代行したかは履歴に残る
     let transitions = body["transitions"].as_array().expect("transitions");
     let last = transitions.last().expect("last transition");
@@ -1296,4 +1320,46 @@ async fn access_requires_a_session_and_tenant_membership() {
     fx.app.cleanup_user(fx.reviewer.id).await;
     fx.app.cleanup_user(fx.developer.id).await;
     fx.app.cleanup_user(outsider.id).await;
+}
+
+/// 読み取りも PR 番号が 0 以下なら 400。
+///
+/// 起票だけ弾いて読み取りを通すと、`?pr=0` は空一覧・`mergeable: false` という
+/// 正常応答になる。「そんな PR は無い」と「未レビューなので通せない」が同じ形に
+/// 見えるので、ゲートとして使う側は綴り違いに気づけない（仕様 §10）。
+#[tokio::test]
+async fn read_apis_reject_a_non_positive_pr_number() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let reviews = fx.reviews_path();
+    let findings = fx.findings_path();
+    for path in [
+        format!("{reviews}?pr=0"),
+        format!("{reviews}?pr=-1"),
+        format!("{reviews}/summary?pr=0"),
+        format!("{findings}?pr=0"),
+    ] {
+        assert_eq!(
+            fx.app.get_with_session(&path).await.status(),
+            StatusCode::BAD_REQUEST,
+            "PR 番号が 0 以下なら弾く: {path}"
+        );
+    }
+
+    // 対照: 1 以上なら、そのラウンドが無くても正常に読める（過剰拒否でない）
+    for path in [
+        format!("{reviews}?pr=1"),
+        format!("{reviews}/summary?pr=1"),
+        format!("{findings}?pr=1"),
+    ] {
+        assert_eq!(
+            fx.app.get_with_session(&path).await.status(),
+            StatusCode::OK,
+            "1 以上は通す: {path}"
+        );
+    }
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
 }

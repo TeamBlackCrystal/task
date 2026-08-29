@@ -11238,21 +11238,22 @@ export interface operations {
     };
     list_review_findings: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
+                pr: number;
+                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
+                repo?: string;
+                /** @description 状態での絞り込み（カンマ区切り。例: `open,fixed`） */
+                state?: string;
+                /** @description 重大度での絞り込み（カンマ区切り。例: `high,medium`） */
+                severity?: string;
+            };
             header?: never;
             path: {
                 /** @description テナントID */
                 tenant_id: string;
                 /** @description プロジェクトID */
                 project_id: string;
-                /** @description 対象 PR 番号 */
-                pr: number;
-                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
-                repo: string | null;
-                /** @description 状態での絞り込み（カンマ区切り。例: `open,fixed`） */
-                state: string | null;
-                /** @description 重大度での絞り込み（カンマ区切り。例: `high,medium`） */
-                severity: string | null;
             };
             cookie?: never;
         };
@@ -11407,14 +11408,8 @@ export interface operations {
     };
     list_reviews: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description テナントID */
-                tenant_id: string;
-                /** @description プロジェクトID */
-                project_id: string;
-                /** @description 対象 PR 番号 */
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
                 pr: number;
                 /**
                  * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
@@ -11422,7 +11417,14 @@ export interface operations {
                  *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
                  *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
                  */
-                repo: string | null;
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
             };
             cookie?: never;
         };
@@ -11575,14 +11577,8 @@ export interface operations {
     };
     get_review_summary: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description テナントID */
-                tenant_id: string;
-                /** @description プロジェクトID */
-                project_id: string;
-                /** @description 対象 PR 番号 */
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
                 pr: number;
                 /**
                  * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
@@ -11590,7 +11586,14 @@ export interface operations {
                  *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
                  *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
                  */
-                repo: string | null;
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
             };
             cookie?: never;
         };

@@ -13,6 +13,7 @@ use sea_orm::{
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
+use validator::Validate;
 
 use crate::AppState;
 use crate::error::{AppError, ServerError};
@@ -21,9 +22,11 @@ use crate::openapi::CrudErrors;
 use entity::review_findings::{FindingSeverity, FindingState};
 use entity::{review_finding_transitions, review_findings, reviews, scopes::Scope, users};
 use payload::reviews::*;
-#[derive(Debug, Deserialize, IntoParams)]
+#[derive(Debug, Deserialize, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PrQuery {
-    /// 対象 PR 番号
+    /// 対象 PR 番号（1 以上）
+    #[validate(range(min = 1))]
     pub pr: i32,
     /// 見るリポジトリ（`owner/name`）。既定は現在の連携先
     ///
@@ -32,9 +35,11 @@ pub struct PrQuery {
     pub repo: Option<String>,
 }
 
-#[derive(Debug, Deserialize, IntoParams)]
+#[derive(Debug, Deserialize, Validate, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FindingListQuery {
-    /// 対象 PR 番号
+    /// 対象 PR 番号（1 以上）
+    #[validate(range(min = 1))]
     pub pr: i32,
     /// 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ）
     pub repo: Option<String>,
@@ -319,7 +324,7 @@ pub async fn list_reviews(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
-    Query(query): Query<PrQuery>,
+    Valid(Query(query)): Valid<Query<PrQuery>>,
 ) -> Result<Json<Vec<ReviewResponse>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
@@ -374,7 +379,7 @@ pub async fn get_review_summary(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
-    Query(query): Query<PrQuery>,
+    Valid(Query(query)): Valid<Query<PrQuery>>,
 ) -> Result<Json<ReviewSummaryResponse>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
@@ -492,7 +497,7 @@ pub async fn list_review_findings(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
-    Query(query): Query<FindingListQuery>,
+    Valid(Query(query)): Valid<Query<FindingListQuery>>,
 ) -> Result<Json<Vec<FindingResponse>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
