@@ -1185,13 +1185,35 @@ async fn findings_can_be_filtered_and_unknown_filters_are_rejected() {
     .await;
     assert!(verified_only.as_array().expect("findings").is_empty());
 
-    // 綴り違いを黙って無視すると絞り込みが効いていないことに気づけない
-    assert_eq!(
-        fx.app
-            .get_with_session(&format!("{}?pr=705&severity=critical", fx.findings_path()))
-            .await
-            .status(),
-        StatusCode::BAD_REQUEST
+    // 綴り違いを黙って無視すると絞り込みが効いていないことに気づけない。
+    // 400 にはどのパラメーターのどの値が未知なのかを入れる（CLI から使う
+    // レビュワーが「bad request」だけでは直しようがない）
+    let res = fx
+        .app
+        .get_with_session(&format!("{}?pr=705&severity=critical", fx.findings_path()))
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let message = json(res).await["message"]
+        .as_str()
+        .expect("message")
+        .to_string();
+    assert!(
+        message.contains("severity") && message.contains("critical"),
+        "パラメーター名と受け取った値が届く: {message}"
+    );
+
+    let res = fx
+        .app
+        .get_with_session(&format!("{}?pr=705&state=merged", fx.findings_path()))
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let message = json(res).await["message"]
+        .as_str()
+        .expect("message")
+        .to_string();
+    assert!(
+        message.contains("state") && message.contains("merged"),
+        "state 側も同じように届く: {message}"
     );
 
     fx.app.cleanup_user(fx.reviewer.id).await;

@@ -79,11 +79,21 @@ async fn resolve_repo_scope(
 
 /// カンマ区切りのクエリを列挙値へ。未知の値が混ざっていたら 400 にする
 /// （綴り違いを黙って無視すると、絞り込みが効いていないことに気づけない）。
-fn parse_csv<T: std::str::FromStr>(raw: Option<&str>) -> Result<Option<Vec<T>>, AppError> {
+///
+/// 400 には対象のパラメーター名と受け取った値を入れる。素の `bad request` だけでは、
+/// CLI から使うレビュワー（AI を含む）がどの値の綴り違いなのかを判断できない。
+fn parse_csv<T: std::str::FromStr>(
+    param: &str,
+    raw: Option<&str>,
+) -> Result<Option<Vec<T>>, AppError> {
     let Some(raw) = raw else { return Ok(None) };
     let mut values = Vec::new();
     for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-        values.push(part.parse::<T>().map_err(|_| AppError::BadRequest)?);
+        values.push(part.parse::<T>().map_err(|_| {
+            AppError::BadRequestDetail(format!(
+                "{param} に未知の値があります（受け取った値: {part}）"
+            ))
+        })?);
     }
     Ok((!values.is_empty()).then_some(values))
 }
@@ -486,8 +496,8 @@ pub async fn list_review_findings(
 ) -> Result<Json<Vec<FindingResponse>>, AppError> {
     ensure_read_access(&state, &auth, tenant_id, project_id).await?;
 
-    let states = parse_csv::<FindingState>(query.state.as_deref())?;
-    let severities = parse_csv::<FindingSeverity>(query.severity.as_deref())?;
+    let states = parse_csv::<FindingState>("state", query.state.as_deref())?;
+    let severities = parse_csv::<FindingSeverity>("severity", query.severity.as_deref())?;
 
     let repo = resolve_repo_scope(&state, project_id, query.repo.as_deref()).await?;
     let rounds = reviews::Entity::find()

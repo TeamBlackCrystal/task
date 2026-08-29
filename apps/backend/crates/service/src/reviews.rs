@@ -146,8 +146,9 @@ fn scoped_rounds(
 
 /// PR 内の次のラウンド番号を返す。
 ///
-/// 同じ PR に同時にラウンドを作られると `UNIQUE (project_id, pr_number, round)` に
-/// ぶつかるため、プロジェクト行を掴んで採番から挿入までを直列化する。
+/// 同じ PR に同時にラウンドを作られると
+/// `UNIQUE (project_id, repo_owner, repo_name, pr_number, round)` にぶつかるため、
+/// プロジェクト行を掴んで採番から挿入までを直列化する。
 /// レビューの起票は頻度が低く、この粒度で待たせても実害がない。
 pub async fn next_round<C: ConnectionTrait>(
     db: &C,
