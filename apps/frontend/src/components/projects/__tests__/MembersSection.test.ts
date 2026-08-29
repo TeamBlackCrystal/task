@@ -46,6 +46,8 @@ type MockState = {
   tenantMembers: components['schemas']['TenantMemberResponse'][];
   /** 400 以上を設定すると GET members が失敗する */
   listStatus?: number;
+  /** 400 以上を設定すると GET tenant members（追加候補）が失敗する */
+  tenantListStatus?: number;
   addStatus?: number;
   updateStatus?: number;
   deleteStatus?: number;
@@ -66,6 +68,9 @@ function stubFetch(state: MockState) {
     const memberItemMatch = pathname.match(/\/projects\/[^/]+\/members\/([^/]+)$/);
 
     if (req.method === 'GET' && pathname.endsWith(`/v1/tenants/${TENANT_ID}/members`)) {
+      if (state.tenantListStatus) {
+        return jsonResponse({ message: 'error' }, state.tenantListStatus);
+      }
       return jsonResponse(state.tenantMembers);
     }
     if (req.method === 'GET' && pathname.endsWith(`/projects/${PROJECT_ID}/members`)) {
@@ -196,6 +201,23 @@ describe('MembersSection', () => {
 
     expect(wrapper.text()).toContain('追加できるテナントメンバーがいません。');
     expect(bodyButton('追加')?.disabled).toBe(true);
+  });
+
+  it('追加候補の取得に失敗したら「いません」ではなく失敗として伝える', async () => {
+    stubFetch({
+      members: [projectMember(ALICE_ID, 'alice', 'Admin')],
+      // テナントには人が居るが、取得に失敗する
+      tenantMembers: [tenantMember(BOB_ID, 'bob')],
+      tenantListStatus: 500,
+    });
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('追加候補を読み込めませんでした');
+    // 「テナントに人が居ない」という別の事実にすり替えない
+    expect(wrapper.text()).not.toContain('追加できるテナントメンバーがいません。');
+    // メンバー一覧は読めているので出したまま
+    expect(wrapper.get('[data-testid="member-list"]').text()).toContain('alice');
   });
 
   it('ロール変更の 409 は最後の管理者であることを伝える', async () => {

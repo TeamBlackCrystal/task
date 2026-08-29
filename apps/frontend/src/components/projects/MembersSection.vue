@@ -66,7 +66,13 @@ const isForbidden = computed(
     403,
 );
 
-/** 追加候補 = テナントメンバーのうち、まだプロジェクトメンバーでない人。 */
+/**
+ * 追加候補 = テナントメンバーのうち、まだプロジェクトメンバーでない人。
+ *
+ * 取得に失敗したときも空になるので、「候補がいません」と出す前に
+ * `tenantMembersQuery.isError` を見る（失敗を「テナントに人が居ない」という
+ * 別の事実にすり替えない）。
+ */
 const candidates = computed(() => {
   const existing = new Set(members.value.map((m) => m.user_id));
   return (tenantMembersQuery.data.value ?? []).filter((tm) => !existing.has(tm.user_id));
@@ -258,7 +264,14 @@ function initials(username: string) {
         </Button>
       </div>
       <p
-        v-if="!candidates.length && !tenantMembersQuery.isPending.value"
+        v-if="tenantMembersQuery.isError.value"
+        role="alert"
+        class="-mt-3 mb-5 text-sm text-destructive"
+      >
+        追加候補を読み込めませんでした
+      </p>
+      <p
+        v-else-if="!candidates.length && !tenantMembersQuery.isPending.value"
         class="-mt-3 mb-5 text-xs text-muted-foreground"
       >
         追加できるテナントメンバーがいません。先にテナントへメンバーを追加してください。
