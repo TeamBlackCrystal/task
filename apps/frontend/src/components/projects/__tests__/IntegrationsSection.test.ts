@@ -752,4 +752,49 @@ describe('IntegrationsSection', () => {
     await flushPromises();
     expect(document.body.textContent).toContain('koyori-app/docs');
   });
+
+  /**
+   * projectId が変わったら連携状態も取り直す。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこのコンポーネントを作り直さない
+   * ので、setup 時の props でクエリを組むと前のプロジェクトの連携状態が残り、
+   * 未連携のプロジェクトを「連携済み」と見せてしまう。
+   */
+  it('projectId が変わったら連携状態を取り直す', async () => {
+    const OTHER_PROJECT_UUID = '00000000-0000-4000-8000-000000000020';
+    const requestedProjects: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (req: Request | string) => {
+        const url = typeof req === 'string' ? req : req.url;
+        const pathname = new URL(url, 'http://localhost').pathname;
+        const match = pathname.match(/\/projects\/([^/]+)\/github\/integration$/);
+        if (match) {
+          requestedProjects.push(match[1]);
+          return jsonResponse(
+            match[1] === PROJECT_UUID
+              ? {
+                  connected: true,
+                  repo_owner: 'koyori-app',
+                  repo_name: 'koyori',
+                  connected_at: '2026-07-01T00:00:00Z',
+                }
+              : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
+          );
+        }
+        return jsonResponse({ url: INSTALL_URL });
+      }),
+    );
+
+    const { wrapper } = mountSection();
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/koyori');
+
+    await wrapper.setProps({ projectId: OTHER_PROJECT_UUID });
+    await flushPromises();
+
+    expect(requestedProjects).toContain(OTHER_PROJECT_UUID);
+    expect(document.body.textContent).not.toContain('koyori-app/koyori');
+    expect(bodyButton('連携する')).toBeTruthy();
+  });
 });
