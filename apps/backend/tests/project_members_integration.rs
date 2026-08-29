@@ -168,3 +168,75 @@ async fn project_member_list_requires_project_admin() {
     app.cleanup_user(owner.id).await;
     app.cleanup_user(member.id).await;
 }
+
+/// 同時に相手を降格させても、Admin が 0 人にはならない。
+///
+/// 「最後の Admin を残す」判定は数えてから書くので、直列化しないと双方が
+/// 「まだもう 1 人いる」を読んで両方通る。Admin が 0 人になるとプロジェクト側から
+/// 誰も直せなくなり、admin_ids が空になるので 409 のガード自体も効かなくなる。
+#[tokio::test]
+async fn concurrent_demotions_cannot_drop_the_last_admin() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tenant_members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        assert_eq!(
+            app.post_json_with_session(
+                &tenant_members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            app.post_json_with_session(
+                &project_members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Admin" }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    // 2 人の Admin を同時に Viewer へ落とす
+    let alice_path = format!("{project_members_path}/{}", alice.id);
+    let bob_path = format!("{project_members_path}/{}", bob.id);
+    let viewer = serde_json::json!({ "role": "Viewer" });
+    let (first, second) = tokio::join!(
+        app.put_json_with_session(&alice_path, viewer.clone()),
+        app.put_json_with_session(&bob_path, viewer.clone()),
+    );
+    let statuses = [first.status(), second.status()];
+    assert!(
+        statuses.contains(&StatusCode::CONFLICT),
+        "片方は最後の管理者として弾かれる: {statuses:?}"
+    );
+
+    // Admin は 1 人残っている（0 人になると誰も直せなくなる）
+    let members = json_body(app.get_with_session(&project_members_path).await).await;
+    let admins = members
+        .as_array()
+        .expect("members")
+        .iter()
+        .filter(|m| m["role"] == "Admin")
+        .count();
+    assert_eq!(admins, 1, "Admin が 0 人にならない: {members}");
+
+    app.cleanup_user(owner.id).await;
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+}
