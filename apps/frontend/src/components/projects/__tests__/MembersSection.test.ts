@@ -239,6 +239,11 @@ describe('MembersSection', () => {
     expect(putRequests).toHaveLength(1);
     expect(putRequests[0].body).toEqual({ role: 'Member' });
     expect(wrapper.text()).toContain('最後の管理者「alice」は降格できません。');
+
+    // 行の表示は元のロールへ戻る（サーバーが拒否したのに画面だけ「メンバー」に
+    // 見えると、実際の権限と食い違う）。Select をローカル state へ書き換えると
+    // ここで落ちる
+    expect(wrapper.get('[aria-label="alice のロール"]').text()).toBe('管理者');
   });
 
   it('ロール変更に成功すると PUT を送り、表示が新しいロールになる', async () => {
