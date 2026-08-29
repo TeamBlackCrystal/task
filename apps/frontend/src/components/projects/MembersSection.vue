@@ -364,15 +364,17 @@ function initials(username: string) {
         <DialogHeader>
           <DialogTitle>メンバーを削除しますか？</DialogTitle>
           <DialogDescription>
-            「{{ removeTarget.user.username }}」をこのプロジェクトから外します。
-            担当タスクの割り当ては残りますが、ウォッチしていたタスクの通知は解除されます。
-          </DialogDescription>
-          <DialogDescription v-if="members.length === 1" class="text-destructive">
-            これが最後のメンバーです。外すとメンバー指定が無くなり、このプロジェクトは
-            テナントメンバー全員が開けるようになります。
-          </DialogDescription>
-          <DialogDescription v-if="isSelf(removeTarget)" class="text-destructive">
-            自分をこのプロジェクトから外します。以後この設定画面は開けなくなります。
+            <span class="block">
+              「{{ removeTarget.user.username }}」をこのプロジェクトから外します。
+              担当タスクの割り当ては残りますが、ウォッチしていたタスクの通知は解除されます。
+            </span>
+            <span v-if="members.length === 1" class="mt-2 block text-destructive">
+              これが最後のメンバーです。外すとメンバー指定が無くなり、このプロジェクトは
+              テナントメンバー全員が開けるようになります。
+            </span>
+            <span v-if="isSelf(removeTarget)" class="mt-2 block text-destructive">
+              自分をこのプロジェクトから外します。以後この設定画面は開けなくなります。
+            </span>
           </DialogDescription>
         </DialogHeader>
         <p v-if="removeError" role="alert" class="text-sm text-destructive">{{ removeError }}</p>
