@@ -51,8 +51,19 @@ const isNotFound = computed(() => isTenantNotFound.value || isProjectNotFound.va
       プロジェクトが見つかりません
     </p>
 
+    <!--
+      `:key` でプロジェクトごとに作り直す。
+
+      vike-vue はクライアント遷移で同じ `+Page.vue` に解決される URL 間では
+      コンポーネントを差し替えず patch するため、サイドバーからプロジェクトを
+      切り替えても設定画面のインスタンスが生き残る。各セクションは setup 時の
+      props でクエリを組むものがあり、そのままだと一覧が前のプロジェクトの
+      ままで、操作だけが今のプロジェクトへ飛ぶ（メンバー節では、表示されて
+      いない側のプロジェクトから実際に人が外れる）。
+    -->
     <ProjectSettingsView
       v-else-if="tenantId && project"
+      :key="project.id"
       :tenant-id="tenantId"
       :tenant-slug="tenantDisplayId"
       :project="project"

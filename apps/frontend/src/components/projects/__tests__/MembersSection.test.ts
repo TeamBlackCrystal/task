@@ -245,6 +245,10 @@ describe('MembersSection', () => {
     await flushPromises();
     expect(document.body.textContent).toContain('以後この設定画面は開けなくなります');
 
+    // 警告を足すときに要素を並べない（DialogDescription が指せる要素は 1 つだけ）。
+    // 文言と違って画面上の見た目が変わらないので、数で固定する
+    expect(document.body.querySelectorAll('[data-slot="dialog-description"]')).toHaveLength(1);
+
     // 他人を外すときは出さない
     clickBodyButton('キャンセル');
     await flushPromises();
@@ -381,5 +385,77 @@ describe('MembersSection', () => {
 
     expect(document.body.textContent).toContain('最後の管理者は削除できません。');
     expect(wrapper.get('[data-testid="member-list"]').text()).toContain('alice');
+  });
+
+  /**
+   * projectId が変わったら一覧も追従する。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこのコンポーネントを
+   * 作り直さないので、setup 時の props でクエリを組むと一覧だけが前の
+   * プロジェクトのまま残り、削除・ロール変更は今のプロジェクトへ飛ぶ。
+   * 相手は利用者 ID なので、表示されていない側から実際に人が外れる。
+   */
+  it('projectId が変わったら一覧を取り直す', async () => {
+    const OTHER_PROJECT_ID = '00000000-0000-4000-8000-000000000020';
+    const membersByProject: Record<string, string> = {
+      [PROJECT_ID]: 'alice',
+      [OTHER_PROJECT_ID]: 'bob',
+    };
+    const requestedProjects: string[] = [];
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (req: Request) => {
+        const pathname = new URL(req.url, 'http://localhost').pathname;
+        if (pathname.endsWith('/v1/auth/me')) {
+          return jsonResponse({
+            id: ALICE_ID,
+            username: 'alice',
+            email: 'alice@example.com',
+            avatar_url: null,
+          });
+        }
+        if (pathname.endsWith(`/v1/tenants/${TENANT_ID}/members`)) return jsonResponse([]);
+        const match = pathname.match(/\/projects\/([^/]+)\/members$/);
+        if (req.method === 'GET' && match) {
+          const projectId = match[1];
+          requestedProjects.push(projectId);
+          const username = membersByProject[projectId];
+          return jsonResponse(
+            username
+              ? [
+                  {
+                    id: `pm-${username}`,
+                    project_id: projectId,
+                    user_id: username === 'alice' ? ALICE_ID : BOB_ID,
+                    role: 'Admin',
+                    user: user(username === 'alice' ? ALICE_ID : BOB_ID, username),
+                  },
+                ]
+              : [],
+          );
+        }
+        return jsonResponse({ message: 'not-found' }, 404);
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const wrapper = mount(MembersSection, {
+      props: { tenantId: TENANT_ID, projectId: PROJECT_ID },
+      global: { plugins: [[VueQueryPlugin, { queryClient }]] },
+      attachTo: document.body,
+    });
+    await flushPromises();
+    expect(wrapper.get('[data-testid="member-list"]').text()).toContain('alice');
+
+    await wrapper.setProps({ projectId: OTHER_PROJECT_ID });
+    await flushPromises();
+
+    expect(requestedProjects).toContain(OTHER_PROJECT_ID);
+    const list = wrapper.get('[data-testid="member-list"]').text();
+    expect(list).toContain('bob');
+    expect(list).not.toContain('alice');
   });
 });

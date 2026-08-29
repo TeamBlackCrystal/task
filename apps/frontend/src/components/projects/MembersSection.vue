@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useQueryClient } from '@tanstack/vue-query';
+import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { PhPlus } from '@phosphor-icons/vue';
 import { computed, ref } from 'vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -46,15 +46,25 @@ const props = defineProps<{
 
 const queryClient = useQueryClient();
 
-const pathParams = {
+// 変更系は呼び出し時に props を読むので、読み取りも props に追従させる。
+// 素のオブジェクトで組むと setup 時の値で固定され、一覧と操作先がずれる
+// （親側の `:key` でも防いでいるが、こちらだけでも成立させる）。
+const pathParams = computed(() => ({
   params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
-};
-const membersQuery = apiClient.useQuery('get', MEMBERS_PATH, pathParams, { retry: false });
-const tenantMembersQuery = apiClient.useQuery(
-  'get',
-  TENANT_MEMBERS_PATH,
-  { params: { path: { tenant_id: props.tenantId } } },
-  { retry: false },
+}));
+const membersQuery = useQuery(
+  computed(() => ({
+    ...apiClient.queryOptions('get', MEMBERS_PATH, pathParams.value),
+    retry: false,
+  })),
+);
+const tenantMembersQuery = useQuery(
+  computed(() => ({
+    ...apiClient.queryOptions('get', TENANT_MEMBERS_PATH, {
+      params: { path: { tenant_id: props.tenantId } },
+    }),
+    retry: false,
+  })),
 );
 
 const members = computed(() => membersQuery.data.value ?? []);
