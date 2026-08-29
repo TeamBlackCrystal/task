@@ -16,10 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use apalis::prelude::{
-    BackoffConfig, BoxDynError, Data, IntervalStrategy, StrategyBuilder, TaskSink,
+    BackoffConfig, BoxDynError, Data, IntervalStrategy, StrategyBuilder, Task, TaskSink,
 };
 use apalis_postgres::{Config, JsonCodec, PgPool, PostgresStorage};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -45,6 +44,22 @@ pub const POLL_INTERVAL_SECS: u64 = 2;
 const _: () = assert!(
     service::github::review_summary_queue::SUMMARY_PENDING_TTL_SECS >= POLL_INTERVAL_SECS * 30,
     "更新待ちフラグの TTL がキューの滞留に対して短すぎる"
+);
+
+/// 自分の番でなかったジョブを積み直すまでの待ち時間。
+///
+/// ロックの持ち主は GitHub を数回叩くので、待たずに積み直すと空振りを繰り返す。
+/// 一方で長くすると、その分だけコメントの更新が遅れる。キューを見に行く刻み
+/// ([`POLL_INTERVAL_SECS`]) より長く、人が気づく間隔よりは十分短く取る。
+///
+/// この積み直しは回数で打ち切らない。持ち主が落ちてロックが
+/// [`SUMMARY_LOCK_TTL_SECS`](service::github::review_summary_queue::SUMMARY_LOCK_TTL_SECS)
+/// で失効するまで待てるのが目的で、打ち切ると要約が古いまま止まる。
+pub const LOCK_RETRY_DELAY_SECS: u64 = 5;
+
+const _: () = assert!(
+    LOCK_RETRY_DELAY_SECS > POLL_INTERVAL_SECS,
+    "積み直しの待ちがキューの刻みより短いと空振りを繰り返す"
 );
 
 /// 更新対象の PR。ペイロードは ID と番号だけで、トークン等は載せない
@@ -86,9 +101,32 @@ pub async fn enqueue(
     storage: &ReviewSummaryStorage,
     job: ReviewSummaryJob,
 ) -> Result<(), anyhow::Error> {
+    enqueue_after(storage, job, Duration::ZERO).await
+}
+
+/// `delay` 後に実行されるよう積む。0 なら即座に拾われる。
+async fn enqueue_after(
+    storage: &ReviewSummaryStorage,
+    job: ReviewSummaryJob,
+    delay: Duration,
+) -> Result<(), anyhow::Error> {
     let mut storage = storage.clone();
+    if delay.is_zero() {
+        storage
+            .push(job)
+            .await
+            .map_err(|e| anyhow::anyhow!("push review summary job: {e}"))?;
+        return Ok(());
+    }
+
+    let mut task = Task::new(job);
+    task.parts.run_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!("system time before epoch: {e}"))?
+        .saturating_add(delay)
+        .as_secs();
     storage
-        .push(job)
+        .push_task(task)
         .await
         .map_err(|e| anyhow::anyhow!("push review summary job: {e}"))?;
     Ok(())
@@ -106,6 +144,18 @@ pub async fn enqueue_best_effort(
     repo: &str,
     pr_number: i32,
 ) {
+    enqueue_best_effort_after(storage, redis, project_id, repo, pr_number, Duration::ZERO).await
+}
+
+/// [`enqueue_best_effort`] の、実行を `delay` だけ後ろへずらす版。
+async fn enqueue_best_effort_after(
+    storage: &ReviewSummaryStorage,
+    redis: &RedisConnection,
+    project_id: Uuid,
+    repo: &str,
+    pr_number: i32,
+    delay: Duration,
+) {
     match service::github::review_summary_queue::try_mark_pending(
         redis, project_id, repo, pr_number,
     )
@@ -122,12 +172,13 @@ pub async fn enqueue_best_effort(
         }
     }
 
-    if let Err(e) = enqueue(
+    if let Err(e) = enqueue_after(
         storage,
         ReviewSummaryJob {
             project_id,
             pr_number,
         },
+        delay,
     )
     .await
     {
@@ -143,10 +194,12 @@ pub async fn enqueue_best_effort(
 }
 
 pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(), BoxDynError> {
-    // 投稿先も鍵の単位も「現在の連携先リポジトリ」で決める。ラウンドはどのリポジトリの
-    // PR を見たかを控えているので、連携を差し替えた後は旧リポジトリのラウンドが
-    // この範囲から外れ、旧リポジトリ向けの指摘を新リポジトリへ書き込むことがない（仕様 §7）
-    let repo = service::reviews::current_repo(&state.db, job.project_id).await?;
+    // 投稿先も鍵の単位も集計の範囲も、この 1 行から決める。別々に引くと、その間に
+    // 連携を差し替えられたとき「旧リポジトリのラウンドを新リポジトリへ投稿する」が
+    // 起きる。ラウンドはどのリポジトリの PR を見たかを控えているので、同じ行から
+    // 引く限り、連携を差し替えた後は旧リポジトリのラウンドが範囲から外れる（仕様 §7）
+    let integration = service::reviews::current_integration(&state.db, job.project_id).await?;
+    let repo = service::reviews::RepoRef::from_integration(integration.as_ref());
     let repo_key = format!("{}/{}", repo.owner, repo.name);
 
     // 同じ PR を更新中のジョブがいる間は投稿しない。並行して走ると、先に古い
@@ -160,16 +213,20 @@ pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(),
     )
     .await?
     else {
-        // 「更新待ち」の印は落とさない。この再試行が拾い直し、そのとき最新状態を読む
+        // 自分の番ではないだけで、失敗ではない。ジョブの再試行に任せると
+        // バックオフが無いぶん数ミリ秒で試行回数を使い切り、「更新待ち」の印だけが
+        // 残って生きたジョブが 1 本も無い状態になる（印の TTL のあいだ、以降の
+        // 遷移は合流で捨てられる）。印を落として積み直し、待つのはキューに任せる
         tracing::info!(
             project_id = %job.project_id,
             pr = job.pr_number,
-            "another review summary update is running; retrying later"
+            "another review summary update is running; re-enqueueing"
         );
-        return Err("review summary update is already running".into());
+        requeue_after_lock_conflict(&job, &state, &repo_key).await;
+        return Ok(());
     };
 
-    let result = update_summary(&job, &state, &repo, &repo_key).await;
+    let result = update_summary(&job, &state, integration.as_ref(), &repo, &repo_key).await;
 
     if let Err(e) = service::github::review_summary_queue::release_update_lock(
         &state.redis_client,
@@ -187,10 +244,45 @@ pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(),
     result
 }
 
+/// 「自分の番ではない」ジョブを、少し待ってから積み直す。
+///
+/// 印を先に落とすのは、[`enqueue_best_effort`] が印の有無で合流を決めるため。
+/// 落としてから積むまでの間に別の遷移が積んだときは、そちらが最新状態を読むので
+/// 自分は積まなくてよい（`enqueue_best_effort` が印で弾く）。
+async fn requeue_after_lock_conflict(job: &ReviewSummaryJob, state: &JobState, repo_key: &str) {
+    if let Err(e) = service::github::review_summary_queue::clear_pending(
+        &state.redis_client,
+        job.project_id,
+        repo_key,
+        job.pr_number,
+    )
+    .await
+    {
+        // 落とせないと印だけが残る。印の TTL が切れるまで以降の遷移が捨てられるので、
+        // 積み直しても拾い直せない。ここは警告に留めて次の遷移に委ねる
+        tracing::warn!(error = %e, project_id = %job.project_id, pr = job.pr_number, "clear review summary pending failed");
+        return;
+    }
+
+    enqueue_best_effort_after(
+        &state.review_summary_storage,
+        &state.redis_client,
+        job.project_id,
+        repo_key,
+        job.pr_number,
+        Duration::from_secs(LOCK_RETRY_DELAY_SECS),
+    )
+    .await;
+}
+
 /// ロックを取った状態で、最新の集計を読んでコメントへ反映する。
+///
+/// `integration` は [`process`] が 1 回だけ引いた行。ここで引き直すと、その間に
+/// 連携を差し替えられたとき集計の範囲と投稿先がずれる。
 async fn update_summary(
     job: &ReviewSummaryJob,
     state: &JobState,
+    integration: Option<&github_integrations::Model>,
     repo: &service::reviews::RepoRef,
     repo_key: &str,
 ) -> Result<(), BoxDynError> {
@@ -214,11 +306,7 @@ async fn update_summary(
     };
 
     // 連携の無いプロジェクトでは投稿しない（起票・管理自体は task 側で完結する）
-    let Some(integration) = github_integrations::Entity::find()
-        .filter(github_integrations::Column::ProjectId.eq(job.project_id))
-        .one(&state.db)
-        .await?
-    else {
+    let Some(integration) = integration else {
         tracing::debug!(project_id = %job.project_id, "no github integration; skipping review summary");
         return Ok(());
     };

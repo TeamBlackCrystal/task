@@ -32,6 +32,10 @@ pub struct JobState {
     pub redis_client: common::cache::redis::RedisConnection,
     pub smtp_client: service::smtp::SmtpClient,
     pub http_client: reqwest::Client,
+    /// 要約更新ジョブが、自分の番でなかったときに積み直すために持つ。
+    /// ワーカーへ `AppState` を渡すと job → handler の循環になるので、
+    /// 必要な依存はここに足す
+    pub review_summary_storage: Arc<review_summary::ReviewSummaryStorage>,
 }
 
 pub async fn setup_pool(database_url: &str) -> Result<PgPool, anyhow::Error> {

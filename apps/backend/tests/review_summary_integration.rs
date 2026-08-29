@@ -3,7 +3,7 @@ mod common;
 use axum::http::StatusCode;
 use common::TestApp;
 use entity::{github_integrations, project_statuses};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, prelude::Uuid};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, prelude::Uuid};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -142,6 +142,27 @@ async fn link_integration(app: &TestApp, project_id: Uuid, created_by: Uuid) {
     .expect("insert integration");
 }
 
+/// 積まれている要約更新ジョブの件数。ペイロードは JSON なので project_id で絞る
+/// （apalis.jobs.job は bytea。SeaORM の生 SQL では `?` ではなく `$N` を使う）。
+async fn queued_summary_jobs(app: &TestApp, project_id: Uuid) -> i64 {
+    let row = app
+        .state
+        .db
+        .query_one_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT COUNT(*) AS count FROM apalis.jobs \
+             WHERE job_type = $1 AND convert_from(job, 'UTF8') LIKE $2",
+            [
+                job::review_summary::QUEUE_NAME.into(),
+                format!("%{project_id}%").into(),
+            ],
+        ))
+        .await
+        .expect("count review summary jobs")
+        .expect("count row");
+    row.try_get::<i64>("", "count").expect("count column")
+}
+
 fn job_state(app: &TestApp) -> job::JobState {
     job::JobState {
         settings: app.state.settings.clone(),
@@ -149,6 +170,7 @@ fn job_state(app: &TestApp) -> job::JobState {
         redis_client: app.state.redis_client.clone(),
         smtp_client: app.state.smtp_client.clone(),
         http_client: app.state.http_client.clone(),
+        review_summary_storage: app.state.review_summary_storage.clone(),
     }
 }
 
@@ -257,7 +279,7 @@ async fn an_existing_summary_comment_is_updated_in_place() {
             ),
             serde_json::json!({
                 "pr_number": PR_NUMBER,
-                "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "head_sha": REVIEWED_HEAD,
                 "summary": "指摘なし",
                 "findings": [],
             }),
@@ -502,10 +524,14 @@ async fn the_pending_flag_and_lock_expire_and_release_is_owner_checked() {
         .expect("clear pending");
 }
 
-/// 同じ PR を更新中のジョブがいる間は投稿せず、再試行へ回る。
+/// 同じ PR を更新中のジョブがいる間は投稿せず、少し後ろへ積み直す。
 ///
 /// 合流はジョブの本数を減らすだけで同時実行は止まらない。並行して走ると、古い状態を
 /// 読んだ側の書き込みが後から着いてコメントが巻き戻る（仕様 §7）。
+///
+/// 「自分の番ではない」をジョブの失敗として返すと、`RetryPolicy` にバックオフが無い
+/// ぶん数ミリ秒で試行回数を使い切って終端する。そのとき「更新待ち」の印だけが残り、
+/// 生きたジョブが 1 本も無いまま、印の TTL のあいだ以降の遷移が合流で捨てられる。
 #[serial_test::serial]
 #[tokio::test]
 async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
@@ -558,17 +584,20 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
         project_id: tp.project_id,
         pr_number: PR_NUMBER,
     };
-    let result =
-        job::review_summary::process(job.clone(), apalis::prelude::Data::new(state.clone())).await;
-    assert!(
-        result.is_err(),
-        "ロックを取れなければ再試行へ回す（成功にすると更新が消える）"
-    );
+    let queued_before = queued_summary_jobs(&app, tp.project_id).await;
+    job::review_summary::process(job.clone(), apalis::prelude::Data::new(state.clone()))
+        .await
+        .expect("自分の番でないだけなので失敗にしない（失敗にすると即時再試行を使い切る）");
     assert!(
         bodies_of(&mock_server, wiremock::http::Method::PATCH)
             .await
             .is_empty(),
         "ロックを取れなかったジョブは投稿しない"
+    );
+    assert_eq!(
+        queued_summary_jobs(&app, tp.project_id).await,
+        queued_before + 1,
+        "拾い直すジョブを積み直す（積まないと、この更新はどこにも残らない）"
     );
     assert!(
         !service::github::review_summary_queue::try_mark_pending(
@@ -579,7 +608,7 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
         )
         .await
         .expect("pending flag"),
-        "再試行が拾えるよう「更新待ち」の印は落とさない"
+        "積み直したジョブに合流させるため「更新待ち」の印は立っている"
     );
 
     // 先行ジョブが終われば、次のジョブが最新状態で更新できる

@@ -103,6 +103,17 @@ impl RepoRef {
         !self.owner.is_empty() && !self.name.is_empty()
     }
 
+    /// 連携行から作る。`None` なら [`RepoRef::unlinked`]。
+    pub fn from_integration(integration: Option<&github_integrations::Model>) -> Self {
+        integration
+            .map(|row| Self {
+                integration_id: Some(row.id),
+                owner: row.repo_owner.clone(),
+                name: row.repo_name.clone(),
+            })
+            .unwrap_or_else(Self::unlinked)
+    }
+
     /// そのラウンドが見ていたリポジトリ。現在の連携先とは限らない。
     pub fn of_round(review: &reviews::Model) -> Self {
         Self {
@@ -113,22 +124,29 @@ impl RepoRef {
     }
 }
 
+/// プロジェクトの現在の連携行。連携が無ければ `None`。
+///
+/// 投稿先（`repo_owner` / `repo_name`）と `installation_id` も要る呼び出し側は、
+/// [`current_repo`] ではなくこちらを使って 1 行から全部を作る。別々に引くと、
+/// その間に連携を差し替えられたとき集計の範囲と投稿先がずれる。
+pub async fn current_integration<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+) -> Result<Option<github_integrations::Model>, sea_orm::DbErr> {
+    github_integrations::Entity::find()
+        .filter(github_integrations::Column::ProjectId.eq(project_id))
+        .one(db)
+        .await
+}
+
 /// プロジェクトの現在の連携先。連携が無ければ [`RepoRef::unlinked`]。
 pub async fn current_repo<C: ConnectionTrait>(
     db: &C,
     project_id: Uuid,
 ) -> Result<RepoRef, sea_orm::DbErr> {
-    let integration = github_integrations::Entity::find()
-        .filter(github_integrations::Column::ProjectId.eq(project_id))
-        .one(db)
-        .await?;
-    Ok(integration
-        .map(|row| RepoRef {
-            integration_id: Some(row.id),
-            owner: row.repo_owner,
-            name: row.repo_name,
-        })
-        .unwrap_or_else(RepoRef::unlinked))
+    Ok(RepoRef::from_integration(
+        current_integration(db, project_id).await?.as_ref(),
+    ))
 }
 
 /// ラウンドの検索を (project, リポジトリ, pr) に絞る。
