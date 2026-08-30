@@ -244,6 +244,114 @@ describe("review commands", () => {
     );
   });
 
+  // 連携を差し替えると旧リポジトリのラウンドが既定の視界から外れる。読み取りの
+  // 3 コマンドすべてから過去の連携先を指せることを確かめる（仕様 §5）
+  it.each([
+    [
+      "list",
+      [],
+      "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings",
+      { pr: 618, repo: "acme/old", state: undefined, severity: undefined },
+      [] as unknown,
+    ],
+    [
+      "rounds",
+      [],
+      "/v1/tenants/{tenant_id}/projects/{project_id}/reviews",
+      { pr: 618, repo: "acme/old" },
+      [] as unknown,
+    ],
+    [
+      "summary",
+      ["--no-head-check"],
+      "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary",
+      { pr: 618, repo: "acme/old" },
+      {
+        pr_number: 618,
+        rounds: 1,
+        counts: [],
+        blocking: 0,
+        latest_head_sha: HEAD_SHA,
+        repository: "acme/old",
+        mergeable: true,
+      } as unknown,
+    ],
+  ])(
+    "%s は --repo で過去の連携先を指せる",
+    async (command, extra, path, query, data) => {
+      mocks.GET.mockResolvedValue({ data, response: { status: 200 } });
+
+      await program().parseAsync([
+        "node",
+        "task",
+        "review",
+        command,
+        "--project",
+        "APP",
+        "--pr",
+        "618",
+        "--repo",
+        "acme/old",
+        ...extra,
+      ]);
+
+      expect(mocks.GET).toHaveBeenCalledWith(path, {
+        params: {
+          path: { tenant_id: "tenant-1", project_id: "project-1" },
+          query,
+        },
+      });
+    },
+  );
+
+  // 連携を張る前に溜めたラウンドはサーバー側で空文字列の owner / name として
+  // 残る。空文字を「未指定」に丸めると、そこへ到達する手段が無くなる
+  it("list は --repo \"\" を連携前のラウンドとして送る", async () => {
+    await program().parseAsync([
+      "node",
+      "task",
+      "review",
+      "list",
+      "--project",
+      "APP",
+      "--pr",
+      "618",
+      "--repo",
+      "",
+    ]);
+
+    expect(mocks.GET).toHaveBeenCalledWith(
+      "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings",
+      {
+        params: {
+          path: { tenant_id: "tenant-1", project_id: "project-1" },
+          query: { pr: 618, repo: "", state: undefined, severity: undefined },
+        },
+      },
+    );
+  });
+
+  it.each(["acme", "acme/", "/old", "acme/old/extra"])(
+    "list は owner/name の形でない --repo を送信前に弾く（%s）",
+    async (value) => {
+      await expect(
+        program().parseAsync([
+          "node",
+          "task",
+          "review",
+          "list",
+          "--project",
+          "APP",
+          "--pr",
+          "618",
+          "--repo",
+          value,
+        ]),
+      ).rejects.toThrow("--repo must be owner/name");
+      expect(mocks.GET).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["--state", "closed", "unknown state"],
     ["--severity", "critical", "unknown severity"],

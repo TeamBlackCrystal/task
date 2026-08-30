@@ -29,6 +29,7 @@ type SubmitOptions = OutputOptions & { project?: string };
 type ListOptions = OutputOptions & {
   project?: string;
   pr?: string;
+  repo?: string;
   state?: string;
   severity?: string;
 };
@@ -40,6 +41,7 @@ type ResolveOptions = OutputOptions & {
 type SummaryOptions = OutputOptions & {
   project?: string;
   pr?: string;
+  repo?: string;
   head?: string;
   /** commander が `--no-head-check` から作る（既定は true） */
   headCheck?: boolean;
@@ -74,6 +76,27 @@ function validateCsv<T extends string>(
     }
   }
   return values.length > 0 ? values.join(",") : undefined;
+}
+
+/**
+ * 読み取りの視界にするリポジトリを検証する。未指定なら現在の連携先（サーバーの既定）。
+ *
+ * 連携を差し替えると旧リポジトリのラウンドが既定の視界から外れるので、
+ * 過去の連携先を明示して読めるようにする。空文字は「連携を張る前に溜めた
+ * ラウンド」を指す（サーバーが空文字列で控えている）。
+ */
+function validateRepo(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim();
+  if (value.length === 0) return "";
+  const parts = value.split("/");
+  if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
+    throw new CliError(
+      `--repo must be owner/name, or "" for rounds recorded before the integration (got: ${raw})`,
+      2,
+    );
+  }
+  return value;
 }
 
 /** ファイルか標準入力から JSON を読む。`-` は標準入力。 */
@@ -303,11 +326,16 @@ export function registerReviewCommands(program: Command): void {
     .description("List findings for a PR")
     .requiredOption("--project <key>", "Project key or UUID")
     .requiredOption("--pr <number>", "PR number")
+    .option(
+      "--repo <owner/name>",
+      'Repository to read (default: the current integration; "" for rounds recorded before it)',
+    )
     .option("--state <states>", `Filter by state (${STATES.join(",")})`)
     .option("--severity <severities>", `Filter by severity (${SEVERITIES.join(",")})`)
     .action(async (opts: ListOptions, cmd) => {
       const output = getOutputOptions(cmd);
       const pr = parsePrNumber(opts.pr);
+      const repo = validateRepo(opts.repo);
       const state = validateCsv(opts.state, STATES, "state");
       const severity = validateCsv(opts.severity, SEVERITIES, "severity");
       const project = await resolveProject(opts.project!);
@@ -317,7 +345,7 @@ export function registerReviewCommands(program: Command): void {
         {
           params: {
             path: { tenant_id: getTenantId(), project_id: project.id },
-            query: { pr, state, severity },
+            query: { pr, repo, state, severity },
           },
         },
       );
@@ -336,9 +364,14 @@ export function registerReviewCommands(program: Command): void {
     .description("List review rounds for a PR")
     .requiredOption("--project <key>", "Project key or UUID")
     .requiredOption("--pr <number>", "PR number")
+    .option(
+      "--repo <owner/name>",
+      'Repository to read (default: the current integration; "" for rounds recorded before it)',
+    )
     .action(async (opts: SummaryOptions, cmd) => {
       const output = getOutputOptions(cmd);
       const pr = parsePrNumber(opts.pr);
+      const repo = validateRepo(opts.repo);
       const project = await resolveProject(opts.project!);
       const client = getClient();
       const result = await client.GET(
@@ -346,7 +379,7 @@ export function registerReviewCommands(program: Command): void {
         {
           params: {
             path: { tenant_id: getTenantId(), project_id: project.id },
-            query: { pr },
+            query: { pr, repo },
           },
         },
       );
@@ -405,6 +438,10 @@ export function registerReviewCommands(program: Command): void {
     .requiredOption("--project <key>", "Project key or UUID")
     .requiredOption("--pr <number>", "PR number")
     .option(
+      "--repo <owner/name>",
+      'Repository to read (default: the current integration; "" for rounds recorded before it)',
+    )
+    .option(
       "--head <sha>",
       "Commit to compare with the reviewed HEAD (default: git rev-parse HEAD)",
     )
@@ -416,6 +453,7 @@ export function registerReviewCommands(program: Command): void {
     .action(async (opts: SummaryOptions, cmd) => {
       const output = getOutputOptions(cmd);
       const pr = parsePrNumber(opts.pr);
+      const repo = validateRepo(opts.repo);
       const project = await resolveProject(opts.project!);
       const client = getClient();
       const result = await client.GET(
@@ -423,7 +461,7 @@ export function registerReviewCommands(program: Command): void {
         {
           params: {
             path: { tenant_id: getTenantId(), project_id: project.id },
-            query: { pr },
+            query: { pr, repo },
           },
         },
       );

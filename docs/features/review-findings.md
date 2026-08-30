@@ -272,12 +272,23 @@ task review summary --project TASK --pr 618
 task review summary --project TASK --pr 618 --head "${{ github.event.pull_request.head.sha }}"
 task review summary --project TASK --pr 618 --no-head-check   # 鮮度を見ない
 task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプロジェクトで使う
+
+# 読み取りの視界を明示する（既定は現在の連携先）。連携を差し替えたあとに旧リポジトリの
+# ラウンドを読む、連携を張る前のラウンド（空文字）を読む、のどちらにも使う
+task review list   --project TASK --pr 618 --repo acme/old
+task review rounds --project TASK --pr 618 --repo ""
 ```
 
 投入 JSON と絞り込みの値は**送信前に CLI 側でも検証する**。綴り違い
 （`severity: "critical"`、`--state closed`）や必須項目の欠落は、どの指摘の
 どの項目かを添えて終了コード 2 で弾く。サーバー側の検証に任せきりにすると、
 AI が生成した JSON の取り違えを直す手がかりが薄くなる。
+
+読み取りの 3 コマンド（`list` / `rounds` / `summary`）は `--repo` を受ける。API の
+リポジトリ絞り込み（§5）を CLI からも使えるようにするためで、これが無いと AI
+レビュワーの主経路から過去の連携先のラウンドへ到達できない。値は `owner/name`、
+空文字は連携を張る前のラウンドを指す。形式が違えば終了コード 2 で弾く
+（黙って現在の連携先へ落とすと、読めていないことに気づけない）。
 
 `summary` は次のいずれかで**非 0 終了**する。ゲートとして使う以上、判断できない
 ときは通さない（fail-closed）。
@@ -559,6 +570,9 @@ AI が生成した JSON の取り違えを直す手がかりが薄くなる。
   流用する。要約コメント専用の設定は増やさない
 - 2026-08-26: CLI は投入 JSON と絞り込みの値を送信前に検証する（終了コード 2）。
   `review summary` は未解決が残ると終了コード 1
+- 2026-08-31: 読み取りの 3 コマンドに `--repo` を置く（`owner/name`、空文字は連携前）。
+  API 側の絞り込み（§5）だけでは、CLI を主経路にする AI レビュワーが過去の連携先の
+  ラウンドを読めない
 - 2026-08-26: レビューの反復の呼称は「ラウンド」（表示は R1, R2, …）。「巡」表記は使わない
 - 2026-08-26: レビュワーは AI（PAT + CLI）と人間（セッション + Web UI）を同格に扱う。
   ラウンドは確定時一括作成・追記不可で、人間の下書きは UI 側の関心事（サーバーは持たない）

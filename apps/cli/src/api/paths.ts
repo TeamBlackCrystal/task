@@ -560,7 +560,7 @@ export interface ApiPaths {
     get: {
       parameters: {
         path: { tenant_id: string; project_id: string };
-        query: { pr: number };
+        query: { pr: number; repo?: string };
       };
       responses: {
         200: { content: { "application/json": Review[] } };
@@ -582,7 +582,7 @@ export interface ApiPaths {
     get: {
       parameters: {
         path: { tenant_id: string; project_id: string };
-        query: { pr: number };
+        query: { pr: number; repo?: string };
       };
       responses: {
         200: { content: { "application/json": ReviewSummary } };
@@ -603,7 +603,7 @@ export interface ApiPaths {
     get: {
       parameters: {
         path: { tenant_id: string; project_id: string };
-        query: { pr: number; state?: string; severity?: string };
+        query: { pr: number; repo?: string; state?: string; severity?: string };
       };
       responses: {
         200: { content: { "application/json": ReviewFinding[] } };
