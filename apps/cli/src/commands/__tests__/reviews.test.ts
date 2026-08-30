@@ -55,10 +55,13 @@ beforeEach(() => {
   });
 });
 
+/** 40 桁の小文字 16 進。ゲートが厳密一致で比べるので、短縮 SHA は投入時に弾かれる。 */
+const HEAD_SHA = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
+
 describe("parseSubmitPayload", () => {
   const valid = {
     pr: 618,
-    head_sha: "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+    head_sha: HEAD_SHA,
     summary: "総評",
     findings: [
       {
@@ -74,7 +77,7 @@ describe("parseSubmitPayload", () => {
   it("正しい JSON を API のリクエストに変換する", () => {
     expect(parseSubmitPayload(valid)).toEqual({
       pr_number: 618,
-      head_sha: "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+      head_sha: HEAD_SHA,
       summary: "総評",
       findings: [
         {
@@ -91,7 +94,7 @@ describe("parseSubmitPayload", () => {
   it("指摘ゼロと summary 省略も正当（指摘なしの記録）", () => {
     const payload = parseSubmitPayload({
       pr: 1,
-      head_sha: "abc",
+      head_sha: HEAD_SHA,
     });
     expect(payload.findings).toEqual([]);
     expect(payload.summary).toBe("");
@@ -101,12 +104,28 @@ describe("parseSubmitPayload", () => {
     expect(parseSubmitPayload(valid, 999).pr_number).toBe(999);
   });
 
+  /**
+   * ゲートは head_sha を厳密一致で比べる。`git log --oneline` が見せるのは短縮 SHA
+   * なので書き間違えやすく、通してしまうとそのラウンドは指摘を全部解消しても
+   * 抜けられない（「同じ commit に見えるのに再レビューが要る」と出る）。
+   */
   it.each([
-    [{ head_sha: "abc" }, "positive integer `pr`"],
-    [{ pr: 0, head_sha: "abc" }, "positive integer `pr`"],
+    ["60cdd77", "短縮 SHA"],
+    ["60CDD7795F94FA4E4148CE996C2EFB4C363E3F5E", "大文字"],
+    ["60cdd7795f94fa4e4148ce996c2efb4c363e3f5e0", "41 桁"],
+    ["zzcdd7795f94fa4e4148ce996c2efb4c363e3f5e", "16 進でない文字"],
+  ])("head_sha が 40 桁の小文字 16 進でなければ弾く: %s (%s)", (sha) => {
+    expect(() => parseSubmitPayload({ pr: 1, head_sha: sha })).toThrow(
+      "must be the full 40-character commit SHA",
+    );
+  });
+
+  it.each([
+    [{ head_sha: HEAD_SHA }, "positive integer `pr`"],
+    [{ pr: 0, head_sha: HEAD_SHA }, "positive integer `pr`"],
     [{ pr: 1 }, "`head_sha`"],
     [{ pr: 1, head_sha: "   " }, "`head_sha`"],
-    [{ pr: 1, head_sha: "abc", findings: {} }, "`findings` must be an array"],
+    [{ pr: 1, head_sha: HEAD_SHA, findings: {} }, "`findings` must be an array"],
   ])("必須項目が欠けていたら弾く: %j", (input, expected) => {
     expect(() => parseSubmitPayload(input)).toThrow(expected);
   });
@@ -124,11 +143,11 @@ describe("parseSubmitPayload", () => {
     ],
   ])("指摘の不備は位置つきで弾く: %j", (finding, expected) => {
     expect(() =>
-      parseSubmitPayload({ pr: 1, head_sha: "abc", findings: [finding] }),
+      parseSubmitPayload({ pr: 1, head_sha: HEAD_SHA, findings: [finding] }),
     ).toThrow(expected);
     // どの指摘が悪いのか分かるように添字を出す
     expect(() =>
-      parseSubmitPayload({ pr: 1, head_sha: "abc", findings: [finding] }),
+      parseSubmitPayload({ pr: 1, head_sha: HEAD_SHA, findings: [finding] }),
     ).toThrow(/findings\[0\]/);
   });
 
@@ -143,7 +162,7 @@ describe("review commands", () => {
     mocks.readFileSync.mockReturnValue(
       JSON.stringify({
         pr: 618,
-        head_sha: "abc",
+        head_sha: HEAD_SHA,
         findings: [{ severity: "high", title: "t", body: "b" }],
       }),
     );
@@ -167,7 +186,7 @@ describe("review commands", () => {
         },
         body: {
           pr_number: 618,
-          head_sha: "abc",
+          head_sha: HEAD_SHA,
           summary: "",
           findings: [
             {
@@ -184,7 +203,7 @@ describe("review commands", () => {
   });
 
   it("submit は - で標準入力から読む", async () => {
-    mocks.readFileSync.mockReturnValue('{"pr":1,"head_sha":"abc"}');
+    mocks.readFileSync.mockReturnValue(`{"pr":1,"head_sha":"${HEAD_SHA}"}`);
     await program().parseAsync([
       "node",
       "task",

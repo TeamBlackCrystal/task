@@ -20,7 +20,11 @@ pub struct CreateReviewRequest {
     #[validate(range(min = 1))]
     pub pr_number: i32,
     /// レビューした commit。裏取りした head の記録として必須
-    #[validate(length(min = 1, max = 100))]
+    ///
+    /// 40 桁の小文字 16 進のみ。ゲートは `latest_head_sha` を厳密一致で比べるので、
+    /// 短縮 SHA を受け取るとそのラウンドは永久に通らなくなる（仕様 §5）
+    #[validate(regex(path = "common::validation::COMMIT_SHA_REGEX"))]
+    #[schema(pattern = "^[0-9a-f]{40}$")]
     pub head_sha: String,
     /// 総評（markdown）
     #[serde(default)]

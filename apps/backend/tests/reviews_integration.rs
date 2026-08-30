@@ -1363,3 +1363,55 @@ async fn read_apis_reject_a_non_positive_pr_number() {
     fx.app.cleanup_user(fx.reviewer.id).await;
     fx.app.cleanup_user(fx.developer.id).await;
 }
+
+/// 起票は head_sha が 40 桁の小文字 16 進でなければ 400。
+///
+/// マージ可否のゲートは `latest_head_sha` を厳密一致で比べる。短縮 SHA を受け取ると、
+/// そのラウンドは指摘を全部解消しても通らなくなり、しかも「同じ commit に見えるのに
+/// 再レビューを要求される」形で出るので、原因が投入時の書き方にあることを辿れない。
+#[tokio::test]
+async fn a_round_requires_a_full_commit_sha() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    for sha in [
+        "60cdd77",                                   // 短縮（git log --oneline の形）
+        "60CDD7795F94FA4E4148CE996C2EFB4C363E3F5E",  // 大文字
+        "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e0", // 41 桁
+        "zzcdd7795f94fa4e4148ce996c2efb4c363e3f5e",  // 16 進でない
+    ] {
+        let res = fx
+            .app
+            .post_json_with_session(
+                &fx.reviews_path(),
+                serde_json::json!({
+                    "pr_number": 731,
+                    "head_sha": sha,
+                    "findings": [],
+                }),
+            )
+            .await;
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "head_sha を弾く: {sha}"
+        );
+    }
+
+    // 対照: 40 桁の小文字 16 進なら通る（過剰拒否でない）
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 731,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}

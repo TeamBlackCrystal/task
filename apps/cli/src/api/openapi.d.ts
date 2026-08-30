@@ -2376,7 +2376,12 @@ export interface components {
         CreateReviewRequest: {
             /** @description 指摘。空配列も正当（「指摘なし」の記録） */
             findings?: components["schemas"]["CreateFindingInput"][];
-            /** @description レビューした commit。裏取りした head の記録として必須 */
+            /**
+             * @description レビューした commit。裏取りした head の記録として必須
+             *
+             *     40 桁の小文字 16 進のみ。ゲートは `latest_head_sha` を厳密一致で比べるので、
+             *     短縮 SHA を受け取るとそのラウンドは永久に通らなくなる（仕様 §5）
+             */
             head_sha: string;
             /**
              * Format: int32

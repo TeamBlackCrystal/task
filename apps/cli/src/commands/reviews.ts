@@ -94,6 +94,9 @@ function readJsonInput(file: string): unknown {
   }
 }
 
+/** commit SHA（40 桁の小文字 16 進）。ゲートが厳密一致で比べるので短縮は許さない。 */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
 /**
  * 投入 JSON を検証して API のリクエストへ変換する。
  *
@@ -117,6 +120,16 @@ export function parseSubmitPayload(
   const headSha = record.head_sha;
   if (typeof headSha !== "string" || headSha.trim().length === 0) {
     throw new CliError("review JSON needs `head_sha` (the reviewed commit)", 2);
+  }
+  // ゲートは head_sha を厳密一致で比べる。`git log --oneline` が見せるのは短縮 SHA
+  // なので "60cdd77" と書くのは自然だが、それで確定したラウンドは指摘を全部
+  // 解消しても通らなくなる。しかも出るのは「同じ commit に見えるのに再レビューが
+  // 要る」という読み解きにくい形なので、投入時に弾く
+  if (!COMMIT_SHA.test(headSha.trim())) {
+    throw new CliError(
+      `\`head_sha\` must be the full 40-character commit SHA (got: ${headSha})`,
+      2,
+    );
   }
 
   const summary = record.summary === undefined ? "" : record.summary;
@@ -201,12 +214,15 @@ function formatFinding(finding: ReviewFinding): string {
  * そこにあるからで、余計な依存と権限を増やさないため（仕様 §6）。
  */
 function resolveHead(explicit: string | undefined): string | null {
-  if (explicit) return explicit.trim() || null;
+  // 比較は厳密一致なので、大文字で渡された SHA が別物にならないよう揃える
+  if (explicit) return explicit.trim().toLowerCase() || null;
   try {
     return execFileSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    })
+      .trim()
+      .toLowerCase();
   } catch {
     return null;
   }
@@ -234,7 +250,7 @@ function gateFailure(
   if (!head) {
     return "cannot determine the HEAD to compare (pass --head or --no-head-check)";
   }
-  if (summary.latest_head_sha !== head) {
+  if (summary.latest_head_sha?.toLowerCase() !== head) {
     return `reviewed ${summary.latest_head_sha ?? "(none)"} but HEAD is ${head}; re-review is needed`;
   }
   return null;
