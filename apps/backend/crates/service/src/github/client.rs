@@ -137,20 +137,41 @@ mod tests {
     ///
     /// [`api_base_ignores_non_loopback_overrides`] は helper の挙動しか固定できず、
     /// 呼び出し側が helper を迂回して `std::env::var` を読む形に戻ると素通りする
-    /// （要約コメントの経路が実際にそうなっていた）。3 箇所目の重複が生えたら落とす。
+    /// （要約コメントの経路が実際にそうなっていた）。
+    ///
+    /// 対象は手で並べず `github/` を走査する。防ぎたいのは「新しいモジュールで
+    /// helper を通し忘れる」形なので、一覧を手書きにすると増えた経路を拾えず、
+    /// まさにその再発を見逃す。
     #[test]
     fn github_api_callers_do_not_read_the_base_url_directly() {
         let var = "GITHUB_API_BASE_URL";
-        for (name, source) in [
-            ("issues.rs", include_str!("issues.rs")),
-            ("pr_comments.rs", include_str!("pr_comments.rs")),
-        ] {
+        let needle = format!("env::var(\"{var}\")");
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/github");
+
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).expect("read github module dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("file name")
+                .to_owned();
+            // client.rs だけが読んでよい（ここが唯一の入口）
+            if name == "client.rs" {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read module");
             assert!(
-                !source.contains(&format!("env::var(\"{var}\")")),
+                !source.contains(&needle),
                 "{name} は {var} を素読みしている。client::api_base() を使う\
                  （この URL には installation token が載るので、ループバック制限を外せない）"
             );
+            checked += 1;
         }
+        assert!(checked > 0, "走査対象が 0 件（パスがずれている: {dir}）");
     }
 
     #[test]

@@ -62,12 +62,28 @@ const _: () = assert!(
     "積み直しの待ちがキューの刻みより短いと空振りを繰り返す"
 );
 
-/// 更新対象の PR。ペイロードは ID と番号だけで、トークン等は載せない
-/// （apalis のジョブは Postgres に平文で永続化される）。
+/// 更新対象の PR。ペイロードは ID・番号・リポジトリだけで、トークン等は載せない
+/// （apalis のジョブは Postgres に平文で永続化される。リポジトリ名は機微情報ではない）。
+///
+/// リポジトリを載せるのは、**投入時と実行時で連携先が変わりうる**ため。
+/// 「更新待ち」の印は投入側がラウンドの見たリポジトリで立てるので、実行側が
+/// 現在の連携先を引き直すと別のキーを消しに行き、元の印が TTL のあいだ残る。
+/// その間、そのリポジトリの遷移は合流で捨てられ、コメントが古いまま止まる。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewSummaryJob {
     pub project_id: Uuid,
     pub pr_number: i32,
+    /// 投入時に見ていたリポジトリの所有者。連携が無ければ空文字列。
+    pub repo_owner: String,
+    /// 投入時に見ていたリポジトリ名。連携が無ければ空文字列。
+    pub repo_name: String,
+}
+
+impl ReviewSummaryJob {
+    /// 印とロックの鍵。投入側 [`enqueue_best_effort`] が使うものと同じ形。
+    fn repo_key(&self) -> String {
+        format!("{}/{}", self.repo_owner, self.repo_name)
+    }
 }
 
 pub type ReviewSummaryStorage = PostgresStorage<
@@ -141,10 +157,20 @@ pub async fn enqueue_best_effort(
     storage: &ReviewSummaryStorage,
     redis: &RedisConnection,
     project_id: Uuid,
-    repo: &str,
+    repo_owner: &str,
+    repo_name: &str,
     pr_number: i32,
 ) {
-    enqueue_best_effort_after(storage, redis, project_id, repo, pr_number, Duration::ZERO).await
+    enqueue_best_effort_after(
+        storage,
+        redis,
+        project_id,
+        repo_owner,
+        repo_name,
+        pr_number,
+        Duration::ZERO,
+    )
+    .await
 }
 
 /// [`enqueue_best_effort`] の、実行を `delay` だけ後ろへずらす版。
@@ -152,12 +178,16 @@ async fn enqueue_best_effort_after(
     storage: &ReviewSummaryStorage,
     redis: &RedisConnection,
     project_id: Uuid,
-    repo: &str,
+    repo_owner: &str,
+    repo_name: &str,
     pr_number: i32,
     delay: Duration,
 ) {
+    // 印の鍵とペイロードのリポジトリは必ず同じもとから作る。別々に渡すと、
+    // 実行側が「印を立てたのと違うキー」を消しに行く形に戻せてしまう
+    let repo = format!("{repo_owner}/{repo_name}");
     match service::github::review_summary_queue::try_mark_pending(
-        redis, project_id, repo, pr_number,
+        redis, project_id, &repo, pr_number,
     )
     .await
     {
@@ -177,6 +207,8 @@ async fn enqueue_best_effort_after(
         ReviewSummaryJob {
             project_id,
             pr_number,
+            repo_owner: repo_owner.to_owned(),
+            repo_name: repo_name.to_owned(),
         },
         delay,
     )
@@ -184,9 +216,10 @@ async fn enqueue_best_effort_after(
     {
         tracing::warn!(error = %e, %project_id, pr_number, "enqueue review summary failed");
         // 積めなかったフラグを残すと、TTL のあいだ以降の更新まで合流で捨てられる
-        if let Err(e) =
-            service::github::review_summary_queue::clear_pending(redis, project_id, repo, pr_number)
-                .await
+        if let Err(e) = service::github::review_summary_queue::clear_pending(
+            redis, project_id, &repo, pr_number,
+        )
+        .await
         {
             tracing::warn!(error = %e, %project_id, pr_number, "clear review summary pending failed");
         }
@@ -194,13 +227,39 @@ async fn enqueue_best_effort_after(
 }
 
 pub async fn process(job: ReviewSummaryJob, state: Data<JobState>) -> Result<(), BoxDynError> {
-    // 投稿先も鍵の単位も集計の範囲も、この 1 行から決める。別々に引くと、その間に
-    // 連携を差し替えられたとき「旧リポジトリのラウンドを新リポジトリへ投稿する」が
-    // 起きる。ラウンドはどのリポジトリの PR を見たかを控えているので、同じ行から
-    // 引く限り、連携を差し替えた後は旧リポジトリのラウンドが範囲から外れる（仕様 §7）
+    // 印とロックの鍵は**投入時のリポジトリ**。実行時の連携先で引き直すと、投入側が
+    // 立てた印と別のキーを触ることになり、元の印が TTL のあいだ残ってそのリポジトリの
+    // 遷移が合流で捨てられる（コメントが古いまま止まる）
+    let repo_key = job.repo_key();
+
+    // 投稿先も集計の範囲も、この 1 行から決める。別々に引くと、その間に連携を
+    // 差し替えられたとき「旧リポジトリのラウンドを新リポジトリへ投稿する」が起きる
     let integration = service::reviews::current_integration(&state.db, job.project_id).await?;
     let repo = service::reviews::RepoRef::from_integration(integration.as_ref());
-    let repo_key = format!("{}/{}", repo.owner, repo.name);
+
+    // 投入から実行までの間に連携が差し替わっていたら、このジョブの出番は終わり。
+    // 印だけ落として抜ける（残すと、そのリポジトリの以降の遷移が捨てられる）。
+    // 新しい連携先ぶんの更新は、そちらの遷移が自前で積む
+    if repo.owner != job.repo_owner || repo.name != job.repo_name {
+        tracing::info!(
+            project_id = %job.project_id,
+            pr = job.pr_number,
+            enqueued_for = %repo_key,
+            current = %format!("{}/{}", repo.owner, repo.name),
+            "linked repository changed since enqueue; skipping"
+        );
+        if let Err(e) = service::github::review_summary_queue::clear_pending(
+            &state.redis_client,
+            job.project_id,
+            &repo_key,
+            job.pr_number,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, project_id = %job.project_id, pr = job.pr_number, "clear review summary pending failed");
+        }
+        return Ok(());
+    }
 
     // 同じ PR を更新中のジョブがいる間は投稿しない。並行して走ると、先に古い
     // 状態を読んだ側の書き込みが後から着き、コメントが巻き戻ったまま次の遷移まで
@@ -268,7 +327,8 @@ async fn requeue_after_lock_conflict(job: &ReviewSummaryJob, state: &JobState, r
         &state.review_summary_storage,
         &state.redis_client,
         job.project_id,
-        repo_key,
+        &job.repo_owner,
+        &job.repo_name,
         job.pr_number,
         Duration::from_secs(LOCK_RETRY_DELAY_SECS),
     )
@@ -441,12 +501,17 @@ mod tests {
     use super::*;
 
     /// ジョブペイロードは Postgres の apalis.jobs に平文で永続化されるため、
-    /// トークン等の機微情報を含めてはならない（ID と PR 番号だけを載せる）。
+    /// トークン等の機微情報を含めてはならない。
+    ///
+    /// リポジトリ名は機微情報ではないので載せてよい（載せないと、投入時と実行時で
+    /// 連携先が変わったときに印の鍵がずれる）。
     #[test]
     fn payload_contains_no_sensitive_fields() {
         let job = ReviewSummaryJob {
             project_id: Uuid::new_v4(),
             pr_number: 618,
+            repo_owner: "koyori-app".into(),
+            repo_name: "task".into(),
         };
         let value = serde_json::to_value(&job).expect("serialize job");
         let mut keys: Vec<&str> = value
@@ -456,6 +521,9 @@ mod tests {
             .map(String::as_str)
             .collect();
         keys.sort_unstable();
-        assert_eq!(keys, vec!["pr_number", "project_id"]);
+        assert_eq!(
+            keys,
+            vec!["pr_number", "project_id", "repo_name", "repo_owner"]
+        );
     }
 }

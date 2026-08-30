@@ -288,8 +288,10 @@ pub async fn create_review(
         &state.review_summary_storage,
         &state.redis_client,
         project_id,
-        // 鍵の単位はラウンドが見たリポジトリ（連携を差し替えても混ざらない）
-        &format!("{}/{}", review.repo_owner, review.repo_name),
+        // 鍵の単位はラウンドが見たリポジトリ（連携を差し替えても混ざらない）。
+        // ジョブも同じ値を持って走り、実行時に連携が差し替わっていたら降りる
+        &review.repo_owner,
+        &review.repo_name,
         review.pr_number,
     )
     .await;
@@ -622,8 +624,10 @@ pub async fn update_review_finding_state(
         &state.review_summary_storage,
         &state.redis_client,
         project_id,
-        // 鍵の単位はラウンドが見たリポジトリ（連携を差し替えても混ざらない）
-        &format!("{}/{}", review.repo_owner, review.repo_name),
+        // 鍵の単位はラウンドが見たリポジトリ（連携を差し替えても混ざらない）。
+        // ジョブも同じ値を持って走り、実行時に連携が差し替わっていたら降りる
+        &review.repo_owner,
+        &review.repo_name,
         review.pr_number,
     )
     .await;

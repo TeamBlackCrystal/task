@@ -3,7 +3,10 @@ mod common;
 use axum::http::StatusCode;
 use common::TestApp;
 use entity::{github_integrations, project_statuses};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, prelude::Uuid};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    prelude::Uuid,
+};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -221,6 +224,8 @@ async fn review_summary_comment_is_created_once_and_then_edited() {
         job::ReviewSummaryJob {
             project_id: tp.project_id,
             pr_number: PR_NUMBER,
+            repo_owner: REPO_OWNER.into(),
+            repo_name: REPO_NAME.into(),
         },
         apalis::prelude::Data::new(state.clone()),
     )
@@ -291,6 +296,8 @@ async fn an_existing_summary_comment_is_updated_in_place() {
         job::ReviewSummaryJob {
             project_id: tp.project_id,
             pr_number: PR_NUMBER,
+            repo_owner: REPO_OWNER.into(),
+            repo_name: REPO_NAME.into(),
         },
         apalis::prelude::Data::new(job_state(&app)),
     )
@@ -397,6 +404,8 @@ async fn consecutive_transitions_coalesce_into_one_summary_update() {
         job::ReviewSummaryJob {
             project_id: tp.project_id,
             pr_number: PR_NUMBER,
+            repo_owner: REPO_OWNER.into(),
+            repo_name: REPO_NAME.into(),
         },
         apalis::prelude::Data::new(state.clone()),
     )
@@ -583,6 +592,8 @@ async fn a_concurrent_summary_update_is_retried_instead_of_overwriting() {
     let job = job::ReviewSummaryJob {
         project_id: tp.project_id,
         pr_number: PR_NUMBER,
+        repo_owner: REPO_OWNER.into(),
+        repo_name: REPO_NAME.into(),
     };
     let queued_before = queued_summary_jobs(&app, tp.project_id).await;
     job::review_summary::process(job.clone(), apalis::prelude::Data::new(state.clone()))
@@ -700,6 +711,8 @@ async fn a_third_party_marker_does_not_hijack_the_summary_comment() {
         job::ReviewSummaryJob {
             project_id: tp.project_id,
             pr_number: PR_NUMBER,
+            repo_owner: REPO_OWNER.into(),
+            repo_name: REPO_NAME.into(),
         },
         apalis::prelude::Data::new(state),
     )
@@ -760,6 +773,9 @@ async fn a_project_without_integration_skips_the_comment() {
         job::ReviewSummaryJob {
             project_id: tp.project_id,
             pr_number: PR_NUMBER,
+            // 連携が無いプロジェクトのラウンドは、控えも空文字列になる
+            repo_owner: String::new(),
+            repo_name: String::new(),
         },
         apalis::prelude::Data::new(job_state(&app)),
     )
@@ -774,6 +790,127 @@ async fn a_project_without_integration_skips_the_comment() {
         requests.is_empty(),
         "連携が無ければ GitHub API を叩かない: {} 件",
         requests.len()
+    );
+
+    app.cleanup_user(reviewer.id).await;
+}
+
+/// 投入から実行までの間に連携先が差し替わったら、投稿せず投入時の印だけを落とす。
+///
+/// 印は投入側がラウンドの見たリポジトリで立てる。実行側が現在の連携先で鍵を作ると
+/// 別のキーを消しに行き、元の印が TTL のあいだ残る。その間、そのリポジトリの遷移は
+/// 合流で捨てられ、コメントが古いまま止まる（仕様 §7）。
+#[serial_test::serial]
+#[tokio::test]
+async fn a_job_enqueued_for_another_repository_clears_its_own_pending_flag() {
+    let mock_server = MockServer::start().await;
+    // SAFETY: serial アトリビュートにより他テストとの並列実行を防いでいる。
+    unsafe {
+        std::env::set_var("GITHUB_API_BASE_URL", mock_server.uri());
+    }
+    let mut app = TestApp::new_with_github().await;
+    let reviewer = app.insert_user_default().await;
+    let tp = app.insert_tenant_project(reviewer.id).await;
+    seed_statuses(&app, tp.project_id).await;
+    link_integration(&app, tp.project_id, reviewer.id).await;
+    let marker = service::github::pr_comments::summary_marker(tp.project_id);
+    mount_mocks(&mock_server, false, &marker).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&reviewer.email, &reviewer.password)
+        .await;
+
+    let res = app
+        .post_json_with_session(
+            &format!(
+                "/v1/tenants/{}/projects/{}/reviews",
+                tp.tenant_id, tp.project_id
+            ),
+            serde_json::json!({
+                "pr_number": PR_NUMBER,
+                "head_sha": REVIEWED_HEAD,
+                "summary": "総評",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    // 起票が立てた印（acme/backend）が残っている状態を作る
+    const OTHER_REPO_KEY: &str = "acme/frontend";
+    service::github::review_summary_queue::try_mark_pending(
+        &app.state.redis_client,
+        tp.project_id,
+        REPO_KEY,
+        PR_NUMBER,
+    )
+    .await
+    .expect("mark pending");
+
+    // 実行前に連携先を差し替える
+    github_integrations::Entity::update_many()
+        .col_expr(
+            github_integrations::Column::RepoName,
+            sea_orm::sea_query::Expr::value("frontend"),
+        )
+        .filter(github_integrations::Column::ProjectId.eq(tp.project_id))
+        .exec(&app.state.db)
+        .await
+        .expect("relink integration");
+
+    let posted_before = mock_server
+        .received_requests()
+        .await
+        .expect("received requests")
+        .len();
+
+    job::review_summary::process(
+        job::ReviewSummaryJob {
+            project_id: tp.project_id,
+            pr_number: PR_NUMBER,
+            repo_owner: REPO_OWNER.into(),
+            repo_name: REPO_NAME.into(),
+        },
+        apalis::prelude::Data::new(job_state(&app)),
+    )
+    .await
+    .expect("差し替えは失敗ではない（このジョブの出番が終わっただけ）");
+
+    // 旧リポジトリ向けの内容を新リポジトリへ投稿しない
+    assert_eq!(
+        mock_server
+            .received_requests()
+            .await
+            .expect("received requests")
+            .len(),
+        posted_before,
+        "連携が差し替わっていたら GitHub を叩かない"
+    );
+
+    // 投入時のリポジトリの印を落とす（残すと以降の遷移が合流で捨てられる）
+    assert!(
+        service::github::review_summary_queue::try_mark_pending(
+            &app.state.redis_client,
+            tp.project_id,
+            REPO_KEY,
+            PR_NUMBER,
+        )
+        .await
+        .expect("pending flag"),
+        "投入時のリポジトリの印が落ちている（次の遷移が積める）"
+    );
+
+    // 新しい連携先の印には触らない（そちらの遷移が自前で積む）
+    assert!(
+        service::github::review_summary_queue::try_mark_pending(
+            &app.state.redis_client,
+            tp.project_id,
+            OTHER_REPO_KEY,
+            PR_NUMBER,
+        )
+        .await
+        .expect("pending flag"),
+        "差し替え先の印は立てていない"
     );
 
     app.cleanup_user(reviewer.id).await;
