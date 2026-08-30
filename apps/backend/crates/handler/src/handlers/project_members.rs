@@ -95,19 +95,30 @@ async fn find_member<C: ConnectionTrait>(
         .ok_or(AppError::NotFound)
 }
 
-/// メンバーの増減をプロジェクト単位で直列化する（プロジェクト行を掴む）。
+/// 「最後の Admin を残す」判定に関わる書き込みを、テナント単位で直列化する。
 ///
-/// 「最後の Admin を残す」判定は数えてから書くので、掴まないと同時実行で抜ける——
-/// A と B が同時に相手を Viewer へ落とすと、双方が「まだもう 1 人いる」を読んで
-/// 両方通り、Admin が 0 人になる。そうなるとプロジェクト側からは誰も直せず、
-/// `admin_ids` が空になるので 409 のガード自体も以後効かなくなる。
-/// 対象の行ではなく親のプロジェクト行を掴むのは、複数行を掴む順序で
-/// デッドロックを作らないため（ラウンド採番と同じ形）。
-async fn lock_project_members<C: ConnectionTrait>(
+/// 判定は数えてから書くので、掴まないと同時実行で抜ける。抜け方は 2 通りある。
+///
+/// 1. 同じプロジェクトで A と B が同時に相手を Viewer へ落とす。双方が
+///    「まだもう 1 人いる」を読んで両方通る
+/// 2. A の降格が B を在籍中の Admin として数えている間に、B がテナントから除名される。
+///    どちらも成功し、在籍している Admin が 0 人になる
+///
+/// 掴むのはプロジェクト行ではなく**テナント行**。判定([`would_drop_last_admin`])が
+/// 読むのは `project_members` と `tenant_members` の両方で、後者はプロジェクト行を
+/// 掴んでも守れない（2 の経路）。テナント行なら 1 つで両方を覆えるので、
+/// 複数のロックとその取得順序を持たずに済む。
+///
+/// この関数は [`crate::handlers::tenant_members::remove_member`] からも呼ぶ。
+/// 片側だけが掴んでも直列化にならない。
+///
+/// 同じテナントの別プロジェクトのメンバー操作まで待たされるが、管理操作は
+/// 頻度が低いので実害がない。
+pub(crate) async fn lock_membership_changes<C: ConnectionTrait>(
     db: &C,
-    project_id: Uuid,
+    tenant_id: Uuid,
 ) -> Result<(), AppError> {
-    projects::Entity::find_by_id(project_id)
+    tenants::Entity::find_by_id(tenant_id)
         .lock(LockType::Update)
         .one(db)
         .await?;
@@ -291,7 +302,7 @@ pub async fn update_member(
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
     // 数えてから書くので、同じプロジェクトのメンバー変更を直列化する
     let txn = state.db.begin().await?;
-    lock_project_members(&txn, project_id).await?;
+    lock_membership_changes(&txn, tenant_id).await?;
     let current = find_member(&txn, project_id, member_user_id).await?;
     if payload.role != ProjectRole::Admin
         && would_drop_last_admin(&txn, tenant_id, project_id, member_user_id).await?
@@ -338,7 +349,7 @@ pub async fn remove_member(
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
     // 数えてから書くので、同じプロジェクトのメンバー変更を直列化する
     let txn = state.db.begin().await?;
-    lock_project_members(&txn, project_id).await?;
+    lock_membership_changes(&txn, tenant_id).await?;
     let member = find_member(&txn, project_id, member_user_id).await?;
     if would_drop_last_admin(&txn, tenant_id, project_id, member_user_id).await? {
         return Err(AppError::Conflict);

@@ -2,6 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, TransactionTrait};
 
 // プロジェクトメンバー管理（#317）の統合テスト。
 //
@@ -238,5 +239,70 @@ async fn concurrent_demotions_cannot_drop_the_last_admin() {
 
     app.cleanup_user(owner.id).await;
     app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+}
+
+/// テナントからの除名も、プロジェクト側の Admin 判定と同じロックの内側で行う。
+///
+/// 「最後の Admin を残す」判定は `tenant_members` を見て在籍者だけを数える。
+/// 除名がそのロックの外にいると、A の降格が B を在籍中の Admin として数えている
+/// あいだに B を除名でき、両方成功して在籍 Admin が 0 人になる。
+///
+/// 実時間の競合は再現が安定しないので、テナント行を掴んだまま除名を投げて
+/// **待たされること**を見る。除名が同じロックを取らなければ素通りして落ちる。
+#[tokio::test]
+async fn removing_a_tenant_member_waits_for_the_membership_lock() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tenant_members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.post_json_with_session(
+            &tenant_members_path,
+            serde_json::json!({ "user_id": bob.id, "role": "Member" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    let bob_tenant_path = format!("{tenant_members_path}/{}", bob.id);
+
+    // 判定側が取るのと同じロックを、テストが先に握る
+    let txn = app.state.db.begin().await.expect("begin");
+    txn.query_one_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT id FROM tenants WHERE id = $1 FOR UPDATE",
+        [tp.tenant_id.into()],
+    ))
+    .await
+    .expect("lock tenant row");
+
+    let blocked = tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        app.delete_with_session(&bob_tenant_path),
+    )
+    .await;
+    assert!(
+        blocked.is_err(),
+        "ロックを握っている間、除名は待たされる（同じロックを取らないと素通りする）"
+    );
+
+    txn.rollback().await.expect("rollback");
+
+    // 対照: ロックが空いていれば除名は通る（過剰に塞いでいない）
+    assert_eq!(
+        app.delete_with_session(&bob_tenant_path).await.status(),
+        StatusCode::NO_CONTENT,
+        "ロックが空いていれば除名できる"
+    );
+
+    app.cleanup_user(owner.id).await;
     app.cleanup_user(bob.id).await;
 }

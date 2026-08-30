@@ -5,12 +5,15 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+};
 
 use crate::AppState;
 use crate::auth_helpers::is_tenant_owner;
 use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
+use crate::handlers::project_members;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
 use entity::{scopes::Scope, tenant_members, tenants, users};
@@ -227,6 +230,13 @@ pub async fn remove_member(
 
     let member = find_member(&state, tenant_id, user_id).await?;
 
+    // プロジェクト側の「最後の Admin を残す」判定は、テナントに在籍している Admin だけを
+    // 数える（`project_members::would_drop_last_admin`）。除名はその数え方の入力を変えるので、
+    // 判定と同じロックの内側で行う。外すと、A の降格が B を在籍中の Admin として
+    // 数えている間に B を除名でき、双方成功して在籍 Admin が 0 人になる
+    let txn = state.db.begin().await?;
+    project_members::lock_membership_changes(&txn, tenant_id).await?;
+
     // project_members の行はあえて残す。テナント所属は has_tenant_access が先に見るので、
     // テナントに居ない人の行は何のアクセスも与えない。
     // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
@@ -234,8 +244,9 @@ pub async fn remove_member(
     // 残しておけば再参加したときに元の割り当てがそのまま戻る。
     // 通知の宛先はテナントに居る人だけに絞られる（`service::access`）
     tenant_members::Entity::delete_by_id(member.id)
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
+    txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
