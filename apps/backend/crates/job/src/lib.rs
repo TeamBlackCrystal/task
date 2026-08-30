@@ -4,6 +4,7 @@ pub mod already_registered_email;
 pub mod github_issue_sync;
 pub mod github_webhook;
 pub mod password_reset_email;
+pub mod review_summary;
 pub mod verification_email;
 
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub use already_registered_email::{AlreadyRegisteredEmailJob, AlreadyRegisteredE
 pub use github_issue_sync::{GithubIssueSyncJob, GithubIssueSyncStorage};
 pub use github_webhook::{GithubWebhookJob, GithubWebhookStorage};
 pub use password_reset_email::{PasswordResetEmailJob, PasswordResetEmailStorage};
+pub use review_summary::{ReviewSummaryJob, ReviewSummaryStorage};
 pub use verification_email::{
     MAX_RETRIES, QUEUE_NAME, VerificationEmailJob, VerificationEmailStorage,
 };
@@ -30,6 +32,10 @@ pub struct JobState {
     pub redis_client: common::cache::redis::RedisConnection,
     pub smtp_client: service::smtp::SmtpClient,
     pub http_client: reqwest::Client,
+    /// 要約更新ジョブが、自分の番でなかったときに積み直すために持つ。
+    /// ワーカーへ `AppState` を渡すと job → handler の循環になるので、
+    /// 必要な依存はここに足す
+    pub review_summary_storage: Arc<review_summary::ReviewSummaryStorage>,
 }
 
 pub async fn setup_pool(database_url: &str) -> Result<PgPool, anyhow::Error> {
@@ -55,6 +61,13 @@ pub async fn setup_github_issue_sync_storage(
     settings: &Settings,
 ) -> Result<Arc<GithubIssueSyncStorage>, anyhow::Error> {
     github_issue_sync::setup(pool, settings).await
+}
+
+pub async fn setup_review_summary_storage(
+    pool: &PgPool,
+    settings: &Settings,
+) -> Result<Arc<ReviewSummaryStorage>, anyhow::Error> {
+    review_summary::setup(pool, settings).await
 }
 
 pub async fn setup_password_reset_email_storage(

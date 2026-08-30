@@ -4,13 +4,14 @@
 //! Issue はタスク同期というこのアプリ固有の用途にしか使わないため、こちら側に置いている。
 
 use reqwest::{Client, Method};
+
+use super::client::api_base;
 use serde::Deserialize;
 
 use super::sync::SyncedContent;
 
 const USER_AGENT: &str = "task-backend";
 const API_VERSION: &str = "2022-11-28";
-const DEFAULT_API_BASE: &str = "https://api.github.com";
 
 /// 1 ページあたりの取得件数（GitHub の上限）。
 pub const PER_PAGE: u32 = 100;
@@ -37,14 +38,6 @@ impl GithubIssue {
     pub fn is_closed(&self) -> bool {
         self.state == "closed"
     }
-}
-
-/// `GITHUB_API_BASE_URL` がループバック宛てならそれを使う
-/// （統合テストがモックサーバーを向ける）。
-fn api_base() -> String {
-    super::client::loopback_base_override("GITHUB_API_BASE_URL")
-        .map(|base| base.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| DEFAULT_API_BASE.to_string())
 }
 
 fn request(http: &Client, method: Method, url: &str, token: &str) -> reqwest::RequestBuilder {

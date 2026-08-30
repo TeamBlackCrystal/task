@@ -65,7 +65,7 @@ fn description_of(body: &str) -> Option<String> {
 
 /// インストールアクセストークンを取り直す。
 /// DB に保存したトークンは 1 時間で失効するため、ジョブ側では常に取り直す。
-async fn installation_token(
+pub async fn installation_token(
     http: &Client,
     settings: &GithubAppSettings,
     installation_id: i64,

@@ -25,7 +25,7 @@ use backend::{
     jobs::{
         setup_already_registered_email_storage, setup_github_issue_sync_storage,
         setup_github_webhook_storage, setup_password_reset_email_storage, setup_pool,
-        setup_verification_email_storage,
+        setup_review_summary_storage, setup_verification_email_storage,
     },
     routes, settings,
     utils::{
@@ -529,6 +529,9 @@ impl TestApp {
         let password_reset_email_storage = setup_password_reset_email_storage(&pg_pool, &settings)
             .await
             .expect("password reset email storage");
+        let review_summary_storage = setup_review_summary_storage(&pg_pool, &settings)
+            .await
+            .expect("setup review summary storage");
         let already_registered_email_storage =
             setup_already_registered_email_storage(&pg_pool, &settings)
                 .await
@@ -575,6 +578,7 @@ impl TestApp {
             github_issue_sync_storage,
             password_reset_email_storage,
             already_registered_email_storage,
+            review_summary_storage,
             storage,
             drive_config: DriveConfig::from_env(),
             oauth_settings,

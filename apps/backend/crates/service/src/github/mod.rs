@@ -9,7 +9,9 @@ pub mod client;
 pub mod import_lock;
 pub mod install_state;
 pub mod issues;
+pub mod pr_comments;
 pub mod repositories;
+pub mod review_summary_queue;
 pub mod sync;
 
 pub use client::github_app;
@@ -22,4 +24,4 @@ pub use install_state::{
     store_pending_installation, store_select_token, store_state,
 };
 pub use repositories::{contains_repository, select_primary_repository};
-pub use sync::{apply_issue, import_project, push_task};
+pub use sync::{apply_issue, import_project, installation_token, push_task};
