@@ -232,8 +232,14 @@ pub async fn remove_member(
 
     // プロジェクト側の「最後の Admin を残す」判定は、テナントに在籍している Admin だけを
     // 数える（`project_members::would_drop_last_admin`）。除名はその数え方の入力を変えるので、
-    // 判定と同じロックの内側で行う。外すと、A の降格が B を在籍中の Admin として
-    // 数えている間に B を除名でき、双方成功して在籍 Admin が 0 人になる
+    // 判定と同じロックの内側で行う。外すと、降格が「まだ B が居る」を読んだ後・書く前に
+    // B を除名でき、降格が消えた相手を数えたまま通る。
+    //
+    // ここで Admin 数を数え直して 409 にはしない。除名は「この人はもう居ない」という
+    // 宣言で、それをプロジェクトのロールで止めると、対象が単独 Admin のプロジェクトを
+    // 全部直すまでオフボーディングできなくなる。Admin が全員抜けたプロジェクトは
+    // テナントオーナーが直せる（`project_members::require_project_admin` は
+    // オーナーを無条件で通す）。詳細は `lock_membership_changes` の doc を見る
     let txn = state.db.begin().await?;
     project_members::lock_membership_changes(&txn, tenant_id).await?;
 

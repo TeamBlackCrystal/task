@@ -306,3 +306,112 @@ async fn removing_a_tenant_member_waits_for_the_membership_lock() {
     app.cleanup_user(owner.id).await;
     app.cleanup_user(bob.id).await;
 }
+
+/// 在籍している Admin が 0 人になっても、テナントオーナーがそのプロジェクトを直せる。
+///
+/// 直列化しても「A を降格 →（別の操作として）B を除名」の順は両方とも正当なので、
+/// 在籍 Admin は 0 人になりうる。除名側で 409 にすれば揃うが、対象が単独 Admin の
+/// プロジェクトを全部直すまでオフボーディングできなくなる。維持しているのは
+/// 「在籍 Admin ≥ 1」ではなく「そのプロジェクトを管理できる人が常に居る」の方で、
+/// ここではその保証が成り立つことを固定する。
+#[tokio::test]
+async fn an_owner_can_still_manage_a_project_whose_admins_all_left() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let alice = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tenant_members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    for user in [&alice, &bob] {
+        assert_eq!(
+            app.post_json_with_session(
+                &tenant_members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Member" }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            app.post_json_with_session(
+                &project_members_path,
+                serde_json::json!({ "user_id": user.id, "role": "Admin" }),
+            )
+            .await
+            .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    // alice を降格（bob が在籍中の Admin として残るので通る）
+    assert_eq!(
+        app.put_json_with_session(
+            &format!("{project_members_path}/{}", alice.id),
+            serde_json::json!({ "role": "Viewer" }),
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    // 続けて bob をテナントから除名する。プロジェクトのロールでは止めない
+    assert_eq!(
+        app.delete_with_session(&format!("{tenant_members_path}/{}", bob.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT,
+        "単独 Admin でもテナントからは外せる（オフボーディングを止めない）"
+    );
+
+    // これで在籍している Admin は 0 人。オーナーはそれでも直せる
+    let members = json_body(app.get_with_session(&project_members_path).await).await;
+    let tenant_rows = json_body(app.get_with_session(&tenant_members_path).await).await;
+    let residents: std::collections::HashSet<String> = tenant_rows
+        .as_array()
+        .expect("tenant members")
+        .iter()
+        .map(|m| m["user_id"].as_str().expect("user_id").to_owned())
+        .collect();
+    let active_admins = members
+        .as_array()
+        .expect("members")
+        .iter()
+        .filter(|m| m["role"] == "Admin")
+        .filter(|m| residents.contains(m["user_id"].as_str().expect("user_id")))
+        .count();
+    assert_eq!(active_admins, 0, "前提: 在籍 Admin は 0 人: {members}");
+
+    // オーナーは一覧を読め、残った alice を Admin へ戻せる（行き止まりではない）
+    assert_eq!(
+        app.put_json_with_session(
+            &format!("{project_members_path}/{}", alice.id),
+            serde_json::json!({ "role": "Admin" }),
+        )
+        .await
+        .status(),
+        StatusCode::OK,
+        "オーナーは Admin を立て直せる"
+    );
+
+    // 抜けた bob の残った行も、最後の枠を占有して詰ませない
+    assert_eq!(
+        app.delete_with_session(&format!("{project_members_path}/{}", bob.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT,
+        "テナントに居ない人の行は 409 で守られない（数えるのは在籍者だけ）"
+    );
+
+    app.cleanup_user(owner.id).await;
+    app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+}
