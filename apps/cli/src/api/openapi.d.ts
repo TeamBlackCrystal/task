@@ -1341,6 +1341,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** PR の指摘一覧（状態・重大度で絞り込み） */
+        get: operations["list_review_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/review-findings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 指摘の状態を進める */
+        patch: operations["update_review_finding_state"];
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** PR のレビューラウンド一覧 */
+        get: operations["list_reviews"];
+        put?: never;
+        /** レビューラウンドを起票（指摘の一括作成） */
+        post: operations["create_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** PR 単位の集計（マージ可否） */
+        get: operations["get_review_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** レビューラウンドの詳細（指摘つき） */
+        get: operations["get_review"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant_id}/projects/{project_id}/sprints": {
         parameters: {
             query?: never;
@@ -2226,6 +2312,14 @@ export interface components {
             /** Format: int32 */
             position?: number | null;
         };
+        CreateFindingInput: {
+            body: string;
+            file?: string | null;
+            /** Format: int32 */
+            line?: number | null;
+            severity: components["schemas"]["FindingSeverity"];
+            title: string;
+        };
         CreateFolderRequest: {
             name: string;
             /** Format: uuid */
@@ -2277,6 +2371,20 @@ export interface components {
             icon_url?: string | null;
             key?: string | null;
             name: string;
+        };
+        /** @description ラウンド 1 回ぶんの一括起票。ラウンドと指摘は同じトランザクションで作る。 */
+        CreateReviewRequest: {
+            /** @description 指摘。空配列も正当（「指摘なし」の記録） */
+            findings?: components["schemas"]["CreateFindingInput"][];
+            /** @description レビューした commit。裏取りした head の記録として必須 */
+            head_sha: string;
+            /**
+             * Format: int32
+             * @description 対象 PR 番号
+             */
+            pr_number: number;
+            /** @description 総評（markdown） */
+            summary?: string;
         };
         CreateShareRequest: {
             /** Format: date-time */
@@ -2420,6 +2528,61 @@ export interface components {
             unlimited: boolean;
             /** Format: int64 */
             used_bytes: number;
+        };
+        FindingResponse: {
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: uuid
+             * @description 繰り延べ時に自動起票した通常タスク
+             */
+            deferred_task_id?: string | null;
+            file?: string | null;
+            /**
+             * Format: uuid
+             * @description `fixed` を宣言した利用者。`verified` に進めてよいかの判定に使う
+             */
+            fixed_by?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            line?: number | null;
+            /** Format: int32 */
+            pr_number: number;
+            /** Format: uuid */
+            review_id: string;
+            /** Format: int32 */
+            round: number;
+            severity: components["schemas"]["FindingSeverity"];
+            state: components["schemas"]["FindingState"];
+            title: string;
+            transitions: components["schemas"]["FindingTransitionResponse"][];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description 指摘の重大度。`High` / `Medium` はマージ前必須、`Low` / `Nit` は繰り延べ可。
+         * @enum {string}
+         */
+        FindingSeverity: "high" | "medium" | "low" | "nit";
+        /**
+         * @description 指摘の状態。
+         *
+         *     遷移規則は `service::reviews::can_transition` を正とする。`Verified` は終端で、
+         *     誤りだったと分かった場合は新しいラウンドで指摘を出し直す。
+         * @enum {string}
+         */
+        FindingState: "open" | "fixed" | "verified" | "deferred" | "rejected";
+        FindingTransitionResponse: {
+            actor: components["schemas"]["UserSummary"];
+            /** Format: date-time */
+            created_at: string;
+            from_state?: null | components["schemas"]["FindingState"];
+            /** Format: uuid */
+            id: string;
+            note?: string | null;
+            to_state: components["schemas"]["FindingState"];
         };
         GithubConnectRequest: {
             repo_name: string;
@@ -2744,12 +2907,94 @@ export interface components {
             /** Format: email */
             email: string;
         };
+        /** @description ラウンドと、そのラウンドで出した指摘。 */
+        ReviewDetailResponse: components["schemas"]["ReviewResponse"] & {
+            findings: components["schemas"]["FindingResponse"][];
+        };
+        ReviewResponse: {
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int64
+             * @description このラウンドで出した指摘の件数
+             */
+            finding_count: number;
+            head_sha: string;
+            /** Format: uuid */
+            id: string;
+            pr_author?: string | null;
+            /** Format: int32 */
+            pr_number: number;
+            /** @description 要約コメント投稿時に GitHub から取得してキャッシュした PR タイトル */
+            pr_title?: string | null;
+            /** Format: uuid */
+            project_id: string;
+            reviewer: components["schemas"]["UserSummary"];
+            /**
+             * Format: int32
+             * @description PR 内の連番（1 始まり）。表示は R1, R2, …
+             */
+            round: number;
+            summary: string;
+        };
+        /** @description PR 単位の集計。マージ可否をこの 1 レスポンスで判断できる。 */
+        ReviewSummaryResponse: {
+            /**
+             * Format: int64
+             * @description マージ判定を塞いでいる指摘の件数（High / Medium かつ open / fixed）
+             */
+            blocking: number;
+            /**
+             * @description 要約ジョブが最後に GitHub で確かめた現在の head（未確認なら `null`）
+             *
+             *     画面はこれと `latest_head_sha` を比べて「レビューが古い」を出す。
+             *     push では更新されないので、`pr_head_checked_at` と併せて読む（仕様 §5 / §8）。
+             */
+            cached_pr_head_sha?: string | null;
+            /** @description 重大度 × 状態の件数 */
+            counts: components["schemas"]["SeverityStateCount"][];
+            /** @description 最新ラウンドがレビューした commit。呼び出し側が現在の HEAD と突き合わせる */
+            latest_head_sha?: string | null;
+            /**
+             * @description ラウンドが 1 件以上あり、かつ `blocking == 0` か
+             *
+             *     レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。
+             */
+            mergeable: boolean;
+            /**
+             * Format: int64
+             * @description オーナー代行で棄却された指摘の件数
+             *
+             *     代行の条件（作成者の不在）はオーナー自身が作れるので、マージ可否を読む
+             *     その場所に痕跡を出す（仕様 §2 / §5）。
+             */
+            owner_override_rejections: number;
+            /**
+             * Format: date-time
+             * @description 上を確かめた時刻（未確認なら `null`）
+             */
+            pr_head_checked_at?: string | null;
+            /** Format: int32 */
+            pr_number: number;
+            /**
+             * @description 集計対象のリポジトリ（`owner/name`）。GitHub 連携が無ければ `null`
+             *
+             *     連携を外すと集計の視界が空になるので、ゲートとして使う側は
+             *     これが `null` の集計を通してはいけない（仕様 §5 / §6）。
+             */
+            repository?: string | null;
+            /**
+             * Format: int32
+             * @description これまでに走ったラウンド数（R1, R2, … の最大値）
+             */
+            rounds: number;
+        };
         RevokeAllPersonalTokensRequest: {
             /** Format: uuid */
             confirm_tenant_id: string;
         };
         /** @enum {string} */
-        Scope: "read:project" | "write:project" | "read:drive" | "write:drive" | "admin:tenant" | "read:task" | "write:task" | "read:milestone" | "write:milestone" | "read:sprint" | "write:sprint";
+        Scope: "read:project" | "write:project" | "read:drive" | "write:drive" | "admin:tenant" | "read:task" | "write:task" | "read:milestone" | "write:milestone" | "read:sprint" | "write:sprint" | "read:review" | "write:review";
         /** @description アクセストークン等に付与する権限スコープのリスト。 */
         ScopeList: components["schemas"]["Scope"][];
         SearchTaskHit: {
@@ -2775,6 +3020,12 @@ export interface components {
         SetPasswordRequest: {
             /** Format: password */
             password: string;
+        };
+        SeverityStateCount: {
+            /** Format: int64 */
+            count: number;
+            severity: components["schemas"]["FindingSeverity"];
+            state: components["schemas"]["FindingState"];
         };
         /** @enum {string} */
         SharePermission: "Viewer";
@@ -3036,6 +3287,12 @@ export interface components {
             /** Format: uuid */
             folder_id?: string | null;
             name?: string | null;
+        };
+        /** @description 指摘の状態遷移。 */
+        UpdateFindingStateRequest: {
+            /** @description 遷移の理由（履歴に残す） */
+            note?: string | null;
+            state: components["schemas"]["FindingState"];
         };
         UpdateFolderRequest: {
             name?: string | null;
@@ -10928,6 +11185,503 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    list_review_findings: {
+        parameters: {
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
+                pr: number;
+                /** @description 見るリポジトリ（`owner/name`）。既定は現在の連携先（`PrQuery::repo` と同じ） */
+                repo?: string;
+                /** @description 状態での絞り込み（カンマ区切り。例: `open,fixed`） */
+                state?: string;
+                /** @description 重大度での絞り込み（カンマ区切り。例: `high,medium`） */
+                severity?: string;
+            };
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 指摘一覧（ラウンド順） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingResponse"][];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    update_review_finding_state: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+                /** @description 指摘ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFindingStateRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新後の指摘 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description 現在の状態からは行えない遷移、または High / Medium の繰り延べ */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    list_reviews: {
+        parameters: {
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
+                pr: number;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ラウンド一覧（新しい順） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResponse"][];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    create_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description 作成されたラウンドと指摘 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDetailResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description 同時起票でラウンド番号が衝突しました */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerError"];
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    get_review_summary: {
+        parameters: {
+            query: {
+                /** @description 対象 PR 番号（1 以上） */
+                pr: number;
+                /**
+                 * @description 見るリポジトリ（`owner/name`）。既定は現在の連携先
+                 *
+                 *     連携を差し替える前のラウンドや、連携を張る前に溜めたラウンド（空文字で指定）を
+                 *     読むために使う。無いと「履歴として残る」と言いながら読む手段が無い（仕様 §5）。
+                 */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重大度 × 状態の件数とマージ可否 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewSummaryResponse"];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    get_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+                /** @description ラウンドID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ラウンドと指摘 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDetailResponse"];
+                };
             };
             /** @description ログインまたはセッションが必要です */
             401: {

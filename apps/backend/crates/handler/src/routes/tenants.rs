@@ -32,6 +32,14 @@ pub fn routes() -> OpenApiRouter<AppState> {
                 .routes(routes!(crate::handlers::projects::update_project))
                 .routes(routes!(crate::handlers::projects::delete_project))
                 .nest(
+                    "/{project_id}/reviews",
+                    crate::routes::reviews::review_routes(),
+                )
+                .nest(
+                    "/{project_id}/review-findings",
+                    crate::routes::reviews::finding_routes(),
+                )
+                .nest(
                     "/{project_id}/members",
                     OpenApiRouter::<AppState>::new()
                         .routes(routes!(crate::handlers::project_members::list_members))

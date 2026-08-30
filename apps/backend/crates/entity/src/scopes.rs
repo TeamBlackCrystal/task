@@ -26,6 +26,10 @@ pub enum Scope {
     ReadSprint,
     #[serde(rename = "write:sprint")]
     WriteSprint,
+    #[serde(rename = "read:review")]
+    ReadReview,
+    #[serde(rename = "write:review")]
+    WriteReview,
 }
 
 impl Scope {
@@ -42,6 +46,8 @@ impl Scope {
             Scope::WriteMilestone => "write:milestone",
             Scope::ReadSprint => "read:sprint",
             Scope::WriteSprint => "write:sprint",
+            Scope::ReadReview => "read:review",
+            Scope::WriteReview => "write:review",
         }
     }
 }
@@ -62,6 +68,8 @@ impl std::str::FromStr for Scope {
             "write:milestone" => Ok(Scope::WriteMilestone),
             "read:sprint" => Ok(Scope::ReadSprint),
             "write:sprint" => Ok(Scope::WriteSprint),
+            "read:review" => Ok(Scope::ReadReview),
+            "write:review" => Ok(Scope::WriteReview),
             _ => Err(()),
         }
     }
@@ -86,6 +94,7 @@ impl ScopeList {
             || (scope == Scope::ReadTask && self.0.contains(&Scope::WriteTask))
             || (scope == Scope::ReadMilestone && self.0.contains(&Scope::WriteMilestone))
             || (scope == Scope::ReadSprint && self.0.contains(&Scope::WriteSprint))
+            || (scope == Scope::ReadReview && self.0.contains(&Scope::WriteReview))
     }
 }
 

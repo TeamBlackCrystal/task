@@ -9,6 +9,7 @@ pub mod auth;
 pub mod drive;
 pub mod github;
 pub mod personal_tokens;
+pub mod reviews;
 pub mod tenants;
 pub mod users;
 

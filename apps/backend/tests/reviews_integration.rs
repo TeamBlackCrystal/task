@@ -1,0 +1,1365 @@
+mod common;
+
+use axum::http::StatusCode;
+use common::TestApp;
+use entity::{github_integrations, project_statuses, review_findings, tasks, tenant_members};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, prelude::Uuid,
+};
+
+// レビュー指摘管理（#623 の仕様）の統合テスト。
+//
+// 状態遷移の表そのものは service の単体テストが固定するので、ここでは
+// 「API を通したときに規則どおり通る／弾かれる」ことと、繰り延べ先タスクの
+// 作成・クローズという DB をまたぐ副作用を確かめる。
+
+struct Fixture {
+    app: TestApp,
+    tenant_id: Uuid,
+    project_id: Uuid,
+    reviewer: common::TestUser,
+    developer: common::TestUser,
+}
+
+impl Fixture {
+    fn reviews_path(&self) -> String {
+        format!(
+            "/v1/tenants/{}/projects/{}/reviews",
+            self.tenant_id, self.project_id
+        )
+    }
+
+    fn findings_path(&self) -> String {
+        format!(
+            "/v1/tenants/{}/projects/{}/review-findings",
+            self.tenant_id, self.project_id
+        )
+    }
+
+    async fn login(&mut self, user: &common::TestUser) {
+        self.app.reset_session_client();
+        self.app
+            .login_session_no_content(&user.email, &user.password)
+            .await;
+    }
+}
+
+/// レビュワー（テナントオーナー）と修正者（テナントメンバー）がいるプロジェクト。
+/// 繰り延べ先タスクの作成に必要な既定ステータスと完了ステータスも用意する。
+async fn setup() -> Fixture {
+    let mut app = TestApp::new().await;
+    let reviewer = app.insert_user_default().await;
+    let developer = app.insert_user_default().await;
+    let tp = app.insert_tenant_project(reviewer.id).await;
+
+    for (name, position, is_default, is_done) in
+        [("Todo", 0, true, false), ("Done", 1, false, true)]
+    {
+        project_statuses::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            project_id: Set(tp.project_id),
+            name: Set(name.into()),
+            color: Set("#888888".into()),
+            position: Set(position),
+            is_default: Set(is_default),
+            is_done_state: Set(is_done),
+            created_at: Set(chrono::Utc::now().into()),
+        }
+        .insert(&app.state.db)
+        .await
+        .expect("insert status");
+    }
+
+    // 修正者をテナントメンバーにして、プロジェクトへ入れるようにする
+    app.reset_session_client();
+    app.login_session_no_content(&reviewer.email, &reviewer.password)
+        .await;
+    let added = app
+        .post_json_with_session(
+            &format!("/v1/tenants/{}/members", tp.tenant_id),
+            serde_json::json!({ "user_id": developer.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+
+    Fixture {
+        app,
+        tenant_id: tp.tenant_id,
+        project_id: tp.project_id,
+        reviewer,
+        developer,
+    }
+}
+
+/// プロジェクトを指定のリポジトリへ連携させ、その連携 ID を返す。
+async fn link_repo(fx: &Fixture, owner: &str, name: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    github_integrations::ActiveModel {
+        id: Set(id),
+        project_id: Set(fx.project_id),
+        // 他テストと衝突しない範囲で散らす
+        installation_id: Set((Uuid::new_v4().as_u128() % 1_000_000) as i64 + 9_000_000),
+        repo_owner: Set(owner.into()),
+        repo_name: Set(name.into()),
+        access_token_enc: Set("unused".into()),
+        token_expires_at: Set(chrono::Utc::now().into()),
+        created_by: Set(fx.reviewer.id),
+        created_at: Set(chrono::Utc::now().into()),
+    }
+    .insert(&fx.app.state.db)
+    .await
+    .expect("insert integration");
+    id
+}
+
+async fn json(res: reqwest::Response) -> serde_json::Value {
+    res.json::<serde_json::Value>().await.expect("json body")
+}
+
+/// 指摘 1 件のラウンドを起票し、(review_id, finding_id) を返す。
+async fn submit_round(fx: &Fixture, pr: i32, severity: &str, title: &str) -> (String, String) {
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": pr,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [{
+                    "severity": severity,
+                    "title": title,
+                    "body": "再現条件と根拠",
+                    "file": "apps/frontend/src/App.vue",
+                    "line": 42,
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::CREATED,
+        "ラウンドの起票は成功する"
+    );
+    let body = json(res).await;
+    (
+        body["id"].as_str().expect("review id").to_string(),
+        body["findings"][0]["id"]
+            .as_str()
+            .expect("finding id")
+            .to_string(),
+    )
+}
+
+async fn transition(fx: &Fixture, finding_id: &str, state: &str) -> reqwest::Response {
+    fx.app
+        .patch_json_with_session(
+            &format!("{}/{finding_id}", fx.findings_path()),
+            serde_json::json!({ "state": state }),
+        )
+        .await
+}
+
+/// 一括起票 → 一覧 → fixed → verified の正常系と、集計のマージ可否。
+#[tokio::test]
+async fn round_is_created_and_findings_run_through_the_happy_path() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let (review_id, finding_id) = submit_round(&fx, 618, "high", "認可が抜けている").await;
+
+    // 起票直後は High が 1 件未解決なのでマージ不可
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=618", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 1);
+    assert_eq!(summary["blocking"], 1);
+    assert_eq!(summary["mergeable"], false);
+
+    // ラウンド一覧に R1 が出る
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=618", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    let rounds = rounds.as_array().expect("rounds");
+    assert_eq!(rounds.len(), 1);
+    assert_eq!(rounds[0]["round"], 1);
+    assert_eq!(rounds[0]["finding_count"], 1);
+    assert_eq!(rounds[0]["reviewer"]["id"], fx.reviewer.id.to_string());
+
+    // 修正者が fixed を宣言する
+    fx.login(&fx.developer.clone()).await;
+    let res = transition(&fx, &finding_id, "fixed").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json(res).await;
+    assert_eq!(body["state"], "fixed");
+    assert_eq!(body["fixed_by"], fx.developer.id.to_string());
+    // 起票と fixed の 2 行が履歴に残る
+    let history = body["transitions"].as_array().expect("transitions");
+    assert_eq!(history.len(), 2);
+    assert!(history[0]["from_state"].is_null(), "起票は from が null");
+    assert_eq!(history[1]["to_state"], "fixed");
+
+    // fixed でもマージ判定は塞がったまま（確認が済んでいないため）
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=618", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["blocking"], 1, "fixed は未解決として数える");
+
+    // レビュワーが確認する
+    fx.login(&fx.reviewer.clone()).await;
+    let res = transition(&fx, &finding_id, "verified").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json(res).await["state"], "verified");
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=618", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["blocking"], 0);
+    assert_eq!(summary["mergeable"], true, "確認済みならマージできる");
+
+    // ラウンド詳細からも読める
+    let detail = json(
+        fx.app
+            .get_with_session(&format!("{}/{review_id}", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(detail["findings"][0]["state"], "verified");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 自分で fixed を宣言した人は、自分でその指摘を verified にできない。
+/// 別のレビュワーなら通る（過剰拒否でないことの対照）。
+#[tokio::test]
+async fn the_fixer_cannot_verify_their_own_fix() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 700, "medium", "境界値が 1 つずれている").await;
+
+    // レビュワー自身が fixed を宣言してしまうと…
+    let res = transition(&fx, &finding_id, "fixed").await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // …同じ人は verified に進められない
+    let res = transition(&fx, &finding_id, "verified").await;
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "自分の修正を自分で確認済みにはできない"
+    );
+
+    // 別のレビュワー（R2 を出した人）なら確認できる
+    fx.login(&fx.developer.clone()).await;
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 700,
+                "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "summary": "2 巡目",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(
+        json(res).await["round"],
+        2,
+        "同一 PR の再レビューは R2 になる"
+    );
+
+    let res = transition(&fx, &finding_id, "verified").await;
+    assert_eq!(res.status(), StatusCode::OK, "別のレビュワーなら確認できる");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// レビューを一度も出していない利用者は、差し戻し・棄却を行えない。
+#[tokio::test]
+async fn reviewer_only_transitions_reject_the_developer() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 701, "high", "認可が抜けている").await;
+
+    fx.login(&fx.developer.clone()).await;
+    // 棄却は指摘を出した本人だけの判断
+    let res = transition(&fx, &finding_id, "rejected").await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // fixed を宣言するのは修正側でよい
+    assert_eq!(
+        transition(&fx, &finding_id, "fixed").await.status(),
+        StatusCode::OK
+    );
+    // 差し戻し（未対応判定）はレビュー側だけ
+    let res = transition(&fx, &finding_id, "open").await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // レビュワーなら差し戻せる
+    fx.login(&fx.reviewer.clone()).await;
+    let res = transition(&fx, &finding_id, "open").await;
+    assert_eq!(res.status(), StatusCode::OK, "レビュワーは差し戻せる");
+    assert_eq!(json(res).await["state"], "open");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 規則にない遷移は 409。verified は終端。
+#[tokio::test]
+async fn invalid_transitions_are_rejected() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 702, "low", "命名が揺れている").await;
+
+    // 確認を飛ばして verified にはできない
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::CONFLICT
+    );
+
+    // open → fixed → verified まで進めてから
+    assert_eq!(
+        transition(&fx, &finding_id, "fixed").await.status(),
+        StatusCode::OK
+    );
+    fx.login(&fx.developer.clone()).await;
+    // developer は fixed を宣言していないので確認できる
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::FORBIDDEN,
+        "レビューを出していない利用者は確認もできない"
+    );
+
+    fx.login(&fx.reviewer.clone()).await;
+    // reviewer が fixed を宣言したので、この指摘は本人以外が確認するしかない。
+    // 2 巡目を developer が出して確認する
+    fx.login(&fx.developer.clone()).await;
+    assert_eq!(
+        fx.app
+            .post_json_with_session(
+                &fx.reviews_path(),
+                serde_json::json!({
+                    "pr_number": 702,
+                    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "findings": [],
+                }),
+            )
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::OK
+    );
+
+    // verified は終端。どこへも戻せない
+    for state in ["open", "fixed", "deferred", "rejected"] {
+        assert_eq!(
+            transition(&fx, &finding_id, state).await.status(),
+            StatusCode::CONFLICT,
+            "verified からは {state} へ遷移できない"
+        );
+    }
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 繰り延べで通常タスクが起票されリンクされ、取り消すとそのタスクが完了する。
+#[tokio::test]
+async fn deferring_creates_a_task_and_reverting_closes_it() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 703, "nit", "コメントの表記ゆれ").await;
+
+    let res = transition(&fx, &finding_id, "deferred").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json(res).await;
+    assert_eq!(body["state"], "deferred");
+    let task_id: Uuid = body["deferred_task_id"]
+        .as_str()
+        .expect("繰り延べ先タスクがリンクされる")
+        .parse()
+        .expect("uuid");
+
+    let task = tasks::Entity::find_by_id(task_id)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert_eq!(task.project_id, fx.project_id, "同じプロジェクトに起票する");
+    assert!(
+        task.title.contains("コメントの表記ゆれ"),
+        "指摘のタイトルを引き継ぐ: {}",
+        task.title
+    );
+    assert_eq!(task.priority, tasks::TaskPriority::Low);
+    assert!(task.completed_at.is_none(), "起票直後は未完了");
+
+    // 繰り延べた Low/Nit はマージを塞がない
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=703", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["mergeable"], true);
+
+    // 「やはり今直す」で open へ戻すと、自動起票したタスクは畳まれる
+    let res = transition(&fx, &finding_id, "open").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json(res).await;
+    assert_eq!(body["state"], "open");
+    assert_eq!(
+        body["deferred_task_id"],
+        task_id.to_string(),
+        "リンクは残す（次の繰り延べで開き直すため）: {body}"
+    );
+
+    let task = tasks::Entity::find_by_id(task_id)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert!(
+        task.completed_at.is_some(),
+        "二重管理を作らないよう自動起票タスクは完了する"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 指摘ゼロのラウンドを作っても、他人が出した指摘を取り下げる権利は得られない。
+///
+/// ラウンドは指摘ゼロでも確定できる。取り下げまで「より新しいラウンドの作成者」に
+/// 認めると、修正する側が空のラウンドを 1 本作るだけで他人の High を `rejected` にでき、
+/// マージ基準を 1 人で迂回できてしまう（仕様 §3）。
+#[tokio::test]
+async fn an_empty_round_does_not_grant_the_right_to_reject() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 710,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [
+                    { "severity": "high", "title": "認可が抜けている", "body": "根拠" },
+                    { "severity": "high", "title": "検証が抜けている", "body": "根拠" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json(res).await;
+    let id_of = |title: &str| -> String {
+        body["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["title"] == title)
+            .unwrap_or_else(|| panic!("{title} の指摘"))["id"]
+            .as_str()
+            .expect("finding id")
+            .to_string()
+    };
+    let first = id_of("認可が抜けている");
+    let second = id_of("検証が抜けている");
+
+    // 修正する側が、指摘ゼロのラウンドを確定して「レビュー側」を名乗る
+    fx.login(&fx.developer.clone()).await;
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 710,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "指摘なし",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json(res).await["round"], 2, "空のラウンドも確定はできる");
+
+    // それでも他人の指摘は取り下げられない
+    assert_eq!(
+        transition(&fx, &first, "rejected").await.status(),
+        StatusCode::FORBIDDEN,
+        "空のラウンドでは取り下げの権利を得られない"
+    );
+
+    // マージ可否は「可」に変わらない
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=710", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["mergeable"], false);
+    assert_eq!(summary["blocking"], 2, "High は 2 件とも未解決のまま");
+
+    // 対照 1: 確認（verified）は後から出したラウンドの作成者にも許す
+    // ——再レビューの「解消」判定そのものなので塞がない
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &first, "fixed").await.status(),
+        StatusCode::OK
+    );
+    fx.login(&fx.developer.clone()).await;
+    assert_eq!(
+        transition(&fx, &first, "verified").await.status(),
+        StatusCode::OK,
+        "空のラウンドでも確認は行える"
+    );
+
+    // 対照 2: 指摘を出した本人は取り下げられる
+    fx.login(&fx.reviewer.clone()).await;
+    let res = transition(&fx, &second, "rejected").await;
+    assert_eq!(res.status(), StatusCode::OK, "出した本人は取り下げられる");
+    assert_eq!(json(res).await["state"], "rejected");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 同じ PR へ同時にラウンドを確定しても `round` は重複しない。
+///
+/// 採番から挿入までをプロジェクト行のロックで直列化し、
+/// `UNIQUE (project_id, pr_number, round)` を最後の防波堤に置いている（仕様 §3）。
+/// 番号が重なると R1, R2, … と「どの head を見た判断か」の対応が崩れる。
+#[tokio::test]
+async fn concurrent_rounds_on_the_same_pr_get_distinct_numbers() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let path = fx.reviews_path();
+    let body = |i: i32| {
+        serde_json::json!({
+            "pr_number": 709,
+            "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+            "summary": format!("同時に確定したレビュー {i}"),
+            "findings": [],
+        })
+    };
+    // 5 本を同時に投げる（依存を増やさないよう join! で並べる）
+    let responses = tokio::join!(
+        fx.app.post_json_with_session(&path, body(1)),
+        fx.app.post_json_with_session(&path, body(2)),
+        fx.app.post_json_with_session(&path, body(3)),
+        fx.app.post_json_with_session(&path, body(4)),
+        fx.app.post_json_with_session(&path, body(5)),
+    );
+    let responses = [
+        responses.0,
+        responses.1,
+        responses.2,
+        responses.3,
+        responses.4,
+    ];
+
+    let mut rounds = Vec::new();
+    for res in responses {
+        assert_eq!(res.status(), StatusCode::CREATED, "同時でも起票は成功する");
+        rounds.push(json(res).await["round"].as_i64().expect("round"));
+    }
+    rounds.sort_unstable();
+    assert_eq!(
+        rounds,
+        vec![1, 2, 3, 4, 5],
+        "round が重複しない: {rounds:?}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 連携先リポジトリを差し替えると、同じ PR 番号でも別の PR として扱う。
+///
+/// プロジェクトの連携先は解除・再連携で差し替えられる。`project_id + pr_number` だけを
+/// キーにすると、旧リポジトリの PR #10 と新リポジトリの PR #10 が同じ PR として続く
+/// （仕様 §3）。
+#[tokio::test]
+async fn rounds_are_scoped_to_the_linked_repository() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let old_integration = link_repo(&fx, "acme", "old-repo").await;
+    let (_, finding_id) = submit_round(&fx, 711, "high", "旧リポジトリの指摘").await;
+
+    // 旧リポジトリのラウンドは見えている
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(rounds.as_array().expect("rounds").len(), 1);
+
+    // 連携を別リポジトリへ差し替える
+    github_integrations::Entity::delete_by_id(old_integration)
+        .exec(&fx.app.state.db)
+        .await
+        .expect("delete integration");
+    link_repo(&fx, "acme", "new-repo").await;
+
+    // 同じ PR 番号でも R1 から始まる（旧リポジトリの続きにしない）
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 711,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "新リポジトリのレビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(json(res).await["round"], 1, "別リポジトリの PR は R1 から");
+
+    // 一覧・集計に旧リポジトリのラウンドと指摘が混ざらない
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    let rounds = rounds.as_array().expect("rounds");
+    assert_eq!(rounds.len(), 1, "現在の連携先のラウンドだけ: {rounds:?}");
+    assert_eq!(rounds[0]["summary"], "新リポジトリのレビュー");
+
+    let findings = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711", fx.findings_path()))
+            .await,
+    )
+    .await;
+    assert!(
+        findings.as_array().expect("findings").is_empty(),
+        "旧リポジトリの指摘は出てこない: {findings}"
+    );
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=711", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["blocking"], 0, "旧リポジトリの High は数えない");
+    assert_eq!(summary["mergeable"], true);
+
+    // リポジトリを明示すれば、旧リポジトリのラウンドも読める（履歴が読めないと
+    // 出した本人が整理もできない。仕様 §5）
+    let old_rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=711&repo=acme/old-repo", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(old_rounds.as_array().expect("rounds").len(), 1);
+    assert_eq!(old_rounds[0]["summary"], "総評");
+    let old_summary = json(
+        fx.app
+            .get_with_session(&format!(
+                "{}/summary?pr=711&repo=acme/old-repo",
+                fx.reviews_path()
+            ))
+            .await,
+    )
+    .await;
+    assert_eq!(old_summary["blocking"], 1, "旧リポジトリの High が見える");
+    assert_eq!(old_summary["repository"], "acme/old-repo");
+
+    // 形式が違えば 400（黙って現在の連携先へ落とさない）
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{}?pr=711&repo=acme", fx.reviews_path()))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // 旧リポジトリの指摘は消えていない（連携解除で失われない）
+    let finding = review_findings::Entity::find_by_id(finding_id.parse::<Uuid>().expect("uuid"))
+        .one(&fx.app.state.db)
+        .await
+        .expect("query finding");
+    assert!(finding.is_some(), "連携を外しても指摘は残る");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// レビュー側の判定もリポジトリで絞る。
+///
+/// ラウンド番号はリポジトリごとに 1 から振り直されるので、絞らないと旧リポジトリで
+/// R1 を出しただけの利用者が、新リポジトリの同じ PR 番号でもレビュー側と判定される。
+#[tokio::test]
+async fn the_reviewer_side_is_scoped_to_the_linked_repository() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    // reviewer は旧リポジトリでだけラウンドを出す
+    let old_integration = link_repo(&fx, "acme", "old-repo").await;
+    submit_round(&fx, 711, "high", "旧リポジトリの指摘").await;
+
+    github_integrations::Entity::delete_by_id(old_integration)
+        .exec(&fx.app.state.db)
+        .await
+        .expect("delete integration");
+    link_repo(&fx, "acme", "new-repo").await;
+
+    // 新リポジトリの PR #711 は developer がレビューする（同じく R1 から始まる）
+    fx.login(&fx.developer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 711, "high", "新リポジトリの指摘").await;
+    assert_eq!(
+        transition(&fx, &finding_id, "fixed").await.status(),
+        StatusCode::OK
+    );
+
+    // 旧リポジトリの R1 しか持たない reviewer は、新リポジトリの
+    // fixed → verified を行えない
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::FORBIDDEN,
+        "旧リポジトリのラウンドでレビュー側を名乗れない"
+    );
+
+    // 現在の連携先でラウンドを出せば進められる（過剰に拒否していない）
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 711,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "新リポジトリの再レビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    assert_eq!(
+        transition(&fx, &finding_id, "verified").await.status(),
+        StatusCode::OK
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 作成者がテナントから居なくなった指摘は、オーナーが取り下げを代行できる。
+///
+/// 取り下げは本来「出した本人だけ」。除名・退会で主体が消えると、誤った High を
+/// 取り下げる手段が無くなり、直していないものを verified と記録するしかなくなる（仕様 §3）。
+#[tokio::test]
+async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
+    let mut fx = setup().await;
+
+    // 修正する側（developer）が指摘を出す。オーナーは reviewer
+    fx.login(&fx.developer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 713, "high", "誤った指摘").await;
+
+    // 在籍しているうちは、オーナーでも代行できない（役割規則を素通しにしない）
+    fx.login(&fx.reviewer.clone()).await;
+    assert_eq!(
+        transition(&fx, &finding_id, "rejected").await.status(),
+        StatusCode::FORBIDDEN,
+        "作成者が在籍していれば代行できない"
+    );
+
+    // テナントから居なくなる
+    tenant_members::Entity::delete_many()
+        .filter(tenant_members::Column::TenantId.eq(fx.tenant_id))
+        .filter(tenant_members::Column::UserId.eq(fx.developer.id))
+        .exec(&fx.app.state.db)
+        .await
+        .expect("remove tenant member");
+
+    let res = transition(&fx, &finding_id, "rejected").await;
+    assert_eq!(res.status(), StatusCode::OK, "作成者が消えたら代行できる");
+    let body = json(res).await;
+    assert_eq!(body["state"], "rejected");
+
+    // 代行の痕跡は集計に残る（除名 → 代行 → 再招待をしても消えない）
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        summary["owner_override_rejections"], 1,
+        "オーナー代行での棄却が数えられる: {summary}"
+    );
+
+    // 往復させても件数は増えない。数えるのは指摘の件数であって遷移の回数ではない
+    // （rejected → open は通るので、回数で数えると指摘 1 件が何件にも見える）
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK,
+        "代行で棄却した指摘は open へ戻せる"
+    );
+    assert_eq!(
+        transition(&fx, &finding_id, "rejected").await.status(),
+        StatusCode::OK,
+        "戻したものをもう一度代行で棄却できる"
+    );
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        summary["owner_override_rejections"], 1,
+        "同じ指摘を往復させても 1 件のまま: {summary}"
+    );
+
+    // 誰が代行したかは履歴に残る
+    let transitions = body["transitions"].as_array().expect("transitions");
+    let last = transitions.last().expect("last transition");
+    assert_eq!(last["to_state"], "rejected");
+    assert_eq!(last["actor"]["id"], fx.reviewer.id.to_string());
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// レビューが 1 件も無い PR は「マージ可」にしない。
+///
+/// 件数だけで判定すると、未レビューの PR が 0 件として通る（仕様 §5）。
+#[tokio::test]
+async fn a_pull_request_without_any_round_is_not_mergeable() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 0);
+    assert_eq!(summary["blocking"], 0);
+    assert_eq!(
+        summary["mergeable"], false,
+        "レビューされていない PR は通さない: {summary}"
+    );
+    assert!(summary["latest_head_sha"].is_null());
+
+    // 対照: 指摘ゼロのラウンドが 1 件あれば「可」になり、見た commit も返る
+    let head = "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e";
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 712,
+                "head_sha": head,
+                "summary": "指摘なし",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 1);
+    assert_eq!(summary["mergeable"], true);
+    assert_eq!(
+        summary["latest_head_sha"], head,
+        "レビューした commit を返す（鮮度は呼び出し側が見る）"
+    );
+    assert!(
+        summary["repository"].is_null(),
+        "連携が無ければ集計対象のリポジトリは空（呼び出し側はゲートとして通さない）: {summary}"
+    );
+
+    // 対照: 連携があれば、どのリポジトリを見た集計かを返す
+    link_repo(&fx, "acme", "app").await;
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 712,
+                "head_sha": head,
+                "summary": "連携後のレビュー",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=712", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["repository"], "acme/app");
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// マージ前必須の重大度は繰り延べられない。
+///
+/// 繰り延べはマージ可否の集計から外れるので、High / Medium に許すと
+/// 「1 回 deferred にすればマージ可」という迂回路ができる（仕様 §3）。
+#[tokio::test]
+async fn high_and_medium_findings_cannot_be_deferred() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 708,
+                "head_sha": "60cdd7795f94fa4e4148ce996c2efb4c363e3f5e",
+                "summary": "総評",
+                "findings": [
+                    { "severity": "high", "title": "認可が抜けている", "body": "根拠" },
+                    { "severity": "medium", "title": "境界値が 1 つずれている", "body": "根拠" },
+                    { "severity": "low", "title": "命名が揺れている", "body": "根拠" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json(res).await;
+    let id_of = |severity: &str| -> String {
+        body["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["severity"] == severity)
+            .unwrap_or_else(|| panic!("{severity} の指摘"))["id"]
+            .as_str()
+            .expect("finding id")
+            .to_string()
+    };
+
+    for severity in ["high", "medium"] {
+        let finding_id = id_of(severity);
+        let res = transition(&fx, &finding_id, "deferred").await;
+        assert_eq!(
+            res.status(),
+            StatusCode::CONFLICT,
+            "{severity} は繰り延べられない"
+        );
+
+        // 理由が本文に出る（CLI から使うレビュワーが対処を選べるように）
+        let message = json(res).await["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            message.contains(severity) && message.contains("繰り延べ"),
+            "なぜ通らないのかが分かる: {message}"
+        );
+
+        // 状態も変わっていない（拒否したのにタスクだけ起票される、を防ぐ）
+        let listed = json(
+            fx.app
+                .get_with_session(&format!("{}?pr=708", fx.findings_path()))
+                .await,
+        )
+        .await;
+        let finding = listed
+            .as_array()
+            .expect("findings")
+            .iter()
+            .find(|f| f["id"] == finding_id.as_str())
+            .expect("対象の指摘")
+            .clone();
+        assert_eq!(finding["state"], "open");
+        assert!(
+            finding["deferred_task_id"].is_null(),
+            "拒否した繰り延べでタスクを起票しない: {finding}"
+        );
+    }
+
+    // マージ可否は「可」に変わらない
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=708", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["mergeable"], false);
+    assert_eq!(summary["blocking"], 2, "High / Medium は未解決のまま");
+
+    // 対照: Low は繰り延べられ、通常タスクが起票される
+    let res = transition(&fx, &id_of("low"), "deferred").await;
+    assert_eq!(res.status(), StatusCode::OK, "Low は繰り延べられる");
+    let body = json(res).await;
+    assert_eq!(body["state"], "deferred");
+    assert!(
+        body["deferred_task_id"].is_string(),
+        "繰り延べ先タスクがリンクされる: {body}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 繰り延べを往復しても有効なタスクは 1 件。削除されていたら代替を起票する。
+///
+/// 「常に同じ物理タスク」ではなく「同時に存在する有効なタスクは 1 件」が不変条件
+/// （仕様 §3）。タスクの削除はソフトデリートで外部キーが外れないため、生死は
+/// リンク先の `deleted_at` で見る。
+#[tokio::test]
+async fn deferring_again_reuses_the_task_unless_it_was_deleted() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (_, finding_id) = submit_round(&fx, 714, "low", "命名が揺れている").await;
+
+    let first: Uuid =
+        json(transition(&fx, &finding_id, "deferred").await).await["deferred_task_id"]
+            .as_str()
+            .expect("繰り延べ先タスク")
+            .parse()
+            .expect("uuid");
+
+    // 往復しても新しいタスクを作らず、同じタスクを開き直す
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK
+    );
+    let again = json(transition(&fx, &finding_id, "deferred").await).await;
+    assert_eq!(
+        again["deferred_task_id"],
+        first.to_string(),
+        "同じタスクを使い回す: {again}"
+    );
+    let task = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert!(task.completed_at.is_none(), "開き直したので未完了に戻る");
+
+    // 人がタスクを消したら、次の繰り延べは代替を 1 件起票してリンクを差し替える
+    assert_eq!(
+        transition(&fx, &finding_id, "open").await.status(),
+        StatusCode::OK
+    );
+    let mut active: tasks::ActiveModel = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row")
+        .into();
+    active.deleted_at = Set(Some(chrono::Utc::now().into()));
+    active.update(&fx.app.state.db).await.expect("delete task");
+
+    let replaced = json(transition(&fx, &finding_id, "deferred").await).await;
+    let replacement = replaced["deferred_task_id"]
+        .as_str()
+        .expect("代替タスク")
+        .to_string();
+    assert_ne!(
+        replacement,
+        first.to_string(),
+        "削除済みタスクを復活させず、代替を起票する: {replaced}"
+    );
+    let deleted = tasks::Entity::find_by_id(first)
+        .one(&fx.app.state.db)
+        .await
+        .expect("query task")
+        .expect("task row");
+    assert!(
+        deleted.deleted_at.is_some(),
+        "消したタスクは消えたまま（黙って復活しない）"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 指摘ゼロのラウンドも正当（「指摘なし」の記録）。
+#[tokio::test]
+async fn a_round_without_findings_is_valid() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 704,
+                "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+                "summary": "具体的な不具合は見つからなかった",
+                "findings": [],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let body = json(res).await;
+    assert_eq!(body["round"], 1);
+    assert_eq!(body["finding_count"], 0);
+    assert_eq!(body["summary"], "具体的な不具合は見つからなかった");
+
+    let summary = json(
+        fx.app
+            .get_with_session(&format!("{}/summary?pr=704", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(summary["rounds"], 1);
+    assert_eq!(summary["mergeable"], true);
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 指摘一覧は状態・重大度で絞り込め、綴り違いは黙って無視せず 400 にする。
+#[tokio::test]
+async fn findings_can_be_filtered_and_unknown_filters_are_rejected() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let res = fx
+        .app
+        .post_json_with_session(
+            &fx.reviews_path(),
+            serde_json::json!({
+                "pr_number": 705,
+                "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+                "findings": [
+                    { "severity": "high", "title": "認可漏れ", "body": "本文" },
+                    { "severity": "low", "title": "命名", "body": "本文" },
+                    { "severity": "nit", "title": "表記", "body": "本文" },
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+
+    let all = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=705", fx.findings_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(all.as_array().expect("findings").len(), 3);
+
+    let filtered = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=705&severity=low,nit", fx.findings_path()))
+            .await,
+    )
+    .await;
+    let filtered = filtered.as_array().expect("findings");
+    assert_eq!(filtered.len(), 2, "重大度で絞り込める");
+    assert!(
+        filtered
+            .iter()
+            .all(|f| f["severity"] == "low" || f["severity"] == "nit")
+    );
+
+    let open_only = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=705&state=open", fx.findings_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(open_only.as_array().expect("findings").len(), 3);
+    let verified_only = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=705&state=verified", fx.findings_path()))
+            .await,
+    )
+    .await;
+    assert!(verified_only.as_array().expect("findings").is_empty());
+
+    // 綴り違いを黙って無視すると絞り込みが効いていないことに気づけない。
+    // 400 にはどのパラメーターのどの値が未知なのかを入れる（CLI から使う
+    // レビュワーが「bad request」だけでは直しようがない）
+    let res = fx
+        .app
+        .get_with_session(&format!("{}?pr=705&severity=critical", fx.findings_path()))
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let message = json(res).await["message"]
+        .as_str()
+        .expect("message")
+        .to_string();
+    assert!(
+        message.contains("severity") && message.contains("critical"),
+        "パラメーター名と受け取った値が届く: {message}"
+    );
+
+    let res = fx
+        .app
+        .get_with_session(&format!("{}?pr=705&state=merged", fx.findings_path()))
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let message = json(res).await["message"]
+        .as_str()
+        .expect("message")
+        .to_string();
+    assert!(
+        message.contains("state") && message.contains("merged"),
+        "state 側も同じように届く: {message}"
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 他プロジェクト・他テナントの指摘は触れず、存在も漏らさない。
+#[tokio::test]
+async fn findings_are_scoped_to_their_project() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    let (review_id, finding_id) = submit_round(&fx, 706, "high", "認可漏れ").await;
+
+    // 同じテナントの別プロジェクト経由では見えない
+    let other = fx.app.insert_tenant_project(fx.reviewer.id).await;
+    let other_reviews = format!(
+        "/v1/tenants/{}/projects/{}/reviews",
+        other.tenant_id, other.project_id
+    );
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{other_reviews}/{review_id}"))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fx.app
+            .patch_json_with_session(
+                &format!(
+                    "/v1/tenants/{}/projects/{}/review-findings/{finding_id}",
+                    other.tenant_id, other.project_id
+                ),
+                serde_json::json!({ "state": "fixed" }),
+            )
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // 対照: 本来のプロジェクト経由なら通る
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{}/{review_id}", fx.reviews_path()))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
+
+/// 未ログインは 401。テナントに入れない利用者は 403。
+#[tokio::test]
+async fn access_requires_a_session_and_tenant_membership() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+    submit_round(&fx, 707, "high", "認可漏れ").await;
+
+    fx.app.reset_session_client();
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{}?pr=707", fx.reviews_path()))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let outsider = fx.app.insert_user_default().await;
+    fx.login(&outsider.clone()).await;
+    assert_eq!(
+        fx.app
+            .get_with_session(&format!("{}?pr=707", fx.reviews_path()))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+    fx.app.cleanup_user(outsider.id).await;
+}
+
+/// 読み取りも PR 番号が 0 以下なら 400。
+///
+/// 起票だけ弾いて読み取りを通すと、`?pr=0` は空一覧・`mergeable: false` という
+/// 正常応答になる。「そんな PR は無い」と「未レビューなので通せない」が同じ形に
+/// 見えるので、ゲートとして使う側は綴り違いに気づけない（仕様 §10）。
+#[tokio::test]
+async fn read_apis_reject_a_non_positive_pr_number() {
+    let mut fx = setup().await;
+    fx.login(&fx.reviewer.clone()).await;
+
+    let reviews = fx.reviews_path();
+    let findings = fx.findings_path();
+    for path in [
+        format!("{reviews}?pr=0"),
+        format!("{reviews}?pr=-1"),
+        format!("{reviews}/summary?pr=0"),
+        format!("{findings}?pr=0"),
+    ] {
+        assert_eq!(
+            fx.app.get_with_session(&path).await.status(),
+            StatusCode::BAD_REQUEST,
+            "PR 番号が 0 以下なら弾く: {path}"
+        );
+    }
+
+    // 対照: 1 以上なら、そのラウンドが無くても正常に読める（過剰拒否でない）
+    for path in [
+        format!("{reviews}?pr=1"),
+        format!("{reviews}/summary?pr=1"),
+        format!("{findings}?pr=1"),
+    ] {
+        assert_eq!(
+            fx.app.get_with_session(&path).await.status(),
+            StatusCode::OK,
+            "1 以上は通す: {path}"
+        );
+    }
+
+    fx.app.cleanup_user(fx.reviewer.id).await;
+    fx.app.cleanup_user(fx.developer.id).await;
+}
