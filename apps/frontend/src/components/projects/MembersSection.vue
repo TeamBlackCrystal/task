@@ -23,6 +23,7 @@ import { LIST_PROJECTS_PATH, apiClient, useMeQuery } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
 
 type ProjectMemberResponse = components['schemas']['ProjectMemberResponse'];
+type TenantMemberResponse = components['schemas']['TenantMemberResponse'];
 type ProjectRole = components['schemas']['ProjectRole'];
 
 const MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
@@ -67,7 +68,10 @@ const tenantMembersQuery = useQuery(
   })),
 );
 
-const members = computed(() => membersQuery.data.value ?? []);
+// options を computed で組むと data の型が推論から落ちるので、ここで戻す
+// （落としたままだと下流の map / filter が暗黙 any になり、vue-tsc が落ちる）
+const members = computed<ProjectMemberResponse[]>(() => membersQuery.data.value ?? []);
+const tenantMembers = computed<TenantMemberResponse[]>(() => tenantMembersQuery.data.value ?? []);
 
 /** 一覧・追加・変更・削除はプロジェクト管理者（またはオーナー）専用。 */
 const isForbidden = computed(
@@ -85,7 +89,7 @@ const isForbidden = computed(
  */
 const candidates = computed(() => {
   const existing = new Set(members.value.map((m) => m.user_id));
-  return (tenantMembersQuery.data.value ?? []).filter((tm) => !existing.has(tm.user_id));
+  return tenantMembers.value.filter((tm) => !existing.has(tm.user_id));
 });
 
 const addMutation = apiClient.useMutation('post', MEMBERS_PATH);
