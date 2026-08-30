@@ -7,6 +7,9 @@ use reqwest::Client;
 /// GitHub API に送る User-Agent。
 const USER_AGENT: &str = "task-backend";
 
+/// GitHub REST API の既定のベース URL。
+const DEFAULT_API_BASE: &str = "https://api.github.com";
+
 /// GitHub のベース URL を差し替えてよい宛先。
 ///
 /// ここを差し替えると GitHub の資格情報を載せたリクエストの宛先が変わるので、
@@ -50,6 +53,17 @@ pub(super) fn loopback_base_override(var: &str) -> Option<String> {
     }
 }
 
+/// GitHub REST API のベース URL。
+///
+/// 既定は `https://api.github.com`。`GITHUB_API_BASE_URL` は**ループバック宛てのときだけ**
+/// 採る（統合テストがモックサーバーを向けるための口で、それ以外の用途は無い）。
+/// ここを素の環境変数で読むと、この URL へ載る installation token が任意のホストへ渡る。
+pub(super) fn api_base() -> String {
+    loopback_base_override("GITHUB_API_BASE_URL")
+        .map(|base| base.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| DEFAULT_API_BASE.to_string())
+}
+
 /// 設定から [`GithubApp`] を作る。
 ///
 /// `GITHUB_API_BASE_URL` / `GITHUB_OAUTH_BASE_URL` が設定されていればベース URL を
@@ -82,7 +96,31 @@ pub fn github_app(http: &Client, settings: &GithubAppSettings) -> GithubApp {
 
 #[cfg(test)]
 mod tests {
-    use super::loopback_base;
+    use super::{api_base, loopback_base};
+
+    /// `api_base` は非ループバックの上書きを無視して既定へ落ちる。
+    ///
+    /// この URL には GitHub App の installation token が `Authorization: Bearer` で
+    /// 載るので、素の環境変数で読むとその資格情報が任意のホストへ渡る。
+    /// `loopback_base` 単体のテストでは、呼び出し側が helper を通していることまでは
+    /// 固定できない（実際、要約コメントの経路だけ素読みしていた）。
+    ///
+    /// 環境変数を書き換えるが、このクレートでこの変数を読むのは `api_base` と
+    /// `github_app` だけで、どちらも他のテストからは呼ばれない。
+    #[test]
+    fn api_base_ignores_non_loopback_overrides() {
+        // SAFETY: この変数を読むテストは他に無く、書き換えが競合しない。
+        unsafe { std::env::set_var("GITHUB_API_BASE_URL", "https://evil.example.com") };
+        assert_eq!(api_base(), "https://api.github.com");
+
+        // 対照: ループバックなら差し替わる（統合テストのモックが向く先）
+        unsafe { std::env::set_var("GITHUB_API_BASE_URL", "http://127.0.0.1:8080/") };
+        assert_eq!(api_base(), "http://127.0.0.1:8080");
+
+        // SAFETY: 上と同じ。
+        unsafe { std::env::remove_var("GITHUB_API_BASE_URL") };
+        assert_eq!(api_base(), "https://api.github.com");
+    }
 
     #[test]
     fn accepts_loopback_github_base_urls() {
@@ -92,6 +130,26 @@ mod tests {
             "http://[::1]:8080",
         ] {
             assert_eq!(loopback_base(base).as_deref(), Some(base));
+        }
+    }
+
+    /// GitHub API を叩く側が、ベース URL を環境変数から素読みしていない。
+    ///
+    /// [`api_base_ignores_non_loopback_overrides`] は helper の挙動しか固定できず、
+    /// 呼び出し側が helper を迂回して `std::env::var` を読む形に戻ると素通りする
+    /// （要約コメントの経路が実際にそうなっていた）。3 箇所目の重複が生えたら落とす。
+    #[test]
+    fn github_api_callers_do_not_read_the_base_url_directly() {
+        let var = "GITHUB_API_BASE_URL";
+        for (name, source) in [
+            ("issues.rs", include_str!("issues.rs")),
+            ("pr_comments.rs", include_str!("pr_comments.rs")),
+        ] {
+            assert!(
+                !source.contains(&format!("env::var(\"{var}\")")),
+                "{name} は {var} を素読みしている。client::api_base() を使う\
+                 （この URL には installation token が載るので、ループバック制限を外せない）"
+            );
         }
     }
 

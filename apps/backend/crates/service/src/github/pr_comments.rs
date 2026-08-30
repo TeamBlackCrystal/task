@@ -8,9 +8,10 @@ use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use super::client::api_base;
+
 const USER_AGENT: &str = "task-backend";
 const API_VERSION: &str = "2022-11-28";
-const DEFAULT_API_BASE: &str = "https://api.github.com";
 
 /// 自分が書いたコメントを特定するための印。本文の先頭に置く。
 ///
@@ -77,13 +78,6 @@ pub struct PullRequestHead {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PullRequestUser {
     pub login: String,
-}
-
-fn api_base() -> String {
-    match std::env::var("GITHUB_API_BASE_URL") {
-        Ok(base) if !base.trim().is_empty() => base.trim_end_matches('/').to_string(),
-        _ => DEFAULT_API_BASE.to_string(),
-    }
 }
 
 fn request(http: &Client, method: Method, url: &str, token: &str) -> reqwest::RequestBuilder {
