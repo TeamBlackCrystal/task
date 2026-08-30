@@ -7,6 +7,8 @@ import ReviewFindingsView from '@/components/reviews/ReviewFindingsView.vue';
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
 const PROJECT_UUID = '00000000-0000-4000-8000-000000000010';
+/** レビューした commit ＝ 現在の HEAD（鮮度は満たしている状態）。 */
+const LATEST_HEAD_SHA = 'be31c05f9a1244d3b0e6f7a8c9d0e1f2a3b4c5d6';
 const VIEWER_ID = '00000000-0000-0000-0000-0000000000aa';
 const OTHER_ID = '00000000-0000-0000-0000-0000000000bb';
 
@@ -136,6 +138,16 @@ function mockFetch(overrides: { empty?: boolean } = {}) {
           counts: findings.map((f) => ({ severity: f.severity, state: f.state, count: 1 })),
           blocking: blocking(),
           mergeable: blocking() === 0,
+          // repository が無いと mergeVerdict は「リポジトリ未確定」へ降格する。
+          // 集計の視界が連携先で決まる以上、それが最初の判定になるので、
+          // 件数や鮮度の見え方を確かめたいストーリーでは必ず埋める
+          repository: 'koyori-app/task',
+          owner_override_rejections: 0,
+          // レビューした commit と現在の HEAD。揃えて「鮮度は満たしている」状態にし、
+          // 未解決の有無だけが判定に効くようにする
+          latest_head_sha: LATEST_HEAD_SHA,
+          cached_pr_head_sha: LATEST_HEAD_SHA,
+          pr_head_checked_at: '2026-08-25T10:12:00Z',
         });
       }
       if (method === 'GET' && pathname.endsWith('/reviews')) {
@@ -145,7 +157,9 @@ function mockFetch(overrides: { empty?: boolean } = {}) {
             project_id: PROJECT_UUID,
             pr_number: 412,
             round,
-            head_sha: round === 2 ? 'be31c05f9a12' : '77bd214c8e01',
+            // API は 40 桁の小文字 16 進しか受け付けない。短縮 SHA をモックに置くと、
+            // 実データでは起きない見え方（表示側の slice 前提など）を通してしまう
+            head_sha: round === 2 ? LATEST_HEAD_SHA : '77bd214c8e0198a7b6c5d4e3f2a1b0c9d8e7f6a5',
             reviewer: { id: OTHER_ID, username: 'reviewer', avatar_url: null },
             summary: '総評',
             pr_title: null,
