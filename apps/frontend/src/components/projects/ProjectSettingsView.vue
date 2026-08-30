@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/vue-query';
 import { PhKanban, PhSlidersHorizontal, PhUsers, PhWarning } from '@phosphor-icons/vue';
 import { navigate } from 'vike/client/router';
 import { usePageContext } from 'vike-vue/usePageContext';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -106,6 +106,27 @@ const form = useForm({
     }
   },
 });
+
+/**
+ * プロジェクトが差し替わったらフォームとアイコンを引き直す。
+ *
+ * 一般タブの入力値だけは props から一度コピーして持つので、追従しないと A の
+ * 名前と説明を表示したまま B へ保存できてしまう。親の `:key` でも作り直されるが、
+ * 各セクションと同じくここだけでも成立させる（`:key` を外した人が
+ * この一番重い経路を静かに壊せる状態にしない）。
+ */
+watch(
+  () => props.project.id,
+  () => {
+    submitError.value = null;
+    saveDone.value = false;
+    icon.value = props.project.icon_emoji ?? null;
+    form.reset({
+      name: props.project.name,
+      description: props.project.description,
+    });
+  },
+);
 
 const isPending = computed(() => updateMutation.isPending.value);
 

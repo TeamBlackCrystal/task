@@ -762,39 +762,26 @@ describe('IntegrationsSection', () => {
    */
   it('projectId が変わったら連携状態を取り直す', async () => {
     const OTHER_PROJECT_UUID = '00000000-0000-4000-8000-000000000020';
-    const requestedProjects: string[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (req: Request | string) => {
-        const url = typeof req === 'string' ? req : req.url;
-        const pathname = new URL(url, 'http://localhost').pathname;
-        const match = pathname.match(/\/projects\/([^/]+)\/github\/integration$/);
-        if (match) {
-          requestedProjects.push(match[1]);
-          return jsonResponse(
-            match[1] === PROJECT_UUID
-              ? {
-                  connected: true,
-                  repo_owner: 'koyori-app',
-                  repo_name: 'koyori',
-                  connected_at: '2026-07-01T00:00:00Z',
-                }
-              : { connected: false, repo_owner: null, repo_name: null, connected_at: null },
-          );
-        }
-        return jsonResponse({ url: INSTALL_URL });
-      }),
-    );
-
+    const state: MockState = { connected: true };
+    const fetchMock = stubFetch(state);
     const { wrapper } = mountSection();
     await flushPromises();
     expect(document.body.textContent).toContain('koyori-app/koyori');
 
+    // 切り替え先は未連携のプロジェクト
+    state.connected = false;
     await wrapper.setProps({ projectId: OTHER_PROJECT_UUID });
     await flushPromises();
 
-    expect(requestedProjects).toContain(OTHER_PROJECT_UUID);
-    expect(document.body.textContent).not.toContain('koyori-app/koyori');
+    const requested = fetchMock.mock.calls
+      .map(([req]) => (typeof req === 'string' ? req : req.url))
+      .filter((url) => url.includes('/github/integration'));
+    expect(
+      requested.some((url) => url.includes(OTHER_PROJECT_UUID)),
+      `切り替え後のプロジェクトへ取りに行く: ${requested.join(', ')}`,
+    ).toBe(true);
+    // 「を連携中」で見る。リポジトリ選択の一覧にも同じ名前が出るため
+    expect(document.body.textContent).not.toContain('を連携中');
     expect(bodyButton('連携する')).toBeTruthy();
   });
 });
