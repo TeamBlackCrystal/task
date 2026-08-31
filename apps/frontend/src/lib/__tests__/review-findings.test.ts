@@ -142,16 +142,48 @@ describe('findingActions', () => {
   });
 
   it('fixed を宣言した本人には verified を押させない', () => {
-    const actions = findingActions(finding({ state: 'fixed', fixed_by: VIEWER }), VIEWER);
+    const actions = findingActions(
+      finding({ state: 'fixed', fixed_by: VIEWER }),
+      VIEWER,
+      null,
+      true,
+    );
     const verify = actions.find((a) => a.to === 'verified');
     expect(verify?.disabledReason).toBe('自分の修正は自分で確認できません');
     // 差し戻しは押せる
     expect(actions.find((a) => a.to === 'open')?.disabledReason).toBeNull();
   });
 
-  it('別の人が直した指摘は確認できる', () => {
-    const actions = findingActions(finding({ state: 'fixed', fixed_by: OTHER }), VIEWER);
+  it('別の人が直した指摘はレビュー側なら確認できる', () => {
+    const actions = findingActions(
+      finding({ state: 'fixed', fixed_by: OTHER }),
+      VIEWER,
+      null,
+      true,
+    );
     expect(actions.find((a) => a.to === 'verified')?.disabledReason).toBeNull();
+  });
+
+  it('確認と差し戻しはレビュー側にだけ出す（サーバーも 403 で拒否する）', () => {
+    const fixed = finding({ state: 'fixed', fixed_by: OTHER });
+
+    // 修正だけを行う人。同僚が宣言した fixed でも、押せば 403 になるので出さない
+    expect(findingActions(fixed, VIEWER, null, false).map((a) => a.to)).toEqual([]);
+
+    // レビュー側には確認と差し戻しの両方を出す
+    expect(findingActions(fixed, VIEWER, null, true).map((a) => a.to)).toEqual([
+      'open',
+      'verified',
+    ]);
+
+    // 引数を省いたときも出さない側に倒す（ラウンド一覧が引けていない状態）
+    expect(findingActions(fixed, VIEWER, null).map((a) => a.to)).toEqual([]);
+  });
+
+  it('レビュー側でなくても修正の宣言と繰り延べは出す', () => {
+    // requires_reviewer_side は fixed からの 2 遷移だけ。open からの操作は狭めない
+    const actions = findingActions(finding({ severity: 'low' }), VIEWER, VIEWER, false);
+    expect(actions.map((a) => a.to)).toEqual(['fixed', 'deferred', 'rejected']);
   });
 
   it('verified には操作が無い（終端）', () => {

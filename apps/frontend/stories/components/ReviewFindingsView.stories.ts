@@ -160,7 +160,13 @@ function mockFetch(overrides: { empty?: boolean } = {}) {
             // API は 40 桁の小文字 16 進しか受け付けない。短縮 SHA をモックに置くと、
             // 実データでは起きない見え方（表示側の slice 前提など）を通してしまう
             head_sha: round === 2 ? LATEST_HEAD_SHA : '77bd214c8e0198a7b6c5d4e3f2a1b0c9d8e7f6a5',
-            reviewer: { id: OTHER_ID, username: 'reviewer', avatar_url: null },
+            // 最新ラウンドは閲覧者が出したことにする。確認（verified）と差し戻しは
+            // レビュー側にしか出ないので、reviewer を全部他人にすると
+            // 「自分の修正は自分で確認できない」を見せる前にボタンが消える
+            reviewer:
+              round === 2
+                ? { id: VIEWER_ID, username: 'viewer', avatar_url: null }
+                : { id: OTHER_ID, username: 'reviewer', avatar_url: null },
             summary: '総評',
             pr_title: null,
             pr_author: null,
@@ -303,7 +309,14 @@ export const RoundComposer: Story = {
     // head SHA が未入力のうちは確定できない
     await expect(canvas.getByRole('button', { name: /確定/ })).toBeDisabled();
 
+    // 短縮 SHA も確定できない。API は 40 桁しか受け付けず、通してしまうと
+    // そのラウンドは鮮度の照合が永久に一致しなくなる
     await user.type(canvas.getByLabelText('レビュー対象の head SHA'), '9f4e7b2c1a08');
+    await expect(canvas.findByTestId('head-sha-error')).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole('button', { name: /確定/ })).toBeDisabled();
+
+    await user.clear(canvas.getByLabelText('レビュー対象の head SHA'));
+    await user.type(canvas.getByLabelText('レビュー対象の head SHA'), LATEST_HEAD_SHA);
     await user.type(canvas.getByLabelText('タイトル'), '新しい指摘');
     await user.type(canvas.getByLabelText('本文'), '再現条件と根拠');
     await user.click(canvas.getByRole('button', { name: '下書きに追加' }));

@@ -75,6 +75,18 @@ const rounds = computed(() => roundsQuery.data.value ?? []);
  */
 const findingAuthorId = (finding: ReviewFinding): string | null =>
   rounds.value.find((round: Review) => round.id === finding.review_id)?.reviewer.id ?? null;
+
+/**
+ * 閲覧者がこの指摘のレビュー側か——その指摘のラウンド以降のラウンドを出しているか。
+ * backend の `is_reviewer_side` と同じ条件で、確認（verified）と差し戻し（open）の
+ * ボタンを出すかの判定に使う。
+ *
+ * ラウンド一覧が未取得のうちは分からないので、その間は出さない（取り下げと同じ）。
+ */
+const isReviewerSide = (finding: ReviewFinding): boolean =>
+  rounds.value.some(
+    (round: Review) => round.reviewer.id === props.viewerId && round.round >= finding.round,
+  );
 const summary = computed(() => summaryQuery.data.value ?? null);
 
 /** 初期 PR の指定が無ければ、最後にレビューされた PR を開く。 */
@@ -411,7 +423,12 @@ async function onRoundCreated() {
 
                 <div class="mt-3 flex flex-wrap items-center gap-2">
                   <Button
-                    v-for="action in findingActions(finding, viewerId, findingAuthorId(finding))"
+                    v-for="action in findingActions(
+                      finding,
+                      viewerId,
+                      findingAuthorId(finding),
+                      isReviewerSide(finding),
+                    )"
                     :key="action.to"
                     type="button"
                     size="sm"
@@ -424,9 +441,12 @@ async function onRoundCreated() {
                   </Button>
                   <span
                     v-if="
-                      findingActions(finding, viewerId, findingAuthorId(finding)).some(
-                        (a) => a.disabledReason,
-                      )
+                      findingActions(
+                        finding,
+                        viewerId,
+                        findingAuthorId(finding),
+                        isReviewerSide(finding),
+                      ).some((a) => a.disabledReason)
                     "
                     class="text-muted-foreground text-xs"
                   >

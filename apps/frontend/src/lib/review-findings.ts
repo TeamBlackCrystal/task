@@ -98,6 +98,11 @@ export function findingActions(
   viewerId: string,
   /** その指摘を出したラウンドの作成者。分からなければ取り下げを出さない */
   findingAuthorId?: string | null,
+  /**
+   * 閲覧者がこの指摘のレビュー側か（その指摘のラウンド以降のラウンドを出しているか）。
+   * ラウンド一覧が引けないうちは false 側に倒し、レビュー側限定の操作を出さない
+   */
+  isReviewerSide = false,
 ): FindingAction[] {
   const labels: Partial<Record<FindingState, string>> = {
     fixed: '修正した',
@@ -113,7 +118,9 @@ export function findingActions(
       // High / Medium は繰り延べられない（押しても 409 になるボタンを出さない）
       (to !== 'deferred' || canDefer(finding.severity)) &&
       // 取り下げは指摘を出した本人だけ（押しても 403 になるボタンを出さない）
-      (!requiresFindingAuthor(finding.state, to) || viewerId === findingAuthorId),
+      (!requiresFindingAuthor(finding.state, to) || viewerId === findingAuthorId) &&
+      // 確認と差し戻しはレビュー側だけ（同上。修正だけを行う人には出さない）
+      (!requiresReviewerSide(finding.state, to) || isReviewerSide),
   ).map((to) => {
     const selfVerification = to === 'verified' && finding.fixed_by === viewerId;
     return {

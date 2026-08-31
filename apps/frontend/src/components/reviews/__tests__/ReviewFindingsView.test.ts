@@ -219,7 +219,11 @@ describe('ReviewFindingsView', () => {
   });
 
   it('自分で fixed を宣言した指摘は確認ボタンを押せない', async () => {
-    stubFetch({ findings: [finding({ state: 'fixed', fixed_by: VIEWER_ID })] });
+    // 確認と差し戻しはレビュー側だけに出るので、閲覧者をラウンドの作成者にしておく
+    stubFetch({
+      findings: [finding({ state: 'fixed', fixed_by: VIEWER_ID })],
+      roundReviewerId: VIEWER_ID,
+    });
     const wrapper = mountView();
     await flushPromises();
 
@@ -229,12 +233,29 @@ describe('ReviewFindingsView', () => {
     expect(bodyButton('レビューに戻す')?.disabled).toBe(false);
   });
 
-  it('別の人が直した指摘は確認できる', async () => {
-    stubFetch({ findings: [finding({ state: 'fixed', fixed_by: OTHER_ID })] });
+  it('別の人が直した指摘はレビュー側なら確認できる', async () => {
+    stubFetch({
+      findings: [finding({ state: 'fixed', fixed_by: OTHER_ID })],
+      roundReviewerId: VIEWER_ID,
+    });
     mountView();
     await flushPromises();
 
     expect(bodyButton('確認した')?.disabled).toBe(false);
+  });
+
+  it('レビュー側でない人に確認・差し戻しのボタンを出さない（サーバーも 403 で拒否する）', async () => {
+    // ラウンドを 1 本も出していない＝修正だけを行う利用者。この画面の主要な利用者で、
+    // 同僚が宣言した fixed に確認ボタンを出すと押した瞬間に 403 になる
+    stubFetch({
+      findings: [finding({ state: 'fixed', fixed_by: OTHER_ID })],
+      roundReviewerId: OTHER_ID,
+    });
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('確認した')).toBeUndefined();
+    expect(bodyButton('レビューに戻す')).toBeUndefined();
   });
 
   it('High には繰り延べのボタンを出さない（サーバーも 409 で拒否する）', async () => {
@@ -373,7 +394,11 @@ describe('ReviewFindingsView', () => {
   });
 
   it('403 のときは理由を表示する', async () => {
-    stubFetch({ findings: [finding({ state: 'fixed', fixed_by: OTHER_ID })], patchStatus: 403 });
+    stubFetch({
+      findings: [finding({ state: 'fixed', fixed_by: OTHER_ID })],
+      roundReviewerId: VIEWER_ID,
+      patchStatus: 403,
+    });
     const wrapper = mountView();
     await flushPromises();
 
