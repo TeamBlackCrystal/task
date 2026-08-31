@@ -5,6 +5,8 @@ import ReviewRoundComposer from '../ReviewRoundComposer.vue';
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const PROJECT_ID = '00000000-0000-4000-8000-000000000010';
+/** API は 40 桁の小文字 16 進しか受け付けない（`COMMIT_SHA_REGEX`）。 */
+const HEAD_SHA = '60cdd7795f94fa4e4148ce996c2efb4c363e3f5e';
 
 function stubFetch(status = 201) {
   const posted: unknown[] = [];
@@ -60,12 +62,37 @@ describe('ReviewRoundComposer', () => {
     expect(bodyButton('確定')?.disabled).toBe(true);
   });
 
+  // 短縮 SHA で確定すると、そのラウンドは鮮度の照合（厳密一致）が永久に合わなくなる。
+  // サーバーの 400 は「どの項目が何桁必要か」を伝えられないので、送る前に止める
+  it('短縮 SHA では確定できず、理由を出す', async () => {
+    const posted = stubFetch();
+    const wrapper = mountComposer();
+    await flushPromises();
+
+    await wrapper.find('#composer-head').setValue('60cdd77');
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="head-sha-error"]').text()).toContain('40 桁');
+    expect(bodyButton('確定')?.disabled).toBe(true);
+
+    // 40 桁を入れれば通る
+    await wrapper.find('#composer-head').setValue(HEAD_SHA);
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="head-sha-error"]').exists()).toBe(false);
+    expect(bodyButton('確定')?.disabled).toBe(false);
+
+    bodyButton('確定')!.click();
+    await flushPromises();
+    expect(posted).toHaveLength(1);
+  });
+
   it('下書きに積んでから確定すると 1 リクエストで一括作成する', async () => {
     const posted = stubFetch();
     const wrapper = mountComposer();
     await flushPromises();
 
-    await wrapper.find('#composer-head').setValue('60cdd7795f94');
+    await wrapper.find('#composer-head').setValue(HEAD_SHA);
     await wrapper.find('#composer-summary').setValue('総評');
 
     // 1 件目
@@ -93,7 +120,7 @@ describe('ReviewRoundComposer', () => {
     expect(posted).toHaveLength(1);
     expect(posted[0]).toEqual({
       pr_number: 618,
-      head_sha: '60cdd7795f94',
+      head_sha: HEAD_SHA,
       summary: '総評',
       findings: [
         {
@@ -114,7 +141,7 @@ describe('ReviewRoundComposer', () => {
     const wrapper = mountComposer();
     await flushPromises();
 
-    await wrapper.find('#composer-head').setValue('abc');
+    await wrapper.find('#composer-head').setValue(HEAD_SHA);
     await wrapper.find('#composer-summary').setValue('具体的な不具合は見つからなかった');
     expect(wrapper.text()).toContain('指摘 0 件でも確定できます');
 
@@ -176,7 +203,7 @@ describe('ReviewRoundComposer', () => {
     const wrapper = mountComposer();
     await flushPromises();
 
-    await wrapper.find('#composer-head').setValue('abc');
+    await wrapper.find('#composer-head').setValue(HEAD_SHA);
     bodyButton('確定')!.click();
     await flushPromises();
 

@@ -50,7 +50,23 @@ function emptyDraft(): StagedFinding {
   return { severity: 'medium', title: '', body: '', file: '', line: '' };
 }
 
-const canCommit = computed(() => headSha.value.trim().length > 0);
+/**
+ * commit SHA（40 桁の小文字 16 進）。CLI の `reviews.ts` と同じ形で、backend の
+ * `COMMIT_SHA_REGEX` と対。
+ *
+ * ゲートは `latest_head_sha` を厳密一致で比べるので、短縮 SHA で確定したラウンドは
+ * 指摘を全部解消しても通らなくなる。`git log --oneline` が見せるのは短縮 SHA なので
+ * 画面から貼るときに起こりやすく、サーバーの 400 は「どの項目が何桁必要か」を
+ * 伝えられないため、ここで形を見る。
+ */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
+const headShaError = computed(() =>
+  headSha.value.trim() === '' || COMMIT_SHA.test(headSha.value.trim())
+    ? null
+    : '40 桁の commit SHA を入力してください（git rev-parse HEAD）。',
+);
+const canCommit = computed(() => COMMIT_SHA.test(headSha.value.trim()));
 
 function addToDraft() {
   draftError.value = null;
@@ -116,7 +132,14 @@ async function commit() {
         v-model="headSha"
         placeholder="60cdd7795f94fa4e4148ce996c2efb4c363e3f5e"
         class="font-mono"
+        :aria-invalid="headShaError !== null"
       />
+      <p v-if="headShaError" class="text-destructive text-xs" data-testid="head-sha-error">
+        {{ headShaError }}
+      </p>
+      <p v-else class="text-muted-foreground text-xs">
+        40 桁の commit SHA（<code>git rev-parse HEAD</code>）
+      </p>
     </div>
 
     <div class="flex flex-col gap-1.5">
@@ -220,7 +243,7 @@ async function commit() {
       <Button
         type="button"
         :disabled="!canCommit || createReview.isPending.value"
-        :title="canCommit ? undefined : 'head SHA を入力してください'"
+        :title="canCommit ? undefined : '40 桁の commit SHA を入力してください'"
         @click="commit"
       >
         {{ createReview.isPending.value ? '確定中…' : `確定（${staged.length} 件）` }}
