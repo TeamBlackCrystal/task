@@ -20207,7 +20207,8 @@
           },
           "head_sha": {
             "type": "string",
-            "description": "レビューした commit。裏取りした head の記録として必須"
+            "description": "レビューした commit。裏取りした head の記録として必須\n\n40 桁の小文字 16 進のみ。ゲートは `latest_head_sha` を厳密一致で比べるので、\n短縮 SHA を受け取るとそのラウンドは永久に通らなくなる（仕様 §5）",
+            "pattern": "^[0-9a-f]{40}$"
           },
           "pr_number": {
             "type": "integer",

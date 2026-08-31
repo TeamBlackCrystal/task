@@ -67,7 +67,7 @@ project（GitHub 連携は要約コメントの投稿にだけ必要。無くて
 | `integration_id` / `repo_owner` / `repo_name` | ラウンドを出した時点の GitHub 連携と、その連携先リポジトリの控え。連携が無ければ `integration_id` は NULL、`repo_owner` / `repo_name` は**空文字列**（NULL にすると Postgres の UNIQUE が NULL 同士を別物として扱い、採番の防波堤が効かない） |
 | `pr_number` | PR 番号 |
 | `round` | PR 内の連番（1 始まり）。表示は **R1, R2, …** |
-| `head_sha` | レビュー時点の PR head（裏取りした commit の記録） |
+| `head_sha` | レビュー時点の PR head（裏取りした commit の記録）。**40 桁の小文字 16 進**のみ受け付ける（短縮 SHA は §5 参照） |
 | `reviewer_id` | ラウンドを作成した利用者（PAT の持ち主。AI もこの利用者として動く） |
 | `summary` | 総評（markdown） |
 | `pr_title` / `pr_author` | 表示用の PR メタ。要約コメント投稿ジョブが GitHub から取得してキャッシュする（連携なし・取得失敗時は空のままで PR 番号だけ表示）。増減行数など鮮度が落ちる数値は持たない |
@@ -250,15 +250,19 @@ AI レビュワーの主経路は **JSON 一括投入**（生成しやすく、�
 CLI と同じ一括作成 API を 1 回呼ぶ）。
 
 ```bash
-# レビュー 1 ラウンドぶんを一括起票（ファイル or stdin）
-task review submit --project TASK --pr 618 findings.json
+# レビュー 1 ラウンドぶんを一括起票（ファイル or `-` で標準入力）
+task review submit findings.json --project TASK
+task review submit findings.json --project TASK --pr 618   # JSON の pr を上書き
 
 # 指摘一覧（フィルタつき）
 task review list --project TASK --pr 618 --state open --severity high,medium
 
+# ラウンド一覧（R1, R2, … と head SHA・件数）
+task review rounds --project TASK --pr 618
+
 # 状態遷移
-task review resolve <finding-id> --state fixed
-task review resolve <finding-id> --state deferred   # 通常タスクの自動起票込み
+task review resolve <finding-id> --project TASK --state fixed
+task review resolve <finding-id> --project TASK --state deferred --note "後で直す"
 
 # 集計。マージできない状態なら非 0 で終了する（CI や手元のマージ前確認に使える）
 task review summary --project TASK --pr 618
@@ -268,7 +272,23 @@ task review summary --project TASK --pr 618
 task review summary --project TASK --pr 618 --head "${{ github.event.pull_request.head.sha }}"
 task review summary --project TASK --pr 618 --no-head-check   # 鮮度を見ない
 task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプロジェクトで使う
+
+# 読み取りの視界を明示する（既定は現在の連携先）。連携を差し替えたあとに旧リポジトリの
+# ラウンドを読む、連携を張る前のラウンド（空文字）を読む、のどちらにも使う
+task review list   --project TASK --pr 618 --repo acme/old
+task review rounds --project TASK --pr 618 --repo ""
 ```
+
+投入 JSON と絞り込みの値は**送信前に CLI 側でも検証する**。綴り違い
+（`severity: "critical"`、`--state closed`）や必須項目の欠落は、どの指摘の
+どの項目かを添えて終了コード 2 で弾く。サーバー側の検証に任せきりにすると、
+AI が生成した JSON の取り違えを直す手がかりが薄くなる。
+
+読み取りの 3 コマンド（`list` / `rounds` / `summary`）は `--repo` を受ける。API の
+リポジトリ絞り込み（§5）を CLI からも使えるようにするためで、これが無いと AI
+レビュワーの主経路から過去の連携先のラウンドへ到達できない。値は `owner/name`、
+空文字は連携を張る前のラウンドを指す。形式が違えば終了コード 2 で弾く
+（黙って現在の連携先へ落とすと、読めていないことに気づけない）。
 
 `summary` は次のいずれかで**非 0 終了**する。ゲートとして使う以上、判断できない
 ときは通さない（fail-closed）。
@@ -305,6 +325,10 @@ task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプ�
 ```
 
 指摘ゼロ（`findings: []`）のラウンドも正当（「指摘なし」の記録として意味を持つ）。
+
+`head_sha` は 40 桁の小文字 16 進で書く。`git log --oneline` が見せる短縮 SHA を入れると、
+鮮度の照合が厳密一致のため、そのラウンドは指摘を全部解消しても「レビュー後に更新あり」の
+まま抜けられなくなる。CLI（終了コード 2）と API（400）の両方で弾く。
 
 ---
 
@@ -544,6 +568,11 @@ task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプ�
   進めるのを防ぐ）
 - 2026-08-26: 指摘一覧への導線 URL は既存の `email_verification_app_url`（アプリの公開 URL）を
   流用する。要約コメント専用の設定は増やさない
+- 2026-08-26: CLI は投入 JSON と絞り込みの値を送信前に検証する（終了コード 2）。
+  `review summary` は未解決が残ると終了コード 1
+- 2026-08-31: 読み取りの 3 コマンドに `--repo` を置く（`owner/name`、空文字は連携前）。
+  API 側の絞り込み（§5）だけでは、CLI を主経路にする AI レビュワーが過去の連携先の
+  ラウンドを読めない
 - 2026-08-26: レビューの反復の呼称は「ラウンド」（表示は R1, R2, …）。「巡」表記は使わない
 - 2026-08-26: レビュワーは AI（PAT + CLI）と人間（セッション + Web UI）を同格に扱う。
   ラウンドは確定時一括作成・追記不可で、人間の下書きは UI 側の関心事（サーバーは持たない）
@@ -611,3 +640,6 @@ task review summary --project TASK --pr 618 --allow-unlinked  # 連携なしプ�
   呼び出しのあいだ Postgres のトランザクションを開いたままにする必要があるため。
   ロック・印とも TTL 付きにし、ロックの解放はトークン照合つき（担い手が落ちても詰まらせない）
 - 2026-08-26: PR メタはタイトル・作者のみキャッシュ（行数は鮮度が落ちるため持たない）。マージ基準のゲートは設定化せず固定（High+Medium 必須・fixed は未解決扱い）。snippet 専用フィールドは作らず body の markdown コードブロックで表現
+- 2026-08-31: `head_sha` は 40 桁の小文字 16 進に限る（CLI は終了コード 2、API は 400）。
+  鮮度の照合は厳密一致なので、短縮 SHA を受け取るとそのラウンドは永久にマージ可へ届かず、
+  しかも「同じ commit に見えるのに再レビューを要求される」形で出て原因を辿れないため
