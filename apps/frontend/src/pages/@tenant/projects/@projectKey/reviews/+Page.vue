@@ -59,8 +59,17 @@ const isNotFound = computed(() => isTenantNotFound.value || isProjectNotFound.va
       プロジェクトが見つかりません
     </p>
 
+    <!--
+      `:key` でプロジェクトごとに作り直す。
+
+      vike-vue はクライアント遷移で同じ `+Page.vue` に解決される URL 間では
+      コンポーネントを差し替えず patch するため、これが無いとクエリの引数
+      （setup 時の値で固定される）も、選択中の PR や絞り込みも前のプロジェクトの
+      ままになる。設定画面（`settings/+Page.vue`）と同じ扱い。
+    -->
     <ReviewFindingsView
       v-else-if="tenantId && projectId && meQuery.data.value"
+      :key="projectId"
       :tenant-id="tenantId"
       :tenant-slug="tenantDisplayId"
       :project-id="projectId"
