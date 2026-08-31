@@ -752,4 +752,36 @@ describe('IntegrationsSection', () => {
     await flushPromises();
     expect(document.body.textContent).toContain('koyori-app/docs');
   });
+
+  /**
+   * projectId が変わったら連携状態も取り直す。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこのコンポーネントを作り直さない
+   * ので、setup 時の props でクエリを組むと前のプロジェクトの連携状態が残り、
+   * 未連携のプロジェクトを「連携済み」と見せてしまう。
+   */
+  it('projectId が変わったら連携状態を取り直す', async () => {
+    const OTHER_PROJECT_UUID = '00000000-0000-4000-8000-000000000020';
+    const state: MockState = { connected: true };
+    const fetchMock = stubFetch(state);
+    const { wrapper } = mountSection();
+    await flushPromises();
+    expect(document.body.textContent).toContain('koyori-app/koyori');
+
+    // 切り替え先は未連携のプロジェクト
+    state.connected = false;
+    await wrapper.setProps({ projectId: OTHER_PROJECT_UUID });
+    await flushPromises();
+
+    const requested = fetchMock.mock.calls
+      .map(([req]) => (typeof req === 'string' ? req : req.url))
+      .filter((url) => url.includes('/github/integration'));
+    expect(
+      requested.some((url) => url.includes(OTHER_PROJECT_UUID)),
+      `切り替え後のプロジェクトへ取りに行く: ${requested.join(', ')}`,
+    ).toBe(true);
+    // 「を連携中」で見る。リポジトリ選択の一覧にも同じ名前が出るため
+    expect(document.body.textContent).not.toContain('を連携中');
+    expect(bodyButton('連携する')).toBeTruthy();
+  });
 });

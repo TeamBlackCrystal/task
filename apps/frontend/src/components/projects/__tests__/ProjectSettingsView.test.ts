@@ -114,6 +114,44 @@ describe('ProjectSettingsView', () => {
     expect(document.body.textContent).toContain('変更を保存しました');
   });
 
+  /**
+   * プロジェクトが差し替わったら一般タブの入力値も追従する。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこの画面を作り直さない。
+   * 一般タブの値だけは props から一度コピーして持つので、追従しないと A の名前と
+   * 説明を表示したまま B へ保存できてしまう。親の `:key` でも防いでいるが、
+   * それが外れたときにこの一番重い経路が静かに壊れないよう、ここでも固定する。
+   */
+  it('project が差し替わったら入力値とアイコンが追従する', async () => {
+    const other: ProjectResponse = {
+      ...sampleProject,
+      id: '00000000-0000-4000-8000-000000000020',
+      name: 'Team Beta',
+      description: 'Another project',
+      key: 'BETA',
+      icon_emoji: '🚀',
+    };
+    updateMutateAsync.mockResolvedValue(other);
+    const wrapper = mountView();
+    await flushPromises();
+    expect((input('name').element as HTMLInputElement).value).toBe('Team Alpha');
+
+    await wrapper.setProps({ project: other });
+    await flushPromises();
+
+    expect((input('name').element as HTMLInputElement).value).toBe('Team Beta');
+    const description = document.body.querySelector<HTMLTextAreaElement>('#description');
+    expect(description?.value).toBe('Another project');
+
+    // 保存先も表示中のプロジェクトになる（A の値を B へ書かない）
+    await formEl().trigger('submit');
+    await flushPromises();
+    expect(updateMutateAsync).toHaveBeenCalledWith({
+      params: { path: { tenant_id: TENANT_UUID, id: other.id } },
+      body: { name: 'Team Beta', description: 'Another project' },
+    });
+  });
+
   it('アイコンを外して保存すると clear_icon_emoji を送る', async () => {
     updateMutateAsync.mockResolvedValue({ ...sampleProject, icon_emoji: null });
     const wrapper = mountView();

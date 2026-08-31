@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -7,8 +7,10 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
+use sea_orm::sea_query::LockType;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QuerySelect, TransactionTrait,
 };
 
 use crate::AppState;
@@ -55,17 +57,86 @@ pub(crate) async fn require_project_admin(
     }
 }
 
-async fn find_member(
+/// メンバー行に表示用のユーザー情報を同梱する。FK があるため利用者は必ず居るはずで、
+/// 居なければ握り潰さず 500 にする。
+async fn attach_users(
     state: &AppState,
+    members: Vec<project_members::Model>,
+) -> Result<Vec<ProjectMemberResponse>, AppError> {
+    let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
+    let mut users_by_id: HashMap<Uuid, users::Model> = users::Entity::find()
+        .filter(users::Column::Id.is_in(user_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|u| (u.id, u))
+        .collect();
+    members
+        .into_iter()
+        .map(|m| {
+            let user = users_by_id
+                .remove(&m.user_id)
+                .ok_or_else(|| anyhow::anyhow!("project member {} has no user row", m.user_id))?;
+            Ok(ProjectMemberResponse::from_parts(m, user))
+        })
+        .collect()
+}
+
+async fn find_member<C: ConnectionTrait>(
+    db: &C,
     project_id: Uuid,
     user_id: Uuid,
 ) -> Result<project_members::Model, AppError> {
     project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))
         .filter(project_members::Column::UserId.eq(user_id))
-        .one(&state.db)
+        .one(db)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+/// 「最後の Admin を残す」判定に関わる書き込みを、テナント単位で直列化する。
+///
+/// 判定は数えてから書くので、掴まないと読みと書きの間に割り込まれる。
+///
+/// - 同じプロジェクトで A と B が同時に相手を Viewer へ落とすと、双方が
+///   「まだもう 1 人いる」を読んで両方通る
+/// - 降格が B を在籍中の Admin として数えている最中に B が除名されると、
+///   降格は消えた相手を数えたまま通る
+///
+/// 掴むのはプロジェクト行ではなく**テナント行**。判定([`would_drop_last_admin`])が
+/// 読むのは `project_members` と `tenant_members` の両方で、後者はプロジェクト行を
+/// 掴んでも守れない。テナント行なら 1 つで両方を覆えるので、複数のロックと
+/// その取得順序を持たずに済む。
+///
+/// この関数は [`crate::handlers::tenant_members::remove_member`] からも呼ぶ。
+/// 片側だけが掴んでも直列化にならない。
+///
+/// # このロックが保証しないこと
+///
+/// **「在籍している Admin が常に 1 人以上いる」は保証しない。** 直列化しても
+/// 「A を降格 →（別の操作として）B を除名」の順は両方とも正当で、結果として
+/// 在籍 Admin は 0 人になりうる。除名を 409 で止めれば揃うが、対象が単独 Admin の
+/// プロジェクトを全部直すまでテナントから外せなくなり、退職者のオフボーディングが
+/// 止まる。`admin_users::delete_user_cascade`（強制削除）は 409 を返せないので、
+/// どのみち同じ状態には到達する。
+///
+/// 実際に維持しているのは**「そのプロジェクトを管理できる人が常に居る」**で、
+/// [`require_project_admin`] がテナントオーナーを無条件で通すことで成立している。
+/// Admin が全員テナントから抜けた状態は想定内で、[`would_drop_last_admin`] が
+/// 在籍者だけを数えるのはまさにそこから復旧できるようにするため。
+///
+/// 同じテナントの別プロジェクトのメンバー操作まで待たされるが、管理操作は
+/// 頻度が低いので実害がない。
+pub(crate) async fn lock_membership_changes<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+) -> Result<(), AppError> {
+    tenants::Entity::find_by_id(tenant_id)
+        .lock(LockType::Update)
+        .one(db)
+        .await?;
+    Ok(())
 }
 
 /// 対象を Admin から外すと、テナントに残っている Admin が居なくなるか。
@@ -74,8 +145,8 @@ async fn find_member(
 /// （`tenant_members::remove_member`）。単純に Admin の行数を数えると、
 /// もう管理操作を実行できない人が最後の Admin 枠を占有し、その人を消すことも降格することも
 /// 409 で弾かれてプロジェクトを直せなくなる。数えるのはテナントに残っている Admin だけにする。
-async fn would_drop_last_admin(
-    state: &AppState,
+async fn would_drop_last_admin<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     project_id: Uuid,
     target_user_id: Uuid,
@@ -86,7 +157,7 @@ async fn would_drop_last_admin(
         .select_only()
         .column(project_members::Column::UserId)
         .into_tuple()
-        .all(&state.db)
+        .all(db)
         .await?;
     if admin_ids.is_empty() {
         return Ok(false);
@@ -94,7 +165,7 @@ async fn would_drop_last_admin(
 
     // 在籍確認は 1 人ずつ引かずまとめて引く（Admin の人数分クエリを出さない）
     let owner_id = tenants::Entity::find_by_id(tenant_id)
-        .one(&state.db)
+        .one(db)
         .await?
         .map(|t| t.owner_id);
     let member_ids: HashSet<Uuid> = tenant_members::Entity::find()
@@ -103,7 +174,7 @@ async fn would_drop_last_admin(
         .select_only()
         .column(tenant_members::Column::UserId)
         .into_tuple::<Uuid>()
-        .all(&state.db)
+        .all(db)
         .await?
         .into_iter()
         .collect();
@@ -146,7 +217,7 @@ pub async fn list_members(
         .filter(project_members::Column::ProjectId.eq(project_id))
         .all(&state.db)
         .await?;
-    Ok(Json(members.into_iter().map(Into::into).collect()))
+    Ok(Json(attach_users(&state, members).await?))
 }
 
 #[axum::debug_handler]
@@ -179,7 +250,7 @@ pub async fn add_member(
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
 
-    users::Entity::find_by_id(payload.user_id)
+    let user = users::Entity::find_by_id(payload.user_id)
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -208,7 +279,10 @@ pub async fn add_member(
         role: Set(payload.role),
     };
     let model = member.insert(&state.db).await?;
-    Ok((StatusCode::CREATED, Json(model.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(ProjectMemberResponse::from_parts(model, user)),
+    ))
 }
 
 #[axum::debug_handler]
@@ -240,16 +314,24 @@ pub async fn update_member(
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
-    let current = find_member(&state, project_id, member_user_id).await?;
+    // 数えてから書くので、同じプロジェクトのメンバー変更を直列化する
+    let txn = state.db.begin().await?;
+    lock_membership_changes(&txn, tenant_id).await?;
+    let current = find_member(&txn, project_id, member_user_id).await?;
     if payload.role != ProjectRole::Admin
-        && would_drop_last_admin(&state, tenant_id, project_id, member_user_id).await?
+        && would_drop_last_admin(&txn, tenant_id, project_id, member_user_id).await?
     {
         return Err(AppError::Conflict);
     }
+    let user = users::Entity::find_by_id(member_user_id)
+        .one(&txn)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("project member {member_user_id} has no user row"))?;
     let mut active: project_members::ActiveModel = current.into();
     active.role = Set(payload.role);
-    let updated = active.update(&state.db).await?;
-    Ok(Json(updated.into()))
+    let updated = active.update(&txn).await?;
+    txn.commit().await?;
+    Ok(Json(ProjectMemberResponse::from_parts(updated, user)))
 }
 
 #[axum::debug_handler]
@@ -279,8 +361,11 @@ pub async fn remove_member(
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
     require_project_admin(&state, tenant_id, project_id, auth.user_id).await?;
-    let member = find_member(&state, project_id, member_user_id).await?;
-    if would_drop_last_admin(&state, tenant_id, project_id, member_user_id).await? {
+    // 数えてから書くので、同じプロジェクトのメンバー変更を直列化する
+    let txn = state.db.begin().await?;
+    lock_membership_changes(&txn, tenant_id).await?;
+    let member = find_member(&txn, project_id, member_user_id).await?;
+    if would_drop_last_admin(&txn, tenant_id, project_id, member_user_id).await? {
         return Err(AppError::Conflict);
     }
     // プロジェクト配下タスクの watcher を削除してから member を削除
@@ -289,17 +374,18 @@ pub async fn remove_member(
         .column(tasks::Column::Id)
         .filter(tasks::Column::ProjectId.eq(project_id))
         .into_tuple::<Uuid>()
-        .all(&state.db)
+        .all(&txn)
         .await?;
     if !task_ids.is_empty() {
         task_watchers::Entity::delete_many()
             .filter(task_watchers::Column::UserId.eq(member_user_id))
             .filter(task_watchers::Column::TaskId.is_in(task_ids))
-            .exec(&state.db)
+            .exec(&txn)
             .await?;
     }
     project_members::Entity::delete_by_id(member.id)
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
+    txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

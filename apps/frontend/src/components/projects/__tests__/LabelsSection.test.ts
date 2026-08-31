@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises, DOMWrapper, enableAutoUnmount } from '@vue/test-utils';
-import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
+import { VueQueryPlugin, QueryClient, useQuery } from '@tanstack/vue-query';
 
 const { createMutateAsync, updateMutateAsync, deleteMutateAsync, queryState, mutationPending } =
   vi.hoisted(() => ({
@@ -349,5 +349,30 @@ describe('LabelsSection', () => {
 
     expect(document.body.textContent).toContain('ラベルを削除できませんでした');
     expect(document.body.textContent).toContain('ラベルを削除しますか？');
+  });
+
+  /**
+   * projectId が変わったらクエリキーも切り替わる。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこのコンポーネントを作り直さない
+   * ので、setup 時の props で options を組むと一覧だけが前のプロジェクトのまま残る。
+   * ここでは useQuery ごとモックしているため、渡している options が props に追従して
+   * 再評価されることを見る。
+   */
+  it('projectId が変わったらクエリキーが切り替わる', async () => {
+    const OTHER_PROJECT_UUID = '00000000-0000-4000-8000-000000000020';
+    queryState.labels = [bugLabel];
+    const wrapper = mountView();
+    await flushPromises();
+
+    const optionsRef = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as {
+      value: { queryKey: readonly unknown[] };
+    };
+    expect(JSON.stringify(optionsRef.value.queryKey)).toContain(PROJECT_UUID);
+
+    await wrapper.setProps({ projectId: OTHER_PROJECT_UUID });
+    await flushPromises();
+
+    expect(JSON.stringify(optionsRef.value.queryKey)).toContain(OTHER_PROJECT_UUID);
   });
 });

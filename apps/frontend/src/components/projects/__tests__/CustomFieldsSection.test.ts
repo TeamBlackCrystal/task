@@ -2,12 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises, DOMWrapper, enableAutoUnmount } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 
-const { listState, createMutateAsync, updateMutateAsync, deleteMutateAsync } = vi.hoisted(() => ({
-  listState: {
-    data: { value: undefined as unknown },
-    isPending: { value: false },
-    isError: { value: false },
-  },
+// 一覧は queryOptions を差し替えて本物の useQuery に流す（WorkflowStatusesEditor.test.ts と同じ形）。
+// useQuery の戻りごと差し替えると、コンポーネントが options を props に追従させているかを
+// 検証できなくなる
+const { listQueryFn, createMutateAsync, updateMutateAsync, deleteMutateAsync } = vi.hoisted(() => ({
+  listQueryFn: vi.fn(),
   createMutateAsync: vi.fn(),
   updateMutateAsync: vi.fn(),
   deleteMutateAsync: vi.fn(),
@@ -19,7 +18,10 @@ vi.mock('@/lib/api-vue-query', async (importOriginal) => {
     ...actual,
     apiClient: {
       ...actual.apiClient,
-      useQuery: vi.fn(() => listState),
+      queryOptions: vi.fn((_method: string, path: string, init: unknown) => ({
+        queryKey: ['get', path, init],
+        queryFn: () => listQueryFn(init),
+      })),
       useMutation: vi.fn((method: string) => ({
         mutateAsync:
           method === 'post'
@@ -122,9 +124,8 @@ describe('CustomFieldsSection', () => {
     createMutateAsync.mockReset();
     updateMutateAsync.mockReset();
     deleteMutateAsync.mockReset();
-    listState.data.value = { fields: sampleFields };
-    listState.isPending.value = false;
-    listState.isError.value = false;
+    listQueryFn.mockReset();
+    listQueryFn.mockResolvedValue({ fields: sampleFields });
     document.body.innerHTML = '';
   });
 
@@ -141,7 +142,7 @@ describe('CustomFieldsSection', () => {
   });
 
   it('空状態: フィールドが無いことを表示する', async () => {
-    listState.data.value = { fields: [] };
+    listQueryFn.mockResolvedValue({ fields: [] });
     mountSection();
     await flushPromises();
 
@@ -149,8 +150,7 @@ describe('CustomFieldsSection', () => {
   });
 
   it('読み込み失敗: エラーを表示する', async () => {
-    listState.data.value = undefined;
-    listState.isError.value = true;
+    listQueryFn.mockRejectedValue(new Error('boom'));
     mountSection();
     await flushPromises();
 
@@ -409,5 +409,32 @@ describe('CustomFieldsSection', () => {
 
     expect(document.body.textContent).toContain('カスタムフィールドを削除できませんでした');
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  /**
+   * projectId が変わったら一覧も取り直す。
+   *
+   * vike-vue はサイドバーからのプロジェクト切り替えでこのコンポーネントを作り直さない
+   * ので、setup 時の props でクエリを組むと一覧だけが前のプロジェクトのまま残る。
+   */
+  it('projectId が変わったら一覧を取り直す', async () => {
+    const OTHER_PROJECT_UUID = '00000000-0000-4000-8000-000000000020';
+    listQueryFn.mockImplementation((init: unknown) => {
+      const projectId = (init as { params: { path: { project_id: string } } }).params.path
+        .project_id;
+      return Promise.resolve({
+        fields: projectId === PROJECT_UUID ? sampleFields : [],
+      });
+    });
+
+    const wrapper = mountSection();
+    await flushPromises();
+    expect(document.body.textContent).toContain('見積もり');
+
+    await wrapper.setProps({ projectId: OTHER_PROJECT_UUID });
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('カスタムフィールドはまだありません');
+    expect(document.body.textContent).not.toContain('見積もり');
   });
 });

@@ -5,12 +5,15 @@ use axum::{
 };
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+};
 
 use crate::AppState;
 use crate::auth_helpers::is_tenant_owner;
 use crate::error::{AppError, ServerError};
 use crate::extractors::AuthUser;
+use crate::handlers::project_members;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
 use entity::{scopes::Scope, tenant_members, tenants, users};
@@ -44,6 +47,31 @@ pub(crate) async fn require_tenant_admin(
         Some(m) if m.role == TenantRole::Admin => Ok(()),
         _ => Err(AppError::Forbidden),
     }
+}
+
+/// メンバー行に表示用のユーザー情報を同梱する。FK があるため利用者は必ず居るはずで、
+/// 居なければ握り潰さず 500 にする。
+async fn attach_users(
+    state: &AppState,
+    members: Vec<tenant_members::Model>,
+) -> Result<Vec<TenantMemberResponse>, AppError> {
+    let user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
+    let mut users_by_id: std::collections::HashMap<Uuid, users::Model> = users::Entity::find()
+        .filter(users::Column::Id.is_in(user_ids))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|u| (u.id, u))
+        .collect();
+    members
+        .into_iter()
+        .map(|m| {
+            let user = users_by_id
+                .remove(&m.user_id)
+                .ok_or_else(|| anyhow::anyhow!("tenant member {} has no user row", m.user_id))?;
+            Ok(TenantMemberResponse::from_parts(m, user))
+        })
+        .collect()
 }
 
 async fn find_member(
@@ -85,7 +113,7 @@ pub async fn list_members(
         .filter(tenant_members::Column::TenantId.eq(tenant_id))
         .all(&state.db)
         .await?;
-    Ok(Json(members.into_iter().map(Into::into).collect()))
+    Ok(Json(attach_users(&state, members).await?))
 }
 
 #[axum::debug_handler]
@@ -112,7 +140,7 @@ pub async fn add_member(
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
 
-    users::Entity::find_by_id(payload.user_id)
+    let user = users::Entity::find_by_id(payload.user_id)
         .one(&state.db)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -133,7 +161,10 @@ pub async fn add_member(
         Err(e) => return Err(e.into()),
     };
 
-    Ok((StatusCode::CREATED, Json(member.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(TenantMemberResponse::from_parts(member, user)),
+    ))
 }
 
 #[axum::debug_handler]
@@ -163,10 +194,14 @@ pub async fn update_member(
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
 
     let member = find_member(&state, tenant_id, user_id).await?;
+    let user = users::Entity::find_by_id(user_id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tenant member {user_id} has no user row"))?;
     let mut active: tenant_members::ActiveModel = member.into();
     active.role = Set(payload.role);
     let updated = active.update(&state.db).await?;
-    Ok(Json(updated.into()))
+    Ok(Json(TenantMemberResponse::from_parts(updated, user)))
 }
 
 #[axum::debug_handler]
@@ -195,6 +230,19 @@ pub async fn remove_member(
 
     let member = find_member(&state, tenant_id, user_id).await?;
 
+    // プロジェクト側の「最後の Admin を残す」判定は、テナントに在籍している Admin だけを
+    // 数える（`project_members::would_drop_last_admin`）。除名はその数え方の入力を変えるので、
+    // 判定と同じロックの内側で行う。外すと、降格が「まだ B が居る」を読んだ後・書く前に
+    // B を除名でき、降格が消えた相手を数えたまま通る。
+    //
+    // ここで Admin 数を数え直して 409 にはしない。除名は「この人はもう居ない」という
+    // 宣言で、それをプロジェクトのロールで止めると、対象が単独 Admin のプロジェクトを
+    // 全部直すまでオフボーディングできなくなる。Admin が全員抜けたプロジェクトは
+    // テナントオーナーが直せる（`project_members::require_project_admin` は
+    // オーナーを無条件で通す）。詳細は `lock_membership_changes` の doc を見る
+    let txn = state.db.begin().await?;
+    project_members::lock_membership_changes(&txn, tenant_id).await?;
+
     // project_members の行はあえて残す。テナント所属は has_tenant_access が先に見るので、
     // テナントに居ない人の行は何のアクセスも与えない。
     // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
@@ -202,8 +250,9 @@ pub async fn remove_member(
     // 残しておけば再参加したときに元の割り当てがそのまま戻る。
     // 通知の宛先はテナントに居る人だけに絞られる（`service::access`）
     tenant_members::Entity::delete_by_id(member.id)
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
+    txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

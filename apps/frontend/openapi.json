@@ -21436,7 +21436,7 @@
       },
       "ProjectMemberResponse": {
         "type": "object",
-        "required": ["id", "project_id", "user_id", "role"],
+        "required": ["id", "project_id", "user_id", "role", "user"],
         "properties": {
           "id": {
             "type": "string",
@@ -21448,6 +21448,10 @@
           },
           "role": {
             "$ref": "#/components/schemas/ProjectRole"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary",
+            "description": "表示用のユーザー情報。メンバー管理 UI が名前・アバターを引けるように同梱する"
           },
           "user_id": {
             "type": "string",
@@ -22426,7 +22430,7 @@
       },
       "TenantMemberResponse": {
         "type": "object",
-        "required": ["id", "tenant_id", "user_id", "role"],
+        "required": ["id", "tenant_id", "user_id", "role", "user"],
         "properties": {
           "id": {
             "type": "string",
@@ -22438,6 +22442,10 @@
           "tenant_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserSummary",
+            "description": "表示用のユーザー情報。メンバー管理 UI が名前・アバターを引けるように同梱する"
           },
           "user_id": {
             "type": "string",

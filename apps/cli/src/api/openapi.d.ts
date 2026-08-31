@@ -2829,6 +2829,8 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             role: components["schemas"]["ProjectRole"];
+            /** @description 表示用のユーザー情報。メンバー管理 UI が名前・アバターを引けるように同梱する */
+            user: components["schemas"]["UserSummary"];
             /** Format: uuid */
             user_id: string;
         };
@@ -3204,6 +3206,8 @@ export interface components {
             role: components["schemas"]["TenantRole"];
             /** Format: uuid */
             tenant_id: string;
+            /** @description 表示用のユーザー情報。メンバー管理 UI が名前・アバターを引けるように同梱する */
+            user: components["schemas"]["UserSummary"];
             /** Format: uuid */
             user_id: string;
         };

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
-import { useQueryClient } from '@tanstack/vue-query';
+import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue';
 import { computed, ref } from 'vue';
 import { Button } from '@/components/ui/button';
@@ -46,9 +46,15 @@ const props = defineProps<{
 
 const queryClient = useQueryClient();
 
-const listQuery = apiClient.useQuery('get', FIELDS_PATH, {
-  params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
-});
+// options は computed にして props に追従させる。素のオブジェクトだと setup 時の値で
+// 固定され、プロジェクトを切り替えたときに一覧だけが前のプロジェクトのまま残る
+const listQuery = useQuery(
+  computed(() =>
+    apiClient.queryOptions('get', FIELDS_PATH, {
+      params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
+    }),
+  ),
+);
 const fields = computed(() => listQuery.data.value?.fields ?? []);
 
 const createMutation = apiClient.useMutation('post', FIELDS_PATH);

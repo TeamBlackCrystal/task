@@ -33,9 +33,13 @@ const deleteTarget = ref<LabelResponse | null>(null);
 const deleteError = ref<string | null>(null);
 
 // 共有ヘルパーに寄せてキー構築・staleTime を一元管理する（#362 の branded 型を渡す。
-// props は親で解決済みの UUID）
+// props は親で解決済みの UUID）。
+// options は computed にして props に追従させる。素の呼び出しだと setup 時の値で
+// 固定され、プロジェクトを切り替えたときに一覧だけが前のプロジェクトのまま残る
 const labelsQuery = useQuery(
-  projectLabelsQueryOptions(props.tenantId as TenantUuid, props.projectId as ProjectUuid),
+  computed(() =>
+    projectLabelsQueryOptions(props.tenantId as TenantUuid, props.projectId as ProjectUuid),
+  ),
 );
 const labels = computed(() => labelsQuery.data.value ?? []);
 

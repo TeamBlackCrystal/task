@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useQueryClient } from '@tanstack/vue-query';
+import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { PhGithubLogo } from '@phosphor-icons/vue';
 import { OpenApiVueQueryError } from '@koyori-app/openapi-vue-query';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -68,9 +68,15 @@ const importStarted = ref(false);
 const importCoolingDown = ref(false);
 let importCooldownTimer: ReturnType<typeof setTimeout> | null = null;
 
-const integrationQuery = apiClient.useQuery('get', GITHUB_INTEGRATION_PATH, {
-  params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
-});
+// options は computed にして props に追従させる。素のオブジェクトだと setup 時の値で
+// 固定され、プロジェクトを切り替えたときに連携状態だけが前のプロジェクトのまま残る
+const integrationQuery = useQuery(
+  computed(() =>
+    apiClient.queryOptions('get', GITHUB_INTEGRATION_PATH, {
+      params: { path: { tenant_id: props.tenantId, project_id: props.projectId } },
+    }),
+  ),
+);
 
 const disconnectMutation = apiClient.useMutation('delete', GITHUB_INTEGRATION_PATH);
 const importMutation = apiClient.useMutation('post', GITHUB_IMPORT_PATH);
