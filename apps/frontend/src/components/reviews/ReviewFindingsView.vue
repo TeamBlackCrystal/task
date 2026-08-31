@@ -214,15 +214,21 @@ async function onRoundCreated() {
           >
             <span class="flex items-center gap-2">
               <span class="font-mono text-xs">#{{ pr.pr_number }}</span>
+              <!--
+                バッジは件数の事実だけを出す。可否の断定はしない——可否には鮮度と
+                連携の有無も要り（mergeVerdict の片道降格）、この一覧はその材料を
+                持たない。「マージ可」を出すと、右の判定パネルが「リポジトリ未確定」
+                等と言う横で一覧だけ緑になる
+              -->
               <span
                 class="rounded-full px-2 py-0.5 text-xs"
                 :class="
-                  pr.mergeable
+                  pr.blocking === 0
                     ? 'bg-green-600/10 text-green-700 dark:text-green-400'
                     : 'bg-destructive/10 text-destructive'
                 "
               >
-                {{ pr.mergeable ? 'マージ可' : `${pr.blocking} 件が未解決` }}
+                {{ pr.blocking === 0 ? '未解決なし' : `${pr.blocking} 件が未解決` }}
               </span>
             </span>
             <span class="truncate font-medium">{{ pr.pr_title ?? `PR #${pr.pr_number}` }}</span>

@@ -126,7 +126,6 @@ function mockFetch(overrides: { empty?: boolean } = {}) {
             pr_author: 'shadcn',
             unresolved: findings.filter((f) => f.state === 'open' || f.state === 'fixed').length,
             blocking: blocking(),
-            mergeable: blocking() === 0,
             last_reviewed_at: '2026-08-25T10:12:00Z',
           },
         ]);

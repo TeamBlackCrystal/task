@@ -203,7 +203,7 @@ open ──→ fixed ──→ verified        （修正宣言 → レビュー�
 | `POST /v1/tenants/{t}/projects/{p}/reviews` | ラウンド + 指摘の**一括作成**（1 リクエスト）。成功後に GitHub 要約更新をジョブ投入 |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews?pr=618` | ラウンドの一覧（指摘の件数つき） |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews/{id}` | ラウンドの詳細（指摘含む） |
-| `GET  /v1/tenants/{t}/projects/{p}/reviews/pull-requests` | レビューのある PR の一覧（ラウンド数・未解決数・マージ可否）。画面の PR 一覧が使う |
+| `GET  /v1/tenants/{t}/projects/{p}/reviews/pull-requests` | レビューのある PR の一覧（ラウンド数・未解決数・塞いでいる件数）。**可否は返さない**——可否には鮮度と連携の有無も要り（§8 の 6 値）、この一覧はその材料を持たない。画面の PR 一覧が使う |
 | `GET  /v1/tenants/{t}/projects/{p}/reviews/summary?pr=618` | PR 単位の集計: 重大度 × 状態の件数、ラウンド数、最新ラウンドの `head_sha`、集計対象のリポジトリ、オーナー代行での棄却件数、「マージ可否」 |
 | `GET  /v1/tenants/{t}/projects/{p}/review-findings?pr=618&state=&severity=` | PR の指摘一覧（状態・重大度で絞り込み）。CLI の `review list` と UI の一覧が使う |
 | `PATCH /v1/tenants/{t}/projects/{p}/review-findings/{id}` | 状態遷移（`state` と任意のコメント） |
@@ -594,6 +594,10 @@ AI が生成した JSON の取り違えを直す手がかりが薄くなる。
   `review summary` は未解決が残ると終了コード 1
 - 2026-08-26: 画面は `/{tenant}/projects/{key}/reviews`。PR 一覧のために
   `GET .../reviews/pull-requests`（集計つき）を追加した
+- 2026-09-01: PR 一覧は可否を断定しない（`mergeable` を返さず、バッジは
+  「未解決なし / N 件が未解決」）。可否には鮮度と連携の有無も要り、一覧に
+  `mergeable` を置くと、詳細パネルが「リポジトリ未確定」等へ降格させた横で
+  一覧だけ「マージ可」と出る矛盾が起きた
 - 2026-08-26: 絞り込みは画面側で適用する（API は PR 単位で全件返す）。指摘は 1 PR あたり
   高々数十件で、往復を増やす価値がない
 - 2026-08-31: 読み取りの 3 コマンドに `--repo` を置く（`owner/name`、空文字は連携前）。

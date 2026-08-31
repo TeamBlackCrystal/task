@@ -251,8 +251,12 @@ pub struct ReviewedPullRequest {
     /// 未解決（open / fixed）の指摘数。重大度は問わない
     pub unresolved: u64,
     /// マージを塞いでいる件数（High / Medium かつ open / fixed）
+    ///
+    /// **可否の断定はここからは出せない。** 可否には鮮度と連携の有無も要り
+    /// （`ReviewSummary` + `mergeVerdict` の片道降格）、この一覧はその材料を
+    /// 持たない。一覧に `mergeable` を置いていた頃、詳細パネルが「リポジトリ
+    /// 未確定」と言う横で一覧だけ「マージ可」と出る矛盾が実際に起きた
     pub blocking: u64,
-    pub mergeable: bool,
     /// 最新ラウンドの作成時刻
     #[schema(value_type = String, format = "date-time")]
     pub last_reviewed_at: DateTime<Utc>,

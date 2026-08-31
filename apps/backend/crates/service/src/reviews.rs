@@ -780,7 +780,6 @@ pub async fn reviewed_pull_requests<C: ConnectionTrait>(
                 pr_author: None,
                 unresolved: 0,
                 blocking: 0,
-                mergeable: true,
                 last_reviewed_at: round.created_at.with_timezone(&chrono::Utc),
             });
         // ラウンドは round 昇順なので、最後に見たものが最新
@@ -809,15 +808,7 @@ pub async fn reviewed_pull_requests<C: ConnectionTrait>(
         }
     }
 
-    let mut out: Vec<ReviewedPullRequest> = by_pr
-        .into_values()
-        .map(|mut pr| {
-            // ラウンドが 1 件以上あるものだけを畳んでいるので、ここは件数だけ見てよい
-            // （レビューの無い PR はそもそも一覧に出ない。仕様 §5）
-            pr.mergeable = pr.blocking == 0;
-            pr
-        })
-        .collect();
+    let mut out: Vec<ReviewedPullRequest> = by_pr.into_values().collect();
     // 新しくレビューされた PR を上に
     out.sort_by_key(|pr| std::cmp::Reverse(pr.last_reviewed_at));
     Ok(out)

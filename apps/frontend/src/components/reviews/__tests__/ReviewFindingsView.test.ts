@@ -80,7 +80,6 @@ function stubFetch(state: MockState) {
           unresolved: state.findings.filter((f) => f.state === 'open' || f.state === 'fixed')
             .length,
           blocking,
-          mergeable: (state.rounds ?? 1) > 0 && blocking === 0,
           last_reviewed_at: '2026-08-26T00:00:00Z',
         },
       ]);
@@ -295,6 +294,21 @@ describe('ReviewFindingsView', () => {
     expect(bodyButton('指摘を取り下げる')?.disabled).toBe(false);
   });
 
+  it('一覧バッジは件数だけを出し、可否を断定しない', async () => {
+    // 未解決ゼロでも「マージ可」ではなく「未解決なし」。可否には鮮度と連携の
+    // 有無も要り、一覧はその材料（latest_head_sha / cached_pr_head_sha）を持たない
+    stubFetch({ findings: [] });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('未解決なし');
+
+    // 未解決があれば件数
+    stubFetch({ findings: [finding({ severity: 'high' })] });
+    const blocked = mountView();
+    await flushPromises();
+    expect(blocked.text()).toContain('1 件が未解決');
+  });
+
   it('未レビューの PR は「マージ可」と言わない', async () => {
     stubFetch({ findings: [], rounds: 0 });
     const wrapper = mountView();
@@ -302,7 +316,9 @@ describe('ReviewFindingsView', () => {
 
     const gate = wrapper.get('[data-testid="merge-gate"]').text();
     expect(gate).toContain('未レビュー');
-    expect(gate).not.toContain('マージ可');
+    // パネルだけでなく画面全体で見る。一覧バッジが可否を断定すると、
+    // パネルが降格させた横で緑の「マージ可」が出る矛盾になる
+    expect(wrapper.text()).not.toContain('マージ可');
   });
 
   it('レビュー済みならレビューした commit を出す（鮮度を目で確かめられる）', async () => {
@@ -321,7 +337,7 @@ describe('ReviewFindingsView', () => {
 
     const gate = wrapper.get('[data-testid="merge-gate"]').text();
     expect(gate).toContain('リポジトリ未確定');
-    expect(gate).not.toContain('マージ可');
+    expect(wrapper.text()).not.toContain('マージ可');
   });
 
   it('レビュー後にコミットが積まれていれば「マージ可」を出さない', async () => {
@@ -331,7 +347,7 @@ describe('ReviewFindingsView', () => {
 
     const gate = wrapper.get('[data-testid="merge-gate"]').text();
     expect(gate).toContain('レビューが古い');
-    expect(gate).not.toContain('マージ可');
+    expect(wrapper.text()).not.toContain('マージ可');
   });
 
   it('現在の HEAD を確かめられていなければ「マージ可」を出さない', async () => {
@@ -341,7 +357,7 @@ describe('ReviewFindingsView', () => {
 
     const gate = wrapper.get('[data-testid="merge-gate"]').text();
     expect(gate).toContain('鮮度不明');
-    expect(gate).not.toContain('マージ可');
+    expect(wrapper.text()).not.toContain('マージ可');
   });
 
   it('オーナー代行での棄却は件数を出す', async () => {
