@@ -53,10 +53,23 @@ impl ConfigStore {
     }
 
     pub fn discover() -> Result<Self> {
-        let home = std::env::var("HOME").map_err(|_| {
-            CliError::validation("Cannot locate the home directory (HOME is unset)")
-        })?;
-        Ok(Self::from_home(Path::new(&home)))
+        Self::discover_with(|key| std::env::var(key).ok(), std::env::home_dir)
+    }
+
+    /// ホームディレクトリを決める。`from_process` が振り分けより先に呼ぶので、
+    /// ここで失敗すると `config set` すら実行できない。
+    fn discover_with(
+        env: impl Fn(&str) -> Option<String>,
+        from_os: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<Self> {
+        home_from_env(env)
+            .or_else(from_os)
+            .map(|home| Self::from_home(&home))
+            .ok_or_else(|| {
+                CliError::validation(
+                    "Cannot locate the home directory (set HOME, or USERPROFILE on Windows)",
+                )
+            })
     }
 
     pub fn path(&self) -> PathBuf {
@@ -84,6 +97,27 @@ impl ConfigStore {
             .map_err(|err| CliError::new(format!("Cannot serialize config: {err}")))?;
         write_private(&path, &body)?;
         restrict_permissions(&path)
+    }
+}
+
+/// ホームディレクトリを環境変数から引く。
+///
+/// Windows の PowerShell や cmd では `HOME` が無く `USERPROFILE` だけがあることが多い。
+/// `HOME` しか見ないと、設定を作る `config set` も含めて全コマンドが起動できなくなる。
+/// 見る順番は Node の `os.homedir()` に合わせて環境変数を先にする（移植元と同じ挙動）。
+/// 空文字はホームとして使えないので無いものとして扱う。
+fn home_from_env(env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let lookup = |key: &str| env(key).filter(|value| !value.is_empty());
+
+    if let Some(home) = lookup("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    if let Some(profile) = lookup("USERPROFILE") {
+        return Some(PathBuf::from(profile));
+    }
+    match (lookup("HOMEDRIVE"), lookup("HOMEPATH")) {
+        (Some(drive), Some(path)) => Some(PathBuf::from(format!("{drive}{path}"))),
+        _ => None,
     }
 }
 
@@ -182,6 +216,103 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let store = ConfigStore::from_home(home.path());
         (home, store)
+    }
+
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    fn none_from_os() -> Option<PathBuf> {
+        None
+    }
+
+    /// Windows の PowerShell / cmd では HOME が無く USERPROFILE だけがある。
+    ///
+    /// `discover` は振り分けより先に走るので、ここで落ちると設定を作る
+    /// `config set` すら実行できない。
+    #[test]
+    fn finds_the_home_directory_on_windows_where_only_userprofile_is_set() {
+        let store = ConfigStore::discover_with(
+            env_of(&[("USERPROFILE", "C:\\Users\\yupix")]),
+            none_from_os,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.path(),
+            Path::new("C:\\Users\\yupix/.config/task/config.yaml")
+        );
+    }
+
+    #[test]
+    fn prefers_home_when_both_are_set() {
+        let store = ConfigStore::discover_with(
+            env_of(&[("HOME", "/home/yupix"), ("USERPROFILE", "C:\\Users\\yupix")]),
+            none_from_os,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.path(),
+            Path::new("/home/yupix/.config/task/config.yaml")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_homedrive_and_homepath() {
+        let home = home_from_env(env_of(&[
+            ("HOMEDRIVE", "C:"),
+            ("HOMEPATH", "\\Users\\yupix"),
+        ]));
+        assert_eq!(home, Some(PathBuf::from("C:\\Users\\yupix")));
+
+        // 片方だけでは組み立てられない
+        assert_eq!(home_from_env(env_of(&[("HOMEDRIVE", "C:")])), None);
+        assert_eq!(
+            home_from_env(env_of(&[("HOMEPATH", "\\Users\\yupix")])),
+            None
+        );
+    }
+
+    /// 空文字はホームとして使えない。設定がリポジトリ直下へ落ちるのを避ける。
+    #[test]
+    fn treats_an_empty_variable_as_unset() {
+        let home = home_from_env(env_of(&[("HOME", ""), ("USERPROFILE", "C:\\Users\\yupix")]));
+        assert_eq!(home, Some(PathBuf::from("C:\\Users\\yupix")));
+
+        assert_eq!(
+            home_from_env(env_of(&[("HOME", ""), ("USERPROFILE", "")])),
+            None
+        );
+    }
+
+    /// 環境変数が無ければ OS に聞く（Unix なら passwd）。
+    #[test]
+    fn asks_the_operating_system_when_no_variable_is_set() {
+        let store =
+            ConfigStore::discover_with(env_of(&[]), || Some(PathBuf::from("/var/lib/task")))
+                .unwrap();
+        assert_eq!(
+            store.path(),
+            Path::new("/var/lib/task/.config/task/config.yaml")
+        );
+    }
+
+    #[test]
+    fn reports_that_the_home_directory_could_not_be_found() {
+        let err = ConfigStore::discover_with(env_of(&[]), none_from_os).unwrap_err();
+
+        assert_eq!(err.exit_code, 2);
+        assert!(err.message.contains("USERPROFILE"), "{}", err.message);
     }
 
     #[test]
