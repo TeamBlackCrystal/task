@@ -26,6 +26,8 @@ serde_json = { workspace = true }
 serde_yaml_ng = "0.10.0"
 tokio = { version = "1.52.1", features = ["macros", "rt"] }
 uuid = { version = "1", features = ["serde"] }
+# payload の DTO に付いている上限・範囲の規則をそのまま走らせる。
+validator = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

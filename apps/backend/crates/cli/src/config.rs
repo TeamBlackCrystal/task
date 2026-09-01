@@ -82,16 +82,42 @@ impl ConfigStore {
         let path = self.path();
         let body = serde_yaml_ng::to_string(config)
             .map_err(|err| CliError::new(format!("Cannot serialize config: {err}")))?;
-        std::fs::write(&path, body)
-            .map_err(|err| CliError::new(format!("Cannot write {}: {err}", path.display())))?;
+        write_private(&path, &body)?;
         restrict_permissions(&path)
     }
 }
 
-/// トークンを含むので所有者だけが読めるようにする。
+/// 新規作成の時点で所有者だけが読めるようにして書く。
 ///
-/// 書き込み時のモード指定は新規作成にしか効かないため、既存ファイルの更新でも
-/// 落ちないよう毎回付け直す。
+/// `fs::write` が作るファイルは `0o666 & !umask`（多くの環境で 0644）なので、
+/// あとから chmod するまでの間、同じマシンの他の利用者にトークンが読める。
+/// 作成時のモードで塞ぐ。
+#[cfg(unix)]
+fn write_private(path: &Path, body: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|err| CliError::new(format!("Cannot write {}: {err}", path.display())))?;
+    file.write_all(body.as_bytes())
+        .map_err(|err| CliError::new(format!("Cannot write {}: {err}", path.display())))
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &Path, body: &str) -> Result<()> {
+    std::fs::write(path, body)
+        .map_err(|err| CliError::new(format!("Cannot write {}: {err}", path.display())))
+}
+
+/// 既にあるファイルの権限を直す。
+///
+/// 作成時のモードは新規作成にしか効かないので、緩い権限で作られた既存の設定を
+/// 引き継いだときのために、書いたあとにも付け直す。
 #[cfg(unix)]
 fn restrict_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -173,6 +199,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.load().unwrap().token.as_deref(), Some("secret"));
+    }
+
+    /// 作成した瞬間から 0600 であること。
+    ///
+    /// `fs::write` で作ると 0644 で生まれ、chmod が走るまでの間、同じマシンの
+    /// 他の利用者にトークンが読める。書き込みだけを直接呼んで、あとからの
+    /// chmod に頼らずに閉じていることを確かめる。
+    #[cfg(unix)]
+    #[test]
+    fn creates_the_token_file_already_restricted_without_relying_on_chmod() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_home, store) = store();
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+
+        write_private(&store.path(), "token: secret\n").unwrap();
+
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// 緩い権限で作られていた既存の設定も、書き込み後の chmod で直す。
+    #[cfg(unix)]
+    #[test]
+    fn tightens_a_config_file_that_was_already_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_home, store) = store();
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        std::fs::write(store.path(), "token: old\n").unwrap();
+        std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        store
+            .save(&TaskConfig {
+                token: Some("new".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[cfg(unix)]

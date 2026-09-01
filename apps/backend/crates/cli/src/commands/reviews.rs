@@ -16,6 +16,7 @@ use payload::reviews::{
 use sea_orm::Iterable;
 use serde::Serialize;
 use serde_json::Value;
+use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
 
 use crate::Context;
 use crate::cli::ReviewCommand;
@@ -368,12 +369,64 @@ pub fn parse_submit_payload(
         Some(_) => return Err(CliError::validation("`findings` must be an array")),
     };
 
-    Ok(CreateReviewRequest {
+    let request = CreateReviewRequest {
         pr_number,
         head_sha: head_sha.to_string(),
         summary,
         findings,
-    })
+    };
+    // 上限・範囲（summary 20000 字、指摘 200 件、title 200 字、line >= 1 …）は
+    // DTO に付いている規則をそのまま走らせる。ここで写しを持つと backend と二重管理になり、
+    // 走らせないと「findings[137].line が 0」を 400 の一文から辿る羽目になる
+    check_payload_rules(&request)?;
+    Ok(request)
+}
+
+/// payload の `Validate` を走らせ、違反をフィールドのパス付きで返す。
+fn check_payload_rules(request: &CreateReviewRequest) -> Result<()> {
+    let Err(errors) = request.validate() else {
+        return Ok(());
+    };
+    let mut lines = Vec::new();
+    collect_violations(&errors, "", &mut lines);
+    Err(CliError::validation(format!(
+        "review JSON does not satisfy the API's limits:\n{}",
+        lines.join("\n")
+    )))
+}
+
+/// `findings[0].line` の形になるよう、入れ子とリストを辿ってパスを組み立てる。
+fn collect_violations(errors: &ValidationErrors, prefix: &str, out: &mut Vec<String>) {
+    for (field, kind) in errors.errors() {
+        match kind {
+            ValidationErrorsKind::Field(violations) => {
+                for violation in violations {
+                    out.push(format!("  {prefix}{field}: {}", describe(violation)));
+                }
+            }
+            ValidationErrorsKind::Struct(nested) => {
+                collect_violations(nested, &format!("{prefix}{field}."), out);
+            }
+            ValidationErrorsKind::List(entries) => {
+                for (index, nested) in entries {
+                    collect_violations(nested, &format!("{prefix}{field}[{index}]."), out);
+                }
+            }
+        }
+    }
+}
+
+fn describe(violation: &ValidationError) -> String {
+    if let Some(message) = &violation.message {
+        return message.to_string();
+    }
+    let mut described = violation.code.to_string();
+    for key in ["min", "max", "equal"] {
+        if let Some(value) = violation.params.get(key) {
+            described.push_str(&format!(" {key}: {value}"));
+        }
+    }
+    described
 }
 
 fn parse_finding(item: &Value, index: usize) -> Result<CreateFindingInput> {
@@ -744,6 +797,86 @@ mod tests {
         .unwrap();
         assert_eq!(payload.findings[0].file, None);
         assert_eq!(payload.findings[0].line, None);
+    }
+
+    /// backend の上限・範囲を送信前に見る。
+    ///
+    /// 型と綴りだけを借りて規則を走らせないと、200 件超や `line: 0` はサーバーの
+    /// 400 でしか分からず、どの指摘が悪いのかを CLI から辿れない。
+    #[test]
+    fn rejects_values_that_break_the_apis_limits_and_names_the_offending_finding() {
+        let cases: [(Value, &str); 4] = [
+            (
+                json!({ "severity": "high", "title": "t", "body": "b", "line": 0 }),
+                "findings[0].line",
+            ),
+            (
+                json!({ "severity": "high", "title": "t", "body": "b", "line": -3 }),
+                "findings[0].line",
+            ),
+            (
+                json!({ "severity": "high", "title": "x".repeat(201), "body": "b" }),
+                "findings[0].title",
+            ),
+            (
+                json!({ "severity": "high", "title": "t", "body": "b", "file": "f".repeat(1001) }),
+                "findings[0].file",
+            ),
+        ];
+        for (finding, expected) in cases {
+            let input = json!({ "pr": 1, "head_sha": HEAD_SHA, "findings": [finding] });
+            let err = parse_submit_payload(&input, None).unwrap_err();
+            assert!(err.message.contains(expected), "{}", err.message);
+            assert_eq!(err.exit_code, 2);
+        }
+    }
+
+    /// 1 ラウンドの指摘は 200 件まで。境界そのものは通し、超えた側だけ弾く。
+    #[test]
+    fn rejects_a_round_that_exceeds_the_findings_limit() {
+        let finding = json!({ "severity": "nit", "title": "t", "body": "b" });
+        let round = |count: usize| {
+            json!({
+                "pr": 1,
+                "head_sha": HEAD_SHA,
+                "findings": vec![finding.clone(); count],
+            })
+        };
+
+        assert!(parse_submit_payload(&round(200), None).is_ok());
+
+        let err = parse_submit_payload(&round(201), None).unwrap_err();
+        assert!(err.message.contains("findings"), "{}", err.message);
+        assert_eq!(err.exit_code, 2);
+    }
+
+    #[test]
+    fn rejects_a_summary_longer_than_the_api_accepts() {
+        let input = json!({
+            "pr": 1,
+            "head_sha": HEAD_SHA,
+            "summary": "あ".repeat(20001),
+        });
+        let err = parse_submit_payload(&input, None).unwrap_err();
+        assert!(err.message.contains("summary"), "{}", err.message);
+        assert_eq!(err.exit_code, 2);
+    }
+
+    #[test]
+    fn accepts_values_that_sit_exactly_on_the_limits() {
+        let input = json!({
+            "pr": 1,
+            "head_sha": HEAD_SHA,
+            "summary": "あ".repeat(20000),
+            "findings": [{
+                "severity": "high",
+                "title": "x".repeat(200),
+                "body": "b",
+                "file": "f".repeat(1000),
+                "line": 1,
+            }],
+        });
+        assert!(parse_submit_payload(&input, None).is_ok());
     }
 
     #[test]
