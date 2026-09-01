@@ -29,9 +29,15 @@ function navigateToTask(event: MouseEvent) {
 </script>
 
 <template>
+  <!--
+    以前はここで `after:absolute after:inset-0` を敷き、当たり判定を行全体へ広げていた。
+    `<tr>` は WebKit で絶対配置の包含ブロックにならないため、判定が行を飛び越えて
+    テーブル全体へ広がり、「どこをタップしても一番下の行が開く」状態になっていた。
+    行全体の当たり判定は一覧側（TableRow の click）が持つ。
+  -->
   <a
     :href="taskDetailHref(tenantDisplayId, projectKey, seqId)"
-    class="truncate text-sm text-primary hover:underline after:absolute after:inset-0 after:content-['']"
+    class="truncate text-sm text-primary hover:underline"
     @click="navigateToTask"
   >
     {{ title }}

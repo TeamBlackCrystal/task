@@ -59,6 +59,7 @@ import {
   useTaskLabelFilter,
   watchAvailableTaskLabels,
 } from './task-list-label-filter';
+import { shouldActivateRow } from './task-list-row-activate';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -142,6 +143,16 @@ watch(projectKey, () => {
 
 function onSelectRow(seqId: number) {
   selectedTaskId.value = taskSeqKey(projectKey.value, seqId);
+}
+
+/** 行のどこを押しても詳細へ入れるようにする（判定は task-list-row-activate に切り出し）。 */
+function onRowActivate(event: MouseEvent, seqId: number) {
+  if (!shouldActivateRow(event)) return;
+  if (canInline.value) {
+    onSelectRow(seqId);
+    return;
+  }
+  void navigate(taskDetailHref(tenantDisplayId.value, projectKey.value, seqId));
 }
 
 function closeDetail() {
@@ -807,8 +818,9 @@ const table = useVueTable({
                     <TableRow
                       v-for="task in taskSearchQuery.data.value?.tasks ?? []"
                       :key="task.id"
-                      class="relative h-10"
+                      class="h-10 cursor-pointer"
                       :class="isRowActive(task.seq_id) && 'bg-muted'"
+                      @click="onRowActivate($event, task.seq_id)"
                     >
                       <TableCell class="px-3 py-1.5 font-mono text-xs text-muted-foreground">
                         {{ projectKey }}-{{ task.seq_id }}
@@ -871,8 +883,9 @@ const table = useVueTable({
                       v-for="row in table.getRowModel().rows"
                       :key="row.id"
                       :data-state="row.getIsSelected() && 'selected'"
-                      class="relative h-10"
+                      class="h-10 cursor-pointer"
                       :class="isRowActive(row.original.seq_id) && 'bg-muted'"
+                      @click="onRowActivate($event, row.original.seq_id)"
                     >
                       <TableCell
                         v-for="cell in row.getVisibleCells()"
