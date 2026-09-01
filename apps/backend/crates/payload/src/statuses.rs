@@ -6,7 +6,7 @@ use validator::Validate;
 
 use entity::project_statuses;
 
-#[derive(Debug, Clone, serde::Serialize, ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema, serde::Deserialize)]
 pub struct ProjectStatusResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,

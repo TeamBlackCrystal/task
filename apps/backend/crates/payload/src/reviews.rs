@@ -14,7 +14,7 @@ pub const MAX_FINDINGS_PER_ROUND: u64 = 200;
 // ── リクエスト ──────────────────────────────────────────────────────────
 
 /// ラウンド 1 回ぶんの一括起票。ラウンドと指摘は同じトランザクションで作る。
-#[derive(Validate, Debug, Deserialize, ToSchema)]
+#[derive(Validate, Debug, Deserialize, ToSchema, serde::Serialize)]
 pub struct CreateReviewRequest {
     /// 対象 PR 番号
     #[validate(range(min = 1))]
@@ -52,7 +52,7 @@ pub struct CreateFindingInput {
 }
 
 /// 指摘の状態遷移。
-#[derive(Validate, Debug, Deserialize, ToSchema)]
+#[derive(Validate, Debug, Deserialize, ToSchema, serde::Serialize)]
 pub struct UpdateFindingStateRequest {
     pub state: FindingState,
     /// 遷移の理由（履歴に残す）
@@ -63,7 +63,7 @@ pub struct UpdateFindingStateRequest {
 
 // ── レスポンス ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct ReviewResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -117,14 +117,14 @@ impl ReviewResponse {
 }
 
 /// ラウンドと、そのラウンドで出した指摘。
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct ReviewDetailResponse {
     #[serde(flatten)]
     pub review: ReviewResponse,
     pub findings: Vec<FindingResponse>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct FindingResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -180,7 +180,7 @@ impl FindingResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct FindingTransitionResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -212,7 +212,7 @@ impl FindingTransitionResponse {
 }
 
 /// PR 単位の集計。マージ可否をこの 1 レスポンスで判断できる。
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct ReviewSummaryResponse {
     pub pr_number: i32,
     /// これまでに走ったラウンド数（R1, R2, … の最大値）
@@ -274,7 +274,7 @@ pub struct ReviewedPullRequest {
     pub last_reviewed_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct SeverityStateCount {
     pub severity: FindingSeverity,
     pub state: FindingState,

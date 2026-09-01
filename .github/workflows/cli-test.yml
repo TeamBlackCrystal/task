@@ -1,16 +1,20 @@
 name: CLI Unit Test
 
+# CLI は apps/backend の Cargo ワークスペースのメンバーなので、fmt / clippy / 型検査は
+# backend-fmt / backend-clippy / backend-test（いずれも --workspace）が見る。
+# ここは CLI だけを変えたときに、Postgres も Redis も起こさず速く回すための入口。
+
 on:
   pull_request:
     paths:
       - 'apps/cli/**'
-      - 'apps/frontend/openapi.json'
+      - 'rust-toolchain.toml'
       - '.github/workflows/cli-test.yml'
   push:
     branches: [main]
     paths:
       - 'apps/cli/**'
-      - 'apps/frontend/openapi.json'
+      - 'rust-toolchain.toml'
       - '.github/workflows/cli-test.yml'
 
 concurrency:
@@ -31,65 +35,31 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # toolchain は rust-toolchain.toml に一本化する（components もそこで指定済み）。
+      # 引数なしの install が「アクティブな toolchain」= rust-toolchain.toml を読む。
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Install mold
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          node-version: '24'
+          workspaces: apps/backend -> target
+          cache-on-failure: true
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         with:
-          version: 11.20.0
-          package_json_file: apps/cli/package.json
-
-      - name: Get pnpm store path
-        id: pnpm-cache
-        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
-        working-directory: apps/cli
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-cache.outputs.store }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('apps/cli/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: apps/cli
-
-      - name: Generate CLI OpenAPI types
-        run: pnpm openapi:generate
-        working-directory: apps/cli
-
-      - name: Type-check CLI application
-        run: pnpm build
-        working-directory: apps/cli
-
-      - name: Type-check contract tests
-        run: pnpm typecheck:test
-        working-directory: apps/cli
-
-      - name: Check generated CLI OpenAPI type drift
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- src/api/openapi.d.ts; then
-            echo "CLI OpenAPI types are in sync."
-            exit 0
-          fi
-
-          echo "::error::apps/cli/src/api/openapi.d.ts is out of sync with apps/frontend/openapi.json."
-          echo ""
-          echo "After changing the API surface, regenerate and commit the CLI types:"
-          echo "  cd apps/cli && pnpm openapi:generate"
-          echo "  git add apps/cli/src/api/openapi.d.ts"
-          echo ""
-          echo "Diff:"
-          git diff -- src/api/openapi.d.ts | head -200 || true
-          exit 1
-        working-directory: apps/cli
+          tool: cargo-nextest
 
       - name: Run tests
-        run: pnpm test
-        working-directory: apps/cli
+        run: cargo nextest run -p task-cli
+        working-directory: apps/backend
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache

@@ -6,14 +6,15 @@
 
 - `apps/backend` — Rust (axum + SeaORM + apalis)。Cargo ワークスペース
 - `apps/frontend` — Vike + Vue 3 (Pinia + TanStack Query)。`openapi.json` から API 型を生成
-- `apps/cli` — TypeScript CLI
+- `apps/cli` — Rust CLI（`task`）。ディレクトリは独立しているが、backend の Cargo ワークスペースのメンバー
 
 ### backend ワークスペース（依存は一方向・逆流禁止）
 
 ```
 entity → common → payload → service → job → handler → backend(bin)
-                              ↑
-        auth-core / forge-* （外部リポジトリ。git 依存）
+                     │        ↑
+                     │   auth-core / forge-* （外部リポジトリ。git 依存）
+                     └→ cli(bin)   （apps/cli。API の型と検証規則を payload / entity から取る）
 ```
 
 | クレート | 置くもの |
@@ -25,8 +26,14 @@ entity → common → payload → service → job → handler → backend(bin)
 | `job` | apalis ジョブ。ワーカーは `AppState` ではなく `JobState` を受け取る |
 | `handler` | axum ハンドラー / extractors / routes / openapi / middlewares / `AppState` |
 | `backend` | `main` / `server` / `export_openapi` の glue のみ |
+| `task-cli` | `apps/cli`。CLI（`task`）。payload / entity / common を読むだけで、逆向きに参照されない |
 
 - 新しい DTO は payload、ロジックは service へ。ハンドラー間で共有したい処理も service に降ろす
+- **CLI が読むレスポンス DTO には `Deserialize` を、送るリクエスト DTO には `Serialize` を付ける。**
+  付け忘れると CLI 側がコンパイルできない。CLI は payload の型でそのまま送受信するので、
+  フィールド名の食い違いは実行時ではなくコンパイル時に出る（#647 の手書き型のドリフト対策）
+- `apps/cli` はワークスペース外のディレクトリだが `members` に入っているので、
+  `cargo fmt --all` / `cargo check --workspace` / `cargo clippy --workspace` / `cargo test --workspace` の対象に入る
 - `backend::handlers` 等の再エクスポートは統合テスト互換のためのもの。新規コードは各クレートを直接 use する
 
 #### 外部クレート（`github.com/koyori-app/auth-core`、git 依存で `rev` 固定）
@@ -64,9 +71,7 @@ cargo test --workspace --lib
   - `DATABASE_URL` / `REDIS_URL` が環境か `.env` に設定済みならそれを優先する（CI と同じ経路。CI はこの経路のためワークフロー変更不要）
   - SMTP・シークレット系の env はハーネスが CI と同じテスト用の値で補完する。GitHub App 系も設定不要（`load_github_test_env()` が自前注入）。SMTP は実サーバー不要
 - API 表面を変えたら: `cd apps/frontend && pnpm openapi && node_modules/.bin/vp fmt`
-  - CLI 型も再生成: `cd apps/cli && pnpm openapi:generate`。**忘れると `cli-test` の
-    「Check generated CLI OpenAPI type drift」で落ちる**（#595 で実発生）。frontend だけ直して
-    終わりにしない
+  - CLI 側の型生成は不要。CLI は payload の型を直接使うので、追従漏れはコンパイルエラーになる
   - `pnpm openapi` は **`pnpm install` 済みの作業ツリーで実行する**。未インストールだと
     `vp fmt` が無く、整形前の `openapi.json`（インデント差分だけで数千行）をコミットしかける
   - 整形は **`vp fmt`**（prettier は入っていない）。`api.d.ts` は gitignore 済み

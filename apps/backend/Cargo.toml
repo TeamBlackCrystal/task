@@ -1,5 +1,7 @@
 [workspace]
-members = ["crates/entity", "crates/common", "crates/payload", "crates/service", "crates/job", "crates/handler"]
+# `../cli` はワークスペース外に置いたままメンバーにする。CLI は payload を直接使うので、
+# lock / feature 解決 / target / `--workspace` の検証を backend と共有させたい。
+members = ["crates/entity", "crates/common", "crates/payload", "crates/service", "crates/job", "crates/handler", "../cli"]
 exclude = ["migration"]
 
 [workspace.dependencies]

@@ -5,7 +5,7 @@ use validator::Validate;
 
 use entity::labels;
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct LabelResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,

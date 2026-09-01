@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 use validator::{Validate, ValidationError};
 
 /// Public user profile — excludes password_hash, sessions_revoked_at, and other secrets.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct UserResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -23,7 +23,7 @@ pub struct UserResponse {
 }
 
 /// 他リソースのレスポンスに埋め込む軽量なユーザー情報
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct UserSummary {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,

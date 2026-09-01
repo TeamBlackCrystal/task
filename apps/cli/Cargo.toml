@@ -1,0 +1,36 @@
+[package]
+name = "task-cli"
+version = "0.1.0"
+edition = "2024"
+# ディレクトリは apps/cli のまま backend のワークスペースに参加する
+# （lock / feature 解決 / target / `cargo check --workspace` を共有するため）。
+workspace = "../backend"
+
+[[bin]]
+name = "task"
+path = "src/main.rs"
+
+[lib]
+name = "task_cli"
+path = "src/lib.rs"
+
+[dependencies]
+# API の型は backend と共有する。二重に持つと綴りとフィールド名が黙って食い違う。
+entity = { path = "../backend/crates/entity" }
+# 送信前の検証は backend と同じ規則を使う（40 桁の commit SHA など）。
+common = { path = "../backend/crates/common" }
+payload = { path = "../backend/crates/payload" }
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+sea-orm = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = "0.10.0"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }
+uuid = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+tokio = { version = "1.52.1", features = ["macros", "rt", "rt-multi-thread"] }

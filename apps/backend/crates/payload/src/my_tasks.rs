@@ -30,7 +30,7 @@ fn default_limit() -> u64 {
     50
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct MyTaskProjectInfo {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -39,7 +39,7 @@ pub struct MyTaskProjectInfo {
     pub is_personal: bool,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct MyTaskStatusInfo {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -47,7 +47,7 @@ pub struct MyTaskStatusInfo {
     pub color: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct MyTaskItem {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -64,7 +64,7 @@ pub struct MyTaskItem {
     pub is_personal: bool,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct MyTasksListResponse {
     pub tasks: Vec<MyTaskItem>,
     pub total: u64,

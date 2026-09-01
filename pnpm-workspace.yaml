@@ -1,5 +1,4 @@
 packages:
-  - apps/cli
   - apps/frontend
   - packages/*
 sharedWorkspaceLockfile: false

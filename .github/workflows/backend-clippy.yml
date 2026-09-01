@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - 'apps/backend/**'
+      # CLI は同じ Cargo ワークスペースのメンバーなので --workspace の対象に入る
+      - 'apps/cli/**'
       - 'rust-toolchain.toml'
       - '.github/workflows/backend-clippy.yml'
   pull_request:
     paths:
       - 'apps/backend/**'
+      # CLI は同じ Cargo ワークスペースのメンバーなので --workspace の対象に入る
+      - 'apps/cli/**'
       - 'rust-toolchain.toml'
       - '.github/workflows/backend-clippy.yml'
 
