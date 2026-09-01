@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import IntegrationsSection from '../IntegrationsSection.vue';
+import { stashSelectTokenFromUrl } from '@/lib/github-select-token';
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
 const PROJECT_UUID = '00000000-0000-4000-8000-000000000010';
@@ -97,7 +98,9 @@ function stubFetch(state: MockState) {
   return fetchMock;
 }
 
-function mountSection(options: { selectToken?: string; callbackError?: string } = {}) {
+function mountSection(
+  options: { selectToken?: string; callbackError?: string; stashedToken?: string } = {},
+) {
   // callback からの戻りは URL で表現される。選択トークンだけはフラグメント
   // （クエリだとアクセスログ・Referer に残るため）。
   const search = new URLSearchParams();
@@ -106,11 +109,17 @@ function mountSection(options: { selectToken?: string; callbackError?: string } 
   if (options.selectToken !== undefined) hash.set('github_select', options.selectToken);
   const query = search.toString();
   const fragment = hash.toString();
-  window.history.replaceState(
-    {},
-    '',
-    `/settings${query ? `?${query}` : ''}${fragment ? `#${fragment}` : ''}`,
-  );
+  const url = `/settings${query ? `?${query}` : ''}`;
+
+  // client entry が退避したあと、ハイドレーションの history 書き換えで
+  // フラグメントが消えた状態を作る（本番で起きていた順序）。
+  if (options.stashedToken !== undefined) {
+    window.history.replaceState({}, '', `${url}#github_select=${options.stashedToken}`);
+    stashSelectTokenFromUrl();
+    window.history.replaceState({}, '', url);
+  }
+
+  window.history.replaceState({}, '', `${url}${fragment ? `#${fragment}` : ''}`);
 
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -157,6 +166,8 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // 選択トークンはタブ内に退避されるので、テスト間で持ち越さない
+  window.sessionStorage.clear();
 });
 
 describe('IntegrationsSection', () => {
@@ -526,6 +537,29 @@ describe('IntegrationsSection', () => {
 
     expect(document.body.textContent).not.toContain('Slack');
     expect(document.body.textContent).not.toContain('Figma');
+  });
+
+  /**
+   * このセクションは、設定ページがテナント / プロジェクトの ID を API で解決し終わるまで
+   * マウントされない。その間にハイドレーションの history 書き換えでフラグメントが落ちるため、
+   * 自分で `window.location.hash` を読むと間に合わず、選択 UI が出ないまま
+   * 「連携する」ボタンだけが残っていた。トークンは client entry が退避しておく。
+   */
+  it('ハイドレーションでフラグメントが消えていても、退避したトークンで選択 UI を出す', async () => {
+    const fetchMock = stubFetch({ connected: false });
+    mountSection({ stashedToken: 'select-token-1' });
+    await flushPromises();
+
+    // マウント時点で URL にトークンは残っていない
+    expect(window.location.hash).toBe('');
+    expect(document.body.textContent).toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('koyori-app/docs');
+
+    const listCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/repositories'));
+    expect(listCall!.headers.get('X-Github-Select-Token')).toBe('select-token-1');
   });
 
   it('選択トークン付きで戻ってきたらリポジトリ一覧を出し、選んだ 1 件を連携する', async () => {
