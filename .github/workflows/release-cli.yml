@@ -1,0 +1,203 @@
+name: Release CLI
+
+# v* のタグを push したときに CLI（task）のバイナリを GitHub Release へ添付する。
+# トリガーと concurrency は publish-images.yml に合わせる。
+#
+# pull_request でも同じ matrix を組み立てるが、そちらは公開しない。リリース経路を
+# タグ push で初めて試すと、壊れていたときにリリースそのものが作れない。
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    # CLI のビルドに入るものを列挙する。CLI 自身だけを見ていると、共有クレートへ
+    # Windows で通らない依存が入ったときに気づけず、次のタグ push で初めて落ちる。
+    # CLI が読むクレートを増やしたらここにも足すこと
+    paths:
+      - 'apps/backend/crates/cli/**'
+      - 'apps/backend/crates/entity/**'
+      - 'apps/backend/crates/common/**'
+      - 'apps/backend/crates/payload/**'
+      - 'apps/backend/Cargo.toml'
+      - 'apps/backend/Cargo.lock'
+      - 'apps/backend/.cargo/**'
+      - '.github/workflows/release-cli.yml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # リリースのビルドは途中で打ち切らない
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    strategy:
+      # 1 つ落ちても残りの失敗をまとめて見たい。release ジョブは needs で止まるので、
+      # 壊れた配布物が公開されることはない
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+          # alpine など glibc の無い CI コンテナでもそのまま置けるように静的リンクする
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # toolchain は rust-toolchain.toml に一本化する（components もそこで指定済み）。
+      # 引数なしの install が「アクティブな toolchain」= rust-toolchain.toml を読む。
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+
+      # .cargo/config.toml が gnu の Linux ビルドで mold リンカを要求する
+      - name: Install mold
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      # ring の C コードを musl 向けにビルドするために要る
+      - name: Install the musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/backend -> target
+          key: ${{ matrix.target }}
+
+      # タグの版をそのままバイナリへ入れる。タグ以外のビルドはクレートの版のまま
+      - name: Derive the version from the tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [ -z "$version" ] || [ "$version" = "${GITHUB_REF_NAME}" ]; then
+              echo "::error::タグ ${GITHUB_REF_NAME} から版を取り出せません（v<version> の形にしてください）"
+              exit 1
+            fi
+          else
+            version=$(awk -F'"' '/^\[package\]/ { in_package = 1 }
+                                 in_package && /^version = / { print $2; exit }' \
+                      apps/backend/crates/cli/Cargo.toml)
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "version: $version"
+
+      - name: Build
+        shell: bash
+        env:
+          TASK_CLI_VERSION: ${{ steps.version.outputs.value }}
+        run: cargo build --release --locked -p task-cli --bin task --target ${{ matrix.target }}
+        working-directory: apps/backend
+
+      # 受け入れ条件をビルドしたその場で確かめる。タグでは版がタグと一致すること
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="apps/backend/target/${{ matrix.target }}/release/task"
+          [ "${{ matrix.archive }}" = "zip" ] && binary="${binary}.exe"
+
+          reported=$("$binary" --version)
+          echo "$reported"
+          [ "$reported" = "task ${{ steps.version.outputs.value }}" ] || {
+            echo "::error::--version が ${{ steps.version.outputs.value }} と一致しません: $reported"
+            exit 1
+          }
+          "$binary" review summary --help > /dev/null
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="task-${{ steps.version.outputs.value }}-${{ matrix.target }}"
+          staging="apps/backend/target/${{ matrix.target }}/release"
+          mkdir -p dist
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd "$staging" && 7z a -tzip "$GITHUB_WORKSPACE/dist/${name}.zip" task.exe > /dev/null)
+            asset="${name}.zip"
+          else
+            tar -czf "dist/${name}.tar.gz" -C "$staging" task
+            asset="${name}.tar.gz"
+          fi
+
+          # 置くだけで使う配布物なので、取り違えを確かめられるようにする。
+          # sha256sum は Linux と Git for Windows、shasum は macOS にある
+          if command -v sha256sum > /dev/null; then
+            (cd dist && sha256sum "$asset" > "${asset}.sha256")
+          else
+            (cd dist && shasum -a 256 "$asset" > "${asset}.sha256")
+          fi
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: task-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    # 全ての target がビルドできたときだけ公開する（壊れた配布物を出さない）
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download every build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: task-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+
+          # 同じタグで作り直したときも添付をやり直せるようにする
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi

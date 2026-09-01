@@ -3,7 +3,8 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "task", version, about = "Task management CLI")]
+// 版はビルド時に決まる（`build.rs`。タグからのリリースではタグの版になる）
+#[command(name = "task", version = env!("TASK_CLI_VERSION"), about = "Task management CLI")]
 pub struct Cli {
     /// Output JSON
     #[arg(long, global = true)]
@@ -329,6 +330,14 @@ mod tests {
     #[test]
     fn the_command_tree_is_internally_consistent() {
         Cli::command().debug_assert();
+    }
+
+    /// 版はビルド時に決まる。既定はクレートの版で、リリースではタグの版が入る。
+    #[test]
+    fn reports_the_version_it_was_built_with() {
+        let version = Cli::command().get_version().map(str::to_string);
+        assert_eq!(version.as_deref(), Some(env!("TASK_CLI_VERSION")));
+        assert!(!env!("TASK_CLI_VERSION").is_empty());
     }
 
     #[test]

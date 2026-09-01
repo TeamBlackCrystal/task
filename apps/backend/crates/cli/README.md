@@ -5,6 +5,55 @@
 主なユースケースは AI レビュワーと CI からの `task review submit` / `task review summary`
 （マージ前ゲート）。コマンドの仕様は `docs/features/review-findings.md` §6 が正。
 
+## 導入
+
+`v*` タグを push すると GitHub Release にバイナリが添付される
+（`.github/workflows/release-cli.yml`）。clone もビルドも要らない。
+
+| 配布物 | 使う場面 |
+|---|---|
+| `task-<version>-x86_64-unknown-linux-musl.tar.gz` | Linux 全般。静的リンクなので alpine 等の CI コンテナでもそのまま動く |
+| `task-<version>-x86_64-unknown-linux-gnu.tar.gz` | glibc のある Linux |
+| `task-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon の macOS |
+| `task-<version>-x86_64-pc-windows-msvc.zip` | Windows |
+
+GitHub Actions から使う例。取り違えや破損に気づけるよう `.sha256` を突き合わせる。
+
+```yaml
+- name: Install the task CLI
+  env:
+    # gh は Actions 上でトークンを明示しないと動かない
+    GH_TOKEN: ${{ github.token }}
+    TASK_CLI_VERSION: v0.1.9
+  run: |
+    set -euo pipefail
+    asset="task-${TASK_CLI_VERSION#v}-x86_64-unknown-linux-musl.tar.gz"
+    gh release download "$TASK_CLI_VERSION" --repo koyori-app/task --pattern "$asset*"
+    sha256sum --check "${asset}.sha256"
+
+    # runner のユーザーは /usr/local/bin へ書けない。書ける場所へ展開して PATH へ通す
+    mkdir -p "$RUNNER_TEMP/bin"
+    tar -xzf "$asset" -C "$RUNNER_TEMP/bin"
+    "$RUNNER_TEMP/bin/task" --version
+    echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+```
+
+`GITHUB_PATH` が効くのは次のステップからなので、同じステップの中では絶対パスで呼ぶ。
+
+手元でも同じ手順で入る。
+
+```bash
+version=v0.1.9
+asset="task-${version#v}-x86_64-unknown-linux-musl.tar.gz"
+gh release download "$version" --repo koyori-app/task --pattern "$asset*"
+sha256sum --check "${asset}.sha256"   # macOS は shasum -a 256 --check
+mkdir -p ~/.local/bin && tar -xzf "$asset" -C ~/.local/bin
+~/.local/bin/task --version
+```
+
+`--version` が名乗る版はタグと一致する（リリース時にタグから注入し、その場で
+突き合わせている）。タグ以外でビルドしたバイナリはクレートの版を名乗る。
+
 ## ビルド
 
 `apps/backend` の Cargo ワークスペースのメンバーなので、`cargo fmt --all` /
@@ -14,6 +63,8 @@
 ```bash
 cargo build --release -p task-cli   # apps/backend/target/release/task
 ```
+
+版を差し替えたいときだけ `TASK_CLI_VERSION` を渡す（`build.rs` が読む）。
 
 ## 設定
 
