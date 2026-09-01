@@ -114,6 +114,113 @@ export function useTenantsQuery() {
   });
 }
 
+export const REVIEWS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/reviews' as const;
+export const REVIEW_FINDINGS_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/review-findings' as const;
+export const REVIEWED_PRS_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/reviews/pull-requests' as const;
+export const REVIEW_SUMMARY_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary' as const;
+
+/** レビューのある PR の一覧（集計つき）。 */
+export function useReviewedPullRequestsQuery(tenantId: string, projectId: string) {
+  return apiClient.useQuery(
+    'get',
+    REVIEWED_PRS_PATH,
+    { params: { path: { tenant_id: tenantId, project_id: projectId } } },
+    { retry: false },
+  );
+}
+
+export function useReviewRoundsQuery(
+  tenantId: string,
+  projectId: string,
+  pr: MaybeRefOrGetter<number | null>,
+) {
+  return useQuery(
+    computed(() => {
+      const prNumber = toValue(pr);
+      return {
+        ...apiClient.queryOptions(
+          'get',
+          REVIEWS_PATH,
+          {
+            params: {
+              path: { tenant_id: tenantId, project_id: projectId },
+              query: { pr: prNumber ?? 0 },
+            },
+          },
+          { retry: false },
+        ),
+        enabled: prNumber !== null,
+      };
+    }),
+  );
+}
+
+export function useReviewFindingsQuery(
+  tenantId: string,
+  projectId: string,
+  pr: MaybeRefOrGetter<number | null>,
+) {
+  return useQuery(
+    computed(() => {
+      const prNumber = toValue(pr);
+      return {
+        ...apiClient.queryOptions(
+          'get',
+          REVIEW_FINDINGS_PATH,
+          {
+            params: {
+              path: { tenant_id: tenantId, project_id: projectId },
+              query: { pr: prNumber ?? 0 },
+            },
+          },
+          { retry: false },
+        ),
+        enabled: prNumber !== null,
+      };
+    }),
+  );
+}
+
+export function useReviewSummaryQuery(
+  tenantId: string,
+  projectId: string,
+  pr: MaybeRefOrGetter<number | null>,
+) {
+  return useQuery(
+    computed(() => {
+      const prNumber = toValue(pr);
+      return {
+        ...apiClient.queryOptions(
+          'get',
+          REVIEW_SUMMARY_PATH,
+          {
+            params: {
+              path: { tenant_id: tenantId, project_id: projectId },
+              query: { pr: prNumber ?? 0 },
+            },
+          },
+          { retry: false },
+        ),
+        enabled: prNumber !== null,
+      };
+    }),
+  );
+}
+
+export function useCreateReviewMutation() {
+  return apiClient.useMutation('post', REVIEWS_PATH);
+}
+
+export function useUpdateFindingStateMutation() {
+  return apiClient.useMutation(
+    'patch',
+    '/v1/tenants/{tenant_id}/projects/{project_id}/review-findings/{id}',
+  );
+}
+
 export function useLoginMutation() {
   return apiClient.useMutation('post', '/v1/auth/login');
 }

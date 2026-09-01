@@ -795,6 +795,19 @@ async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
         "作成者が在籍していれば代行できない"
     );
 
+    // 在籍しているうちは、ラウンド一覧も不在の印を立てない
+    // （画面はこの印で代行ボタンを出すので、立てると押しても 403 のボタンになる）
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        rounds[0]["reviewer_left_tenant"], false,
+        "在籍中は不在の印が立たない: {rounds}"
+    );
+
     // テナントから居なくなる
     tenant_members::Entity::delete_many()
         .filter(tenant_members::Column::TenantId.eq(fx.tenant_id))
@@ -802,6 +815,37 @@ async fn the_owner_can_reject_on_behalf_of_a_departed_reviewer() {
         .exec(&fx.app.state.db)
         .await
         .expect("remove tenant member");
+
+    // 不在になったラウンドには印が立つ（画面がオーナーへ代行ボタンを出せる）
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        rounds[0]["reviewer_left_tenant"], true,
+        "不在になったら印が立つ: {rounds}"
+    );
+
+    // オーナー自身のラウンドには印が立たない。オーナーは tenant_members 行を
+    // 持たないが不在ではない（立てると、本人として取り下げられるのに画面が
+    // 「代行」を出す）。一覧はラウンド降順なので [0] が今出したラウンド
+    let _ = submit_round(&fx, 713, "low", "オーナーのラウンド").await;
+    let rounds = json(
+        fx.app
+            .get_with_session(&format!("{}?pr=713", fx.reviews_path()))
+            .await,
+    )
+    .await;
+    assert_eq!(
+        rounds[0]["reviewer_left_tenant"], false,
+        "オーナー自身のラウンドは不在扱いにしない: {rounds}"
+    );
+    assert_eq!(
+        rounds[1]["reviewer_left_tenant"], true,
+        "不在の印はラウンド単位で残る: {rounds}"
+    );
 
     let res = transition(&fx, &finding_id, "rejected").await;
     assert_eq!(res.status(), StatusCode::OK, "作成者が消えたら代行できる");

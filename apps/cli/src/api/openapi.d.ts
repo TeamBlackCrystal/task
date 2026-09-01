@@ -1393,6 +1393,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/pull-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** レビューのある PR の一覧（集計つき） */
+        get: operations["list_reviewed_pull_requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary": {
         parameters: {
             query?: never;
@@ -2938,6 +2955,14 @@ export interface components {
             project_id: string;
             reviewer: components["schemas"]["UserSummary"];
             /**
+             * @description このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。
+             *
+             *     真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる
+             *     （仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは
+             *     常に偽（本人として取り下げられるので、代行の出番がない）
+             */
+            reviewer_left_tenant: boolean;
+            /**
              * Format: int32
              * @description PR 内の連番（1 始まり）。表示は R1, R2, …
              */
@@ -2995,6 +3020,38 @@ export interface components {
              * @description これまでに走ったラウンド数（R1, R2, … の最大値）
              */
             rounds: number;
+        };
+        /** @description レビューのある PR の一覧行。画面の PR 一覧が使う。 */
+        ReviewedPullRequest: {
+            /**
+             * Format: int64
+             * @description マージを塞いでいる件数（High / Medium かつ open / fixed）
+             *
+             *     **可否の断定はここからは出せない。** 可否には鮮度と連携の有無も要り
+             *     （`ReviewSummary` + `mergeVerdict` の片道降格）、この一覧はその材料を
+             *     持たない。一覧に `mergeable` を置いていた頃、詳細パネルが「リポジトリ
+             *     未確定」と言う横で一覧だけ「マージ可」と出る矛盾が実際に起きた
+             */
+            blocking: number;
+            /**
+             * Format: date-time
+             * @description 最新ラウンドの作成時刻
+             */
+            last_reviewed_at: string;
+            pr_author?: string | null;
+            /** Format: int32 */
+            pr_number: number;
+            pr_title?: string | null;
+            /**
+             * Format: int32
+             * @description これまでのラウンド数
+             */
+            rounds: number;
+            /**
+             * Format: int64
+             * @description 未解決（open / fixed）の指摘数。重大度は問わない
+             */
+            unresolved: number;
         };
         RevokeAllPersonalTokensRequest: {
             /** Format: uuid */
@@ -11568,6 +11625,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServerError"];
+                };
+            };
+            /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    list_reviewed_pull_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description テナントID */
+                tenant_id: string;
+                /** @description プロジェクトID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PR 一覧（最後にレビューされた順） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewedPullRequest"][];
+                };
+            };
+            /** @description ログインまたはセッションが必要です */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description この操作は許可されていません */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
+                };
+            };
+            /** @description リソースが見つかりません */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example internal-error */
+                        message: string;
+                    };
                 };
             };
             /** @description サーバー側で問題が発生しました。時間をおいて再度お試しください */

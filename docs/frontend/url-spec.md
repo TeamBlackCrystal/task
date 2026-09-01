@@ -65,6 +65,7 @@
 | `/{tenant}/projects/{key}/labels` | ラベル管理 |
 | `/{tenant}/projects/{key}/members` | プロジェクトメンバー |
 | `/{tenant}/projects/{key}/settings` | プロジェクト設定 |
+| `/{tenant}/projects/{key}/reviews` | レビュー指摘（[仕様](../features/review-findings.md)）。`?pr=618` で PR を指定 |
 
 ### 管理者（`is_admin = true` のユーザーのみ）
 
@@ -111,7 +112,8 @@ apps/frontend/src/pages/
 │           ├── milestones/+Page.vue     # /{tenant}/projects/{key}/milestones
 │           ├── labels/+Page.vue         # /{tenant}/projects/{key}/labels
 │           ├── members/+Page.vue        # /{tenant}/projects/{key}/members
-│           └── settings/+Page.vue       # /{tenant}/projects/{key}/settings
+│           ├── settings/+Page.vue       # /{tenant}/projects/{key}/settings
+│           └── reviews/+Page.vue        # /{tenant}/projects/{key}/reviews
 │
 └── admin/
     ├── +Page.vue                        # /admin
@@ -162,6 +164,7 @@ apps/frontend/src/pages/
 | `/{tenant}/projects/{key}/labels` | `@tenant/projects/@projectKey/labels/+Page.vue` |
 | `/{tenant}/projects/{key}/members` | `@tenant/projects/@projectKey/members/+Page.vue` |
 | `/{tenant}/projects/{key}/settings` | `@tenant/projects/@projectKey/settings/+Page.vue` |
+| `/{tenant}/projects/{key}/reviews` | `@tenant/projects/@projectKey/reviews/+Page.vue` |
 | `/admin` | `admin/+Page.vue` |
 | `/admin/users` | `admin/users/+Page.vue` |
 | `/admin/tenants` | `admin/tenants/+Page.vue` |

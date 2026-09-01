@@ -74,6 +74,12 @@ pub struct ReviewResponse {
     pub round: i32,
     pub head_sha: String,
     pub reviewer: UserSummary,
+    /// このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。
+    ///
+    /// 真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる
+    /// （仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは
+    /// 常に偽（本人として取り下げられるので、代行の出番がない）
+    pub reviewer_left_tenant: bool,
     pub summary: String,
     /// 要約コメント投稿時に GitHub から取得してキャッシュした PR タイトル
     #[schema(nullable)]
@@ -87,7 +93,12 @@ pub struct ReviewResponse {
 }
 
 impl ReviewResponse {
-    pub fn from_parts(model: reviews::Model, reviewer: entity::users::Model, count: u64) -> Self {
+    pub fn from_parts(
+        model: reviews::Model,
+        reviewer: entity::users::Model,
+        reviewer_left_tenant: bool,
+        count: u64,
+    ) -> Self {
         Self {
             id: model.id,
             project_id: model.project_id,
@@ -95,6 +106,7 @@ impl ReviewResponse {
             round: model.round,
             head_sha: model.head_sha,
             reviewer: reviewer.into(),
+            reviewer_left_tenant,
             summary: model.summary,
             pr_title: model.pr_title,
             pr_author: model.pr_author,
@@ -236,6 +248,30 @@ pub struct ReviewSummaryResponse {
     ///
     /// レビューが 1 件も無い PR を「可」にしない（未レビューと「指摘なし」は違う）。
     pub mergeable: bool,
+}
+
+/// レビューのある PR の一覧行。画面の PR 一覧が使う。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewedPullRequest {
+    pub pr_number: i32,
+    /// これまでのラウンド数
+    pub rounds: i32,
+    #[schema(nullable)]
+    pub pr_title: Option<String>,
+    #[schema(nullable)]
+    pub pr_author: Option<String>,
+    /// 未解決（open / fixed）の指摘数。重大度は問わない
+    pub unresolved: u64,
+    /// マージを塞いでいる件数（High / Medium かつ open / fixed）
+    ///
+    /// **可否の断定はここからは出せない。** 可否には鮮度と連携の有無も要り
+    /// （`ReviewSummary` + `mergeVerdict` の片道降格）、この一覧はその材料を
+    /// 持たない。一覧に `mergeable` を置いていた頃、詳細パネルが「リポジトリ
+    /// 未確定」と言う横で一覧だけ「マージ可」と出る矛盾が実際に起きた
+    pub blocking: u64,
+    /// 最新ラウンドの作成時刻
+    #[schema(value_type = String, format = "date-time")]
+    pub last_reviewed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

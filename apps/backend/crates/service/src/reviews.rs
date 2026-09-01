@@ -14,6 +14,7 @@ use entity::{
     github_integrations, project_statuses, projects, review_findings, reviews, tasks,
     tenant_members, tenants,
 };
+use payload::reviews::ReviewedPullRequest;
 
 /// 繰り延べで自動起票するタスクのタイトル接頭辞。
 const DEFERRED_TASK_PREFIX: &str = "[レビュー指摘]";
@@ -253,6 +254,40 @@ pub async fn is_reviewer_side<C: ConnectionTrait>(
         .one(db)
         .await?;
     Ok(found.is_some())
+}
+
+/// 与えたユーザーのうち、テナントの利用者でなくなった（除名・退会した）人の集合。
+///
+/// [`may_reject_on_behalf`] の「作成者の不在」と同じ定義で、画面がラウンドごとの
+/// 代行ボタンの表示判定に使う（`ReviewResponse::reviewer_left_tenant`）。
+/// オーナーはテナント作成時に `tenant_members` 行を持たないが、テナントの利用者
+/// なので「不在」に数えない（数えると、オーナー自身のラウンドに代行の印が付く）。
+pub async fn users_left_tenant<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>, sea_orm::DbErr> {
+    if user_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let Some(tenant) = tenants::Entity::find_by_id(tenant_id).one(db).await? else {
+        return Ok(std::collections::HashSet::new());
+    };
+    let members: std::collections::HashSet<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.is_in(user_ids.to_vec()))
+        .select_only()
+        .column(tenant_members::Column::UserId)
+        .into_tuple()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    Ok(user_ids
+        .iter()
+        .copied()
+        .filter(|id| *id != tenant.owner_id && !members.contains(id))
+        .collect())
 }
 
 /// 取り下げをテナントオーナーが代行してよいか。
@@ -728,6 +763,89 @@ pub async fn round_count<C: ConnectionTrait>(
         .one(db)
         .await?;
     Ok(last.unwrap_or(0))
+}
+
+/// レビューのある PR を、集計つきで新しい順に返す。
+///
+/// 画面の PR 一覧が使う。ラウンドと指摘をそれぞれ 1 回ずつ引いてメモリで畳む
+/// （PR ごとにクエリを出すと件数に比例して往復が増える）。
+pub async fn reviewed_pull_requests<C: ConnectionTrait>(
+    db: &C,
+    repo: &RepoRef,
+    project_id: Uuid,
+) -> Result<Vec<ReviewedPullRequest>, sea_orm::DbErr> {
+    // 現在の連携先のラウンドだけを見る。連携を差し替えた後に旧リポジトリの
+    // PR が一覧へ混ざらないようにする（仕様 §3）
+    let rounds = reviews::Entity::find()
+        .filter(reviews::Column::ProjectId.eq(project_id))
+        .filter(reviews::Column::RepoOwner.eq(repo.owner.clone()))
+        .filter(reviews::Column::RepoName.eq(repo.name.clone()))
+        .order_by_asc(reviews::Column::PrNumber)
+        .order_by_asc(reviews::Column::Round)
+        .all(db)
+        .await?;
+    if rounds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let review_ids: Vec<Uuid> = rounds.iter().map(|r| r.id).collect();
+    let findings: Vec<(Uuid, FindingSeverity, FindingState)> = review_findings::Entity::find()
+        .filter(review_findings::Column::ReviewId.is_in(review_ids))
+        .select_only()
+        .column(review_findings::Column::ReviewId)
+        .column(review_findings::Column::Severity)
+        .column(review_findings::Column::State)
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    let pr_of_review: std::collections::HashMap<Uuid, i32> =
+        rounds.iter().map(|r| (r.id, r.pr_number)).collect();
+
+    let mut by_pr: std::collections::BTreeMap<i32, ReviewedPullRequest> =
+        std::collections::BTreeMap::new();
+    for round in &rounds {
+        let entry = by_pr
+            .entry(round.pr_number)
+            .or_insert_with(|| ReviewedPullRequest {
+                pr_number: round.pr_number,
+                rounds: 0,
+                pr_title: None,
+                pr_author: None,
+                unresolved: 0,
+                blocking: 0,
+                last_reviewed_at: round.created_at.with_timezone(&chrono::Utc),
+            });
+        // ラウンドは round 昇順なので、最後に見たものが最新
+        entry.rounds = round.round;
+        entry.last_reviewed_at = round.created_at.with_timezone(&chrono::Utc);
+        if round.pr_title.is_some() {
+            entry.pr_title = round.pr_title.clone();
+        }
+        if round.pr_author.is_some() {
+            entry.pr_author = round.pr_author.clone();
+        }
+    }
+
+    for (review_id, severity, state) in findings {
+        let Some(pr_number) = pr_of_review.get(&review_id) else {
+            continue;
+        };
+        let Some(entry) = by_pr.get_mut(pr_number) else {
+            continue;
+        };
+        if state.counts_as_unresolved() {
+            entry.unresolved += 1;
+            if severity.blocks_merge() {
+                entry.blocking += 1;
+            }
+        }
+    }
+
+    let mut out: Vec<ReviewedPullRequest> = by_pr.into_values().collect();
+    // 新しくレビューされた PR を上に
+    out.sort_by_key(|pr| std::cmp::Reverse(pr.last_reviewed_at));
+    Ok(out)
 }
 
 // ── GitHub 要約コメント ──────────────────────────────────────────────────

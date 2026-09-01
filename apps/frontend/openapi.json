@@ -11946,6 +11946,122 @@
         }
       }
     },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/pull-requests": {
+      "get": {
+        "tags": ["Reviews"],
+        "summary": "レビューのある PR の一覧（集計つき）",
+        "operationId": "list_reviewed_pull_requests",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PR 一覧（最後にレビューされた順）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewedPullRequest"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants/{tenant_id}/projects/{project_id}/reviews/summary": {
       "get": {
         "tags": ["Reviews"],
@@ -21704,6 +21820,7 @@
           "round",
           "head_sha",
           "reviewer",
+          "reviewer_left_tenant",
           "summary",
           "created_at",
           "finding_count"
@@ -21743,6 +21860,10 @@
           },
           "reviewer": {
             "$ref": "#/components/schemas/UserSummary"
+          },
+          "reviewer_left_tenant": {
+            "type": "boolean",
+            "description": "このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。\n\n真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる\n（仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは\n常に偽（本人として取り下げられるので、代行の出番がない）"
           },
           "round": {
             "type": "integer",
@@ -21814,6 +21935,45 @@
             "type": "integer",
             "format": "int32",
             "description": "これまでに走ったラウンド数（R1, R2, … の最大値）"
+          }
+        }
+      },
+      "ReviewedPullRequest": {
+        "type": "object",
+        "description": "レビューのある PR の一覧行。画面の PR 一覧が使う。",
+        "required": ["pr_number", "rounds", "unresolved", "blocking", "last_reviewed_at"],
+        "properties": {
+          "blocking": {
+            "type": "integer",
+            "format": "int64",
+            "description": "マージを塞いでいる件数（High / Medium かつ open / fixed）\n\n**可否の断定はここからは出せない。** 可否には鮮度と連携の有無も要り\n（`ReviewSummary` + `mergeVerdict` の片道降格）、この一覧はその材料を\n持たない。一覧に `mergeable` を置いていた頃、詳細パネルが「リポジトリ\n未確定」と言う横で一覧だけ「マージ可」と出る矛盾が実際に起きた",
+            "minimum": 0
+          },
+          "last_reviewed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "最新ラウンドの作成時刻"
+          },
+          "pr_author": {
+            "type": ["string", "null"]
+          },
+          "pr_number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pr_title": {
+            "type": ["string", "null"]
+          },
+          "rounds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "これまでのラウンド数"
+          },
+          "unresolved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "未解決（open / fixed）の指摘数。重大度は問わない",
+            "minimum": 0
           }
         }
       },

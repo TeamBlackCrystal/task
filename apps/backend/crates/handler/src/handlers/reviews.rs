@@ -303,7 +303,8 @@ pub async fn create_review(
     let count = findings.len() as u64;
 
     let detail = ReviewDetailResponse {
-        review: ReviewResponse::from_parts(review, reviewer, count),
+        // 起票者はいまこのテナントで操作している本人なので、不在ではあり得ない
+        review: ReviewResponse::from_parts(review, reviewer, false, count),
         findings: findings
             .into_iter()
             .map(|finding| {
@@ -355,6 +356,9 @@ pub async fn list_reviews(
 
     let reviewer_ids: Vec<Uuid> = rounds.iter().map(|r| r.reviewer_id).collect();
     let reviewers = load_users(&state.db, &reviewer_ids).await?;
+    // 作成者が居なくなったラウンドは、オーナーが取り下げを代行できる（仕様 §3）。
+    // 画面が代行ボタンを出す判定に使うので、ラウンドごとに不在を返す
+    let left = service::reviews::users_left_tenant(&state.db, tenant_id, &reviewer_ids).await?;
 
     let mut out = Vec::with_capacity(rounds.len());
     for round in rounds {
@@ -366,7 +370,13 @@ pub async fn list_reviews(
             .get(&round.reviewer_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("reviewer {} has no user row", round.reviewer_id))?;
-        out.push(ReviewResponse::from_parts(round, reviewer, count));
+        let reviewer_left = left.contains(&round.reviewer_id);
+        out.push(ReviewResponse::from_parts(
+            round,
+            reviewer,
+            reviewer_left,
+            count,
+        ));
     }
     Ok(Json(out))
 }
@@ -437,6 +447,38 @@ pub async fn get_review_summary(
 #[axum::debug_handler]
 #[utoipa::path(
     get,
+    path = "/pull-requests",
+    operation_id = "list_reviewed_pull_requests",
+    tag = "Reviews",
+    summary = "レビューのある PR の一覧（集計つき）",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("project_id" = Uuid, Path, description = "プロジェクトID"),
+    ),
+    responses(
+        (status = 200, description = "PR 一覧（最後にレビューされた順）", body = [ReviewedPullRequest]),
+        CrudErrors,
+    )
+)]
+pub async fn list_reviewed_pull_requests(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<ReviewedPullRequest>>, AppError> {
+    ensure_read_access(&state, &auth, tenant_id, project_id).await?;
+    Ok(Json(
+        service::reviews::reviewed_pull_requests(
+            &state.db,
+            &service::reviews::current_repo(&state.db, project_id).await?,
+            project_id,
+        )
+        .await?,
+    ))
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
     path = "/{id}",
     operation_id = "get_review",
     tag = "Reviews",
@@ -476,9 +518,13 @@ pub async fn get_review(
     let pr_number = review.pr_number;
     let round = review.round;
     let count = findings.len() as u64;
+    let reviewer_left =
+        service::reviews::users_left_tenant(&state.db, tenant_id, &[review.reviewer_id])
+            .await?
+            .contains(&review.reviewer_id);
 
     Ok(Json(ReviewDetailResponse {
-        review: ReviewResponse::from_parts(review, reviewer, count),
+        review: ReviewResponse::from_parts(review, reviewer, reviewer_left, count),
         findings: findings
             .into_iter()
             .map(|finding| {
