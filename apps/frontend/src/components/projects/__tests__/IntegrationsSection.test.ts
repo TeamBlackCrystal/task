@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import IntegrationsSection from '../IntegrationsSection.vue';
-import { stashSelectTokenFromUrl } from '@/lib/github-select-token';
+import { forgetSelectToken, stashSelectTokenFromUrl } from '@/lib/github-select-token';
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
 const PROJECT_UUID = '00000000-0000-4000-8000-000000000010';
@@ -167,7 +167,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   // 選択トークンはタブ内に退避されるので、テスト間で持ち越さない
+  // （sessionStorage が使えないとき用のメモリ退避も含めて捨てる）
   window.sessionStorage.clear();
+  forgetSelectToken(PROJECT_UUID);
 });
 
 describe('IntegrationsSection', () => {
@@ -551,6 +553,29 @@ describe('IntegrationsSection', () => {
     await flushPromises();
 
     // マウント時点で URL にトークンは残っていない
+    expect(window.location.hash).toBe('');
+    expect(document.body.textContent).toContain('連携するリポジトリを選択');
+    expect(document.body.textContent).toContain('koyori-app/docs');
+
+    const listCall = fetchMock.mock.calls
+      .map(([req]) => req)
+      .filter((req): req is Request => typeof req !== 'string')
+      .find((req) => req.url.includes('/github/repositories'));
+    expect(listCall!.headers.get('X-Github-Select-Token')).toBe('select-token-1');
+  });
+
+  /**
+   * sessionStorage はプライベートモードや容量超過で書き込みが例外になる。
+   * トークンは退避したあと URL から落とすので、そこで取りこぼすと復旧できない。
+   */
+  it('sessionStorage へ書けない環境でも、退避したトークンで選択 UI を出す', async () => {
+    vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    const fetchMock = stubFetch({ connected: false });
+    mountSection({ stashedToken: 'select-token-1' });
+    await flushPromises();
+
     expect(window.location.hash).toBe('');
     expect(document.body.textContent).toContain('連携するリポジトリを選択');
     expect(document.body.textContent).toContain('koyori-app/docs');

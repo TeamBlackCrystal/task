@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import {
   forgetSelectToken,
   stashSelectTokenFromUrl,
@@ -13,9 +13,21 @@ function visit(path: string, fragment?: string) {
   window.history.replaceState({}, '', `${path}?section=integrations${fragment ?? ''}`);
 }
 
-beforeEach(() => {
+/** sessionStorage が使えないとき用のメモリ退避も、テスト間で持ち越さない */
+function clearStashes() {
   window.sessionStorage.clear();
+  forgetSelectToken(PROJECT_ID);
+  forgetSelectToken(OTHER_PROJECT_ID);
+}
+
+beforeEach(() => {
+  clearStashes();
   visit(SETTINGS_PATH);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  clearStashes();
 });
 
 describe('stashSelectTokenFromUrl', () => {
@@ -82,6 +94,63 @@ describe('takeSelectToken', () => {
 
   it('壊れた退避を読んでも例外にしない', () => {
     window.sessionStorage.setItem('github-select-token:pending', '{壊れた JSON');
+
+    expect(takeSelectToken(PROJECT_ID)).toBeNull();
+  });
+});
+
+/**
+ * トークンは退避したあと URL から落とすので、sessionStorage へ書けなかったときに
+ * 何も残らないと唯一の控えを失い、選択 UI が出ないまま連携できなくなる。
+ */
+describe('sessionStorage が使えない環境', () => {
+  it('書き込みが例外でも、URL から落としたトークンを引き取れる', () => {
+    const setItem = vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    visit(SETTINGS_PATH, '#github_select=token-1');
+
+    stashSelectTokenFromUrl();
+
+    expect(setItem).toHaveBeenCalled();
+    expect(window.location.hash).toBe('');
+    expect(takeSelectToken(PROJECT_ID)).toBe('token-1');
+  });
+
+  it('読み書きの両方が例外でも引き取れる', () => {
+    vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('access denied');
+    });
+    vi.spyOn(window.sessionStorage, 'getItem').mockImplementation(() => {
+      throw new Error('access denied');
+    });
+    visit(SETTINGS_PATH, '#github_select=token-1');
+
+    stashSelectTokenFromUrl();
+
+    expect(takeSelectToken(PROJECT_ID)).toBe('token-1');
+  });
+
+  it('着地ページと違うパスなら、この環境でも引き取らない', () => {
+    vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('access denied');
+    });
+    visit(SETTINGS_PATH, '#github_select=token-1');
+    stashSelectTokenFromUrl();
+
+    visit('/koyori/projects/OTHER/settings');
+    expect(takeSelectToken(OTHER_PROJECT_ID)).toBeNull();
+  });
+
+  it('捨てたトークンはメモリの退避からも消える', () => {
+    vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('access denied');
+    });
+    visit(SETTINGS_PATH, '#github_select=token-1');
+    stashSelectTokenFromUrl();
+    expect(takeSelectToken(PROJECT_ID)).toBe('token-1');
+
+    forgetSelectToken(PROJECT_ID);
 
     expect(takeSelectToken(PROJECT_ID)).toBeNull();
   });

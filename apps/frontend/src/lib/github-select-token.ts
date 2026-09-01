@@ -32,28 +32,48 @@ function projectKey(projectId: string) {
   return `${STORAGE_KEY_PREFIX}:${projectId}`;
 }
 
+/**
+ * sessionStorage を使えないときの退避先。
+ *
+ * プライベートモード・容量超過・埋め込みなどで sessionStorage は読み書きが
+ * 例外になることがある。トークンは URL から落としてしまうので、書けなかった
+ * ときに何も残らないと唯一の控えを失い、選択 UI が出ないまま連携できなくなる。
+ *
+ * client entry（`src/pages/+client.ts`）と連携セクションは同じモジュール
+ * インスタンスを共有するので、ページの読み込みを跨がない範囲なら保てる。
+ * ページ遷移やリロードでは失われるが、sessionStorage が使えない環境で
+ * 保証できるのはそこまで。
+ */
+const memoryStash = new Map<string, string>();
+
 /** sessionStorage はプライベートモードや権限設定で触れないことがある */
 function readStorage(key: string): string | null {
   try {
-    return window.sessionStorage.getItem(key);
+    const stored = window.sessionStorage.getItem(key);
+    if (stored !== null) return stored;
   } catch {
-    return null;
+    // 触れないときはメモリの退避へ落ちる
   }
+  return memoryStash.get(key) ?? null;
 }
 
 function writeStorage(key: string, value: string) {
+  // sessionStorage へ書けたかどうかに関係なくメモリにも持つ。呼び出し側は
+  // この直後に URL からトークンを落とすため、ここで取りこぼすと復旧できない。
+  memoryStash.set(key, value);
   try {
     window.sessionStorage.setItem(key, value);
   } catch {
-    // 退避できなくても致命的ではない（連携をやり直せば済む）
+    // メモリ側だけで続ける
   }
 }
 
 function removeStorage(key: string) {
+  memoryStash.delete(key);
   try {
     window.sessionStorage.removeItem(key);
   } catch {
-    // 同上
+    // メモリ側は消せているので続ける
   }
 }
 
