@@ -104,21 +104,32 @@ impl ConfigStore {
 ///
 /// Windows の PowerShell や cmd では `HOME` が無く `USERPROFILE` だけがあることが多い。
 /// `HOME` しか見ないと、設定を作る `config set` も含めて全コマンドが起動できなくなる。
-/// 見る順番は Node の `os.homedir()` に合わせて環境変数を先にする（移植元と同じ挙動）。
-/// 空文字はホームとして使えないので無いものとして扱う。
 fn home_from_env(env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    home_from_env_ordered(env, cfg!(windows))
+}
+
+/// 上と同じだが、優先順位を引数で選ぶ。実際の OS と切り離してどちらも試せるようにする。
+///
+/// 順番は移植元の Node（libuv の `uv_os_homedir`）に合わせる。Windows は
+/// `USERPROFILE` が先で、POSIX は `HOME` が先。逆にすると、Git Bash や MSYS のように
+/// 両方が別の値で設定されている Windows で、旧 CLI が保存したトークンを見失う。
+/// 空文字はホームとして使えないので無いものとして扱う。
+fn home_from_env_ordered(env: impl Fn(&str) -> Option<String>, windows: bool) -> Option<PathBuf> {
     let lookup = |key: &str| env(key).filter(|value| !value.is_empty());
 
-    if let Some(home) = lookup("HOME") {
-        return Some(PathBuf::from(home));
+    if !windows {
+        // POSIX の Node は HOME だけを見て、無ければ passwd へ落ちる（呼び出し側の
+        // `from_os` がその役)。Windows 用の変数はここでは見ない
+        return lookup("HOME").map(PathBuf::from);
     }
     if let Some(profile) = lookup("USERPROFILE") {
         return Some(PathBuf::from(profile));
     }
-    match (lookup("HOMEDRIVE"), lookup("HOMEPATH")) {
-        (Some(drive), Some(path)) => Some(PathBuf::from(format!("{drive}{path}"))),
-        _ => None,
+    if let (Some(drive), Some(path)) = (lookup("HOMEDRIVE"), lookup("HOMEPATH")) {
+        return Some(PathBuf::from(format!("{drive}{path}")));
     }
+    // USERPROFILE が無い Windows は稀だが、MSYS 系が置いた HOME があれば拾う
+    lookup("HOME").map(PathBuf::from)
 }
 
 /// 新規作成の時点で所有者だけが読めるようにして書く。
@@ -235,64 +246,82 @@ mod tests {
         None
     }
 
+    const WINDOWS: bool = true;
+    const POSIX: bool = false;
+
     /// Windows の PowerShell / cmd では HOME が無く USERPROFILE だけがある。
     ///
     /// `discover` は振り分けより先に走るので、ここで落ちると設定を作る
     /// `config set` すら実行できない。
     #[test]
     fn finds_the_home_directory_on_windows_where_only_userprofile_is_set() {
-        let store = ConfigStore::discover_with(
-            env_of(&[("USERPROFILE", "C:\\Users\\yupix")]),
-            none_from_os,
-        )
-        .unwrap();
+        let home = home_from_env_ordered(env_of(&[("USERPROFILE", "C:\\Users\\yupix")]), WINDOWS);
+        assert_eq!(home, Some(PathBuf::from("C:\\Users\\yupix")));
+    }
+
+    /// 優先順位は移植元の Node（libuv）と同じにする。
+    ///
+    /// Windows で両方が別の値だと、HOME を先に見た時点で旧 CLI が保存したトークンを
+    /// 見失う。逆に POSIX で USERPROFILE を拾うと、Node が使っていた場所とずれる。
+    #[test]
+    fn follows_the_platforms_own_precedence_when_both_are_set() {
+        let both = [("HOME", "/home/yupix"), ("USERPROFILE", "C:\\Users\\yupix")];
 
         assert_eq!(
-            store.path(),
-            Path::new("C:\\Users\\yupix/.config/task/config.yaml")
+            home_from_env_ordered(env_of(&both), WINDOWS),
+            Some(PathBuf::from("C:\\Users\\yupix"))
+        );
+        assert_eq!(
+            home_from_env_ordered(env_of(&both), POSIX),
+            Some(PathBuf::from("/home/yupix"))
         );
     }
 
+    /// POSIX では Windows 用の変数を見ない（Node も見ない）。
     #[test]
-    fn prefers_home_when_both_are_set() {
-        let store = ConfigStore::discover_with(
-            env_of(&[("HOME", "/home/yupix"), ("USERPROFILE", "C:\\Users\\yupix")]),
-            none_from_os,
-        )
-        .unwrap();
-
-        assert_eq!(
-            store.path(),
-            Path::new("/home/yupix/.config/task/config.yaml")
-        );
-    }
-
-    #[test]
-    fn falls_back_to_homedrive_and_homepath() {
-        let home = home_from_env(env_of(&[
+    fn ignores_the_windows_variables_on_posix() {
+        let windows_only = [
+            ("USERPROFILE", "C:\\Users\\yupix"),
             ("HOMEDRIVE", "C:"),
             ("HOMEPATH", "\\Users\\yupix"),
-        ]));
+        ];
+        assert_eq!(home_from_env_ordered(env_of(&windows_only), POSIX), None);
+    }
+
+    #[test]
+    fn falls_back_to_homedrive_and_homepath_on_windows() {
+        let home = home_from_env_ordered(
+            env_of(&[("HOMEDRIVE", "C:"), ("HOMEPATH", "\\Users\\yupix")]),
+            WINDOWS,
+        );
         assert_eq!(home, Some(PathBuf::from("C:\\Users\\yupix")));
 
         // 片方だけでは組み立てられない
-        assert_eq!(home_from_env(env_of(&[("HOMEDRIVE", "C:")])), None);
         assert_eq!(
-            home_from_env(env_of(&[("HOMEPATH", "\\Users\\yupix")])),
+            home_from_env_ordered(env_of(&[("HOMEDRIVE", "C:")]), WINDOWS),
+            None
+        );
+        assert_eq!(
+            home_from_env_ordered(env_of(&[("HOMEPATH", "\\Users\\yupix")]), WINDOWS),
             None
         );
     }
 
-    /// 空文字はホームとして使えない。設定がリポジトリ直下へ落ちるのを避ける。
+    /// 空文字はホームとして使えない。設定がおかしな場所へ落ちるのを避ける。
     #[test]
     fn treats_an_empty_variable_as_unset() {
-        let home = home_from_env(env_of(&[("HOME", ""), ("USERPROFILE", "C:\\Users\\yupix")]));
-        assert_eq!(home, Some(PathBuf::from("C:\\Users\\yupix")));
-
         assert_eq!(
-            home_from_env(env_of(&[("HOME", ""), ("USERPROFILE", "")])),
+            home_from_env_ordered(
+                env_of(&[("USERPROFILE", ""), ("HOME", "C:\\msys\\home")]),
+                WINDOWS
+            ),
+            Some(PathBuf::from("C:\\msys\\home"))
+        );
+        assert_eq!(
+            home_from_env_ordered(env_of(&[("HOME", ""), ("USERPROFILE", "")]), WINDOWS),
             None
         );
+        assert_eq!(home_from_env_ordered(env_of(&[("HOME", "")]), POSIX), None);
     }
 
     /// 環境変数が無ければ OS に聞く（Unix なら passwd）。
