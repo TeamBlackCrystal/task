@@ -17,28 +17,38 @@
 | `task-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon の macOS |
 | `task-<version>-x86_64-pc-windows-msvc.zip` | Windows |
 
-GitHub Actions から使う例。取り違えを防ぐため `.sha256` を突き合わせる。
+GitHub Actions から使う例。取り違えや破損に気づけるよう `.sha256` を突き合わせる。
 
 ```yaml
 - name: Install the task CLI
   env:
+    # gh は Actions 上でトークンを明示しないと動かない
+    GH_TOKEN: ${{ github.token }}
     TASK_CLI_VERSION: v0.1.9
   run: |
     set -euo pipefail
     asset="task-${TASK_CLI_VERSION#v}-x86_64-unknown-linux-musl.tar.gz"
     gh release download "$TASK_CLI_VERSION" --repo koyori-app/task --pattern "$asset*"
     sha256sum --check "${asset}.sha256"
-    tar -xzf "$asset" -C /usr/local/bin
-    task --version
+
+    # runner のユーザーは /usr/local/bin へ書けない。書ける場所へ展開して PATH へ通す
+    mkdir -p "$RUNNER_TEMP/bin"
+    tar -xzf "$asset" -C "$RUNNER_TEMP/bin"
+    "$RUNNER_TEMP/bin/task" --version
+    echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 ```
 
-手元では次でも入る。
+`GITHUB_PATH` が効くのは次のステップからなので、同じステップの中では絶対パスで呼ぶ。
+
+手元でも同じ手順で入る。
 
 ```bash
 version=v0.1.9
 asset="task-${version#v}-x86_64-unknown-linux-musl.tar.gz"
-gh release download "$version" --repo koyori-app/task --pattern "$asset"
-tar -xzf "$asset" -C ~/.local/bin
+gh release download "$version" --repo koyori-app/task --pattern "$asset*"
+sha256sum --check "${asset}.sha256"   # macOS は shasum -a 256 --check
+mkdir -p ~/.local/bin && tar -xzf "$asset" -C ~/.local/bin
+~/.local/bin/task --version
 ```
 
 `--version` が名乗る版はタグと一致する（リリース時にタグから注入し、その場で

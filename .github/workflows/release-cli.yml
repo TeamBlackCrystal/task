@@ -10,8 +10,17 @@ on:
     tags:
       - 'v*'
   pull_request:
+    # CLI のビルドに入るものを列挙する。CLI 自身だけを見ていると、共有クレートへ
+    # Windows で通らない依存が入ったときに気づけず、次のタグ push で初めて落ちる。
+    # CLI が読むクレートを増やしたらここにも足すこと
     paths:
       - 'apps/backend/crates/cli/**'
+      - 'apps/backend/crates/entity/**'
+      - 'apps/backend/crates/common/**'
+      - 'apps/backend/crates/payload/**'
+      - 'apps/backend/Cargo.toml'
+      - 'apps/backend/Cargo.lock'
+      - 'apps/backend/.cargo/**'
       - '.github/workflows/release-cli.yml'
       - 'rust-toolchain.toml'
   workflow_dispatch:
