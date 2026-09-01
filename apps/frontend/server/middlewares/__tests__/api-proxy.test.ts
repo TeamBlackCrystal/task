@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { Elysia } from 'elysia';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -125,6 +127,62 @@ describe('API_BASE', () => {
   });
 });
 
+/**
+ * Uses the real fetch against a stub backend, because a mocked fetch cannot
+ * reproduce redirect following — the behaviour that broke GitHub integration in
+ * production. The install callback passes the repository-select token in the
+ * Location fragment; if the proxy resolves the redirect itself, the browser gets
+ * the target page as 200 and the token never arrives.
+ */
+describe('backend redirects (real fetch)', () => {
+  let server: Server;
+  let landed = false;
+
+  beforeEach(async () => {
+    landed = false;
+    server = createServer((req, res) => {
+      if (req.url?.startsWith('/v1/github/callback')) {
+        const port = (server.address() as AddressInfo).port;
+        res.writeHead(307, {
+          location: `http://127.0.0.1:${port}/landed?section=integrations#github_select=token-1`,
+        });
+        res.end();
+        return;
+      }
+      // Only reachable when the redirect was followed server-side.
+      landed = true;
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>landed</html>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+    const { port } = server.address() as AddressInfo;
+    vi.stubEnv('API_BASE', `http://127.0.0.1:${port}`);
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+
+  it('hands the 307 and its Location to the browser without fetching the target', async () => {
+    const { apiProxyPlugin: plugin } = await import('../api-proxy');
+    const proxyApp = new Elysia().use(plugin);
+
+    const response = await proxyApp.handle(
+      new Request('http://localhost/api/v1/github/callback?installation_id=1'),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('#github_select=token-1');
+    expect(landed).toBe(false);
+  });
+});
+
 describe('.env loading', () => {
   const originalCwd = process.cwd();
   let temporaryDirectory: string | undefined;
@@ -230,6 +288,36 @@ describe('apiProxyPlugin', () => {
 
     expect(response.status).toBe(413);
     expect(await response.text()).toBe('Payload Too Large');
+  });
+
+  /**
+   * The GitHub App install callback hands the repository-select token to the
+   * browser in the Location fragment (`#github_select=...`). With fetch's
+   * default `redirect: 'follow'` the proxy resolves the redirect server-side and
+   * returns the target page as 200, so the browser never sees Location and the
+   * token is lost. That took down repository selection in production.
+   */
+  it('returns backend redirects to the browser instead of following them', async () => {
+    const location =
+      'https://task.example.com/koyori/projects/TASK/settings?section=integrations#github_select=token-1';
+    fetchMock.mockResolvedValue(new Response(null, { status: 307, headers: { location } }));
+
+    const response = await proxyRequest(new Request('http://localhost/api/v1/github/callback'));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(location);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('asks the backend fetch not to follow redirects', async () => {
+    fetchMock.mockResolvedValue(new Response('ok'));
+
+    await proxyRequest(new Request('http://localhost/api/v1/github/callback'));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ redirect: 'manual' }),
+    );
   });
 
   it('forwards an under-limit streamed body to the backend unchanged', async () => {

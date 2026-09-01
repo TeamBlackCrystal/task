@@ -129,6 +129,13 @@ async function proxyToBackend(request: Request): Promise<Response> {
       method: request.method,
       headers: copyHeaders(request.headers),
       body,
+      // 3xx は追わずにブラウザへ返す。既定の 'follow' だと、この fetch が
+      // サーバー側でリダイレクト先を取得してその結果を 200 として返すため、
+      // ブラウザには Location が届かず URL も変わらない。GitHub App の
+      // インストール callback は選択トークンを Location のフラグメント
+      // （`#github_select=...`）で渡すので、追われるとトークンが失われて
+      // リポジトリ選択に進めなくなる（本番で発生）。
+      redirect: 'manual',
       // @ts-expect-error Node/Bun fetch requires duplex when streaming a request body
       duplex: hasBody ? 'half' : undefined,
     });
