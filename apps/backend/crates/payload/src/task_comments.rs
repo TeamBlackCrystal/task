@@ -6,7 +6,7 @@ use validator::Validate;
 
 use entity::task_comments;
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskCommentResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -106,7 +106,7 @@ pub struct ActivityListResponse {
     pub activities: Vec<ActivityItem>,
 }
 
-#[derive(Validate, Deserialize, ToSchema)]
+#[derive(Validate, Deserialize, ToSchema, serde::Serialize)]
 pub struct CreateCommentRequest {
     #[validate(length(min = 1))]
     pub body: String,

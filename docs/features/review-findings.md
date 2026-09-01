@@ -250,6 +250,11 @@ AI レビュワーの主経路は **JSON 一括投入**（生成しやすく、�
 人間のレビュワーは Web UI から起票する（§8。下書きに貯めて確定した時点で
 CLI と同じ一括作成 API を 1 回呼ぶ）。
 
+CLI（`apps/backend/crates/cli`）は Rust の単一バイナリで、実行にランタイムの用意が要らない。
+CI では置くだけで使える。投入 JSON の検証と絞り込みの綴りは backend の型
+（`payload` / `entity` / `common::validation`）をそのまま使うので、CLI と
+サーバーで規則が二重にならない。
+
 ```bash
 # レビュー 1 ラウンドぶんを一括起票（ファイル or `-` で標準入力）
 task review submit findings.json --project TASK

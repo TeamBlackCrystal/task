@@ -5,14 +5,12 @@ on:
     branches: [main]
     paths:
       - 'apps/frontend/**'
-      - 'apps/cli/**'
       - 'packages/**'
       - 'scripts/api-path-params/**'
       - '.github/workflows/api-path-param-gate.yml'
   pull_request:
     paths:
       - 'apps/frontend/**'
-      - 'apps/cli/**'
       - 'packages/**'
       - 'scripts/api-path-params/**'
       - '.github/workflows/api-path-param-gate.yml'
@@ -75,12 +73,9 @@ jobs:
           }
 
           run_fixture_pair frontend
-          run_fixture_pair cli
 
       - name: Self-test grep gate fixtures
         run: bash scripts/api-path-params/check-api-path-params.test.sh
 
-      - name: Scan frontend and cli production sources
-        run: |
-          bash scripts/api-path-params/check-api-path-params.sh apps/frontend/src
-          bash scripts/api-path-params/check-api-path-params.sh apps/cli/src
+      - name: Scan frontend production sources
+        run: bash scripts/api-path-params/check-api-path-params.sh apps/frontend/src

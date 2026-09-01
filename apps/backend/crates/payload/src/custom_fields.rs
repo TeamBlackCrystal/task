@@ -63,7 +63,7 @@ pub struct CustomFieldListResponse {
     pub fields: Vec<ProjectCustomFieldResponse>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct CustomFieldDefinitionSummary {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -85,7 +85,7 @@ impl From<&project_custom_fields::Model> for CustomFieldDefinitionSummary {
     }
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, serde::Serialize)]
 pub struct CustomFieldValueInput {
     #[schema(value_type = String, format = "uuid")]
     pub field_id: Uuid,
@@ -93,7 +93,7 @@ pub struct CustomFieldValueInput {
     pub value: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskCustomFieldValueResponse {
     pub field: CustomFieldDefinitionSummary,
     #[schema(nullable)]

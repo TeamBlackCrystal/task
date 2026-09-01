@@ -18,6 +18,5 @@ run_fixture_pair() {
 }
 
 run_fixture_pair 'frontend' "$fixtures/frontend-safe/src" "$fixtures/frontend-anti-pattern/src"
-run_fixture_pair 'cli' "$fixtures/cli-safe/src" "$fixtures/cli-anti-pattern/src"
 
-echo 'API path-param gate self-test passed (frontend+cli anti-pattern red, resolved/mocks green)'
+echo 'API path-param gate self-test passed (frontend anti-pattern red, resolved/mocks green)'

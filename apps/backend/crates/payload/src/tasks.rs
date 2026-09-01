@@ -9,7 +9,7 @@ use crate::labels::LabelResponse;
 use crate::users::UserSummary;
 use entity::{task_assignees, task_relations, tasks};
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -51,7 +51,7 @@ pub struct TaskResponse {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskAssigneeSummary {
     pub role: String,
     pub user: UserSummary,
@@ -91,13 +91,13 @@ impl TaskResponse {
     }
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, serde::Serialize)]
 pub struct AssigneeInput {
     pub user_id: Uuid,
     pub role: String,
 }
 
-#[derive(Validate, Deserialize, ToSchema)]
+#[derive(Validate, Deserialize, ToSchema, serde::Serialize)]
 pub struct CreateTaskRequest {
     #[validate(length(min = 1, max = 255))]
     pub title: String,
@@ -127,7 +127,7 @@ pub struct CreateTaskRequest {
     pub custom_field_values: Vec<CustomFieldValueInput>,
 }
 
-#[derive(Validate, Deserialize, ToSchema)]
+#[derive(Validate, Deserialize, ToSchema, serde::Serialize)]
 pub struct UpdateTaskRequest {
     #[validate(length(min = 1, max = 255))]
     pub title: Option<String>,
@@ -192,13 +192,13 @@ fn default_limit() -> u64 {
     50
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskResponse>,
     pub total: u64,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskDetailResponse {
     #[serde(flatten)]
     pub task: TaskResponse,

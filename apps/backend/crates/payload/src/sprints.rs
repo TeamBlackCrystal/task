@@ -36,7 +36,7 @@ pub struct ListSprintsQuery {
     pub status: Option<String>,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, serde::Serialize)]
 pub struct CompleteSprintRequest {
     #[schema(value_type = Option<String>, format = "uuid")]
     pub move_incomplete_to_sprint_id: Option<Uuid>,
@@ -50,14 +50,14 @@ pub struct AssignTasksRequest {
     pub task_ids: Vec<Uuid>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct SprintTaskCounts {
     pub total: usize,
     pub done: usize,
     pub in_progress: usize,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct BurndownPoint {
     #[schema(value_type = String, example = "2026-06-01")]
     pub date: NaiveDate,
@@ -65,7 +65,7 @@ pub struct BurndownPoint {
     pub actual_remaining: usize,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct SprintResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -104,7 +104,7 @@ impl From<sprints::Model> for SprintResponse {
     }
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct SprintDetail {
     #[serde(flatten)]
     pub sprint: SprintResponse,
