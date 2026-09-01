@@ -251,7 +251,8 @@ AI レビュワーの主経路は **JSON 一括投入**（生成しやすく、�
 CLI と同じ一括作成 API を 1 回呼ぶ）。
 
 CLI（`apps/backend/crates/cli`）は Rust の単一バイナリで、実行にランタイムの用意が要らない。
-CI では置くだけで使える。投入 JSON の検証と絞り込みの綴りは backend の型
+CI では置くだけで使える（`v*` タグの push で GitHub Release に添付される。導入手順は
+`apps/backend/crates/cli/README.md`）。投入 JSON の検証と絞り込みの綴りは backend の型
 （`payload` / `entity` / `common::validation`）をそのまま使うので、CLI と
 サーバーで規則が二重にならない。
 
