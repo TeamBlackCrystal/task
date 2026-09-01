@@ -2,9 +2,6 @@
 name = "task-cli"
 version = "0.1.0"
 edition = "2024"
-# ディレクトリは apps/cli のまま backend のワークスペースに参加する
-# （lock / feature 解決 / target / `cargo check --workspace` を共有するため）。
-workspace = "../backend"
 
 [[bin]]
 name = "task"
@@ -16,10 +13,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # API の型は backend と共有する。二重に持つと綴りとフィールド名が黙って食い違う。
-entity = { path = "../backend/crates/entity" }
+entity = { path = "../entity" }
 # 送信前の検証は backend と同じ規則を使う（40 桁の commit SHA など）。
-common = { path = "../backend/crates/common" }
-payload = { path = "../backend/crates/payload" }
+common = { path = "../common" }
+payload = { path = "../payload" }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 sea-orm = { workspace = true }

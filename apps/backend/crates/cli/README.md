@@ -7,15 +7,13 @@
 
 ## ビルド
 
-ディレクトリは独立しているが、`apps/backend` の Cargo ワークスペースのメンバーなので、
-コマンドはどちらのディレクトリからでも動く。
+`apps/backend` の Cargo ワークスペースのメンバーなので、`cargo fmt --all` /
+`cargo check --workspace` / `cargo clippy --workspace` / `cargo test --workspace`
+の対象に入る。
 
 ```bash
 cargo build --release -p task-cli   # apps/backend/target/release/task
 ```
-
-`cargo fmt --all` / `cargo check --workspace` / `cargo clippy --workspace` /
-`cargo test --workspace` は、backend 側で実行すればこのクレートも対象に入る。
 
 ## 設定
 
