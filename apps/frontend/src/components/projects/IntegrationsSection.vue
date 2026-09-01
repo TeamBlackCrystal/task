@@ -14,6 +14,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiClient, fetchClient } from '@/lib/api-vue-query';
+import {
+  forgetSelectToken as discardSelectToken,
+  stashSelectTokenFromUrl,
+  takeSelectToken,
+} from '@/lib/github-select-token';
 
 const GITHUB_INTEGRATION_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/github/integration' as const;
@@ -45,14 +50,10 @@ const CALLBACK_ERRORS: Record<string, string> = {
   github_unavailable: 'GitHub と通信できませんでした。時間をおいて、もう一度お試しください。',
 };
 
-/** 設定セクションを切り替えるとこのコンポーネントは破棄されるので、
- * URL から落とした選択トークンはタブ内に退避しておく（TTL は 10 分）。 */
-const SELECT_TOKEN_STORAGE_KEY = 'github-select-token';
-
 // callback が付けた値は、読んだらすぐ URL から落とす（下の clearCallbackQuery）。
 // 選択トークンはフラグメントで渡ってくる（クエリだと frontend / CDN のアクセスログと
-// Referer に残るため）。pageContext は replaceState もフラグメントも反映しないので、
-// window.location から読む。
+// Referer に残るため）。フラグメントはハイドレーションの history 書き換えで消えるので、
+// 読み取りと退避は `@/lib/github-select-token` に寄せてある。
 const selectToken = ref<string | null>(null);
 const repositories = ref<{ owner: string; name: string }[]>([]);
 const repositoryFilter = ref('');
@@ -112,19 +113,12 @@ function isSelectTokenDead(status: number) {
   return status === 400 || status === 403;
 }
 
-/** callback が付けた値を URL から落とす（トークンを履歴に残さない、
- * リロードでエラーが蘇らない） */
+/** callback が付けたエラー理由を URL から落とす（リロードでエラーが蘇らない）。
+ * 選択トークンのフラグメントは stashSelectTokenFromUrl が落とす。 */
 function clearCallbackQuery() {
   const url = new URL(window.location.href);
+  if (!url.searchParams.has('github_error')) return;
   url.searchParams.delete('github_error');
-  // backend はトークンを単独のフラグメント（`#github_select=...`）で返すので、
-  // それが載っているときだけ触る（他の断片との同居は考慮していない）。
-  const hash = new URLSearchParams(url.hash.slice(1));
-  if (hash.has('github_select')) {
-    hash.delete('github_select');
-    const rest = hash.toString();
-    url.hash = rest ? `#${rest}` : '';
-  }
   window.history.replaceState(window.history.state, '', url);
 }
 
@@ -163,22 +157,19 @@ async function loadRepositories() {
   }
 }
 
-function stashKey() {
-  return `${SELECT_TOKEN_STORAGE_KEY}:${props.projectId}`;
-}
-
 function forgetSelectToken() {
   selectToken.value = null;
   repositories.value = [];
   repositoryFilter.value = '';
-  window.sessionStorage.removeItem(stashKey());
+  discardSelectToken(props.projectId);
 }
 
 onMounted(() => {
   const search = new URLSearchParams(window.location.search);
-  const fromUrl = new URLSearchParams(window.location.hash.slice(1)).get('github_select');
-  selectToken.value = fromUrl ?? window.sessionStorage.getItem(stashKey());
-  if (fromUrl) window.sessionStorage.setItem(stashKey(), fromUrl);
+  // 通常は client entry が退避済み。ここでも呼ぶのは、entry を通らずに
+  // このセクションだけが立ち上がる経路（テスト・将来のマウント順の変更）の保険。
+  stashSelectTokenFromUrl();
+  selectToken.value = takeSelectToken(props.projectId);
   callbackError.value = CALLBACK_ERRORS[search.get('github_error') ?? ''] ?? null;
   clearCallbackQuery();
   void loadRepositories();

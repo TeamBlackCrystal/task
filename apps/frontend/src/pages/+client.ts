@@ -6,5 +6,11 @@
 // root を経由すると createRenderer がモジュール副作用で走り、KFM 一式 (remark / rehype /
 // DOMPurify) が tree-shake されず client バンドルへ丸ごと載るため。
 import { registerKfmCustomElements } from '@/lib/markup-renderer/_client-registry';
+import { stashSelectTokenFromUrl } from '@/lib/github-select-token';
 
 registerKfmCustomElements();
+
+// GitHub 連携の選択トークンはフラグメントで届く。ハイドレーションの history 書き換えで
+// URL から落ちるため、それより前に走るこの entry で退避しておく。受け取る連携セクションは
+// テナント / プロジェクトの解決を待ってマウントされるので、自分で読むには間に合わない。
+stashSelectTokenFromUrl();
