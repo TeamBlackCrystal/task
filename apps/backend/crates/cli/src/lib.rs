@@ -10,6 +10,7 @@ pub mod config;
 pub mod error;
 pub mod output;
 pub mod resolve;
+pub mod text_input;
 
 use api::ApiClient;
 use cli::{Cli, Command};

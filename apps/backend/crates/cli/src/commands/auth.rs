@@ -1,13 +1,12 @@
 //! 認証。トークンの保存だけは API を呼ばずに済ませる。
 
-use std::io::{IsTerminal, Read};
-
 use payload::users::UserResponse;
 
 use crate::Context;
 use crate::cli::AuthCommand;
 use crate::error::{CliError, Result};
 use crate::output::{OutputOptions, print};
+use crate::text_input::read_stdin;
 
 pub async fn run(command: AuthCommand, context: &Context, output: OutputOptions) -> Result<i32> {
     let store = context.store();
@@ -23,7 +22,7 @@ pub async fn run(command: AuthCommand, context: &Context, output: OutputOptions)
                 .filter(|v| !v.is_empty())
             {
                 Some(token) => token,
-                None => read_stdin()?,
+                None => read_stdin("token")?.trim().to_string(),
             };
             if token.is_empty() {
                 return Err(CliError::new("Token is required"));
@@ -41,18 +40,4 @@ pub async fn run(command: AuthCommand, context: &Context, output: OutputOptions)
         }
     }
     Ok(0)
-}
-
-/// 端末から実行されたときは待ち受けない（貼り付け待ちで固まって見えるのを避ける）。
-fn read_stdin() -> Result<String> {
-    let stdin = std::io::stdin();
-    if stdin.is_terminal() {
-        return Ok(String::new());
-    }
-    let mut buffer = String::new();
-    stdin
-        .lock()
-        .read_to_string(&mut buffer)
-        .map_err(|err| CliError::new(format!("Cannot read the token from stdin: {err}")))?;
-    Ok(buffer.trim().to_string())
 }
