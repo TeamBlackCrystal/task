@@ -187,7 +187,20 @@ pub async fn github_callback(
     Query(query): Query<GithubCallbackQuery>,
 ) -> Result<Response, AppError> {
     let github = state.settings.require_github_app()?;
-    auth.require_session()?;
+
+    // TODO(調査用ログ): 連携が無言で失敗する原因の切り分けが済んだら削除する
+    tracing::info!(
+        installation_id = query.installation_id,
+        setup_action = ?query.setup_action,
+        has_code = query.code.is_some(),
+        state_len = query.state.len(),
+        "github callback: entered"
+    );
+
+    if let Err(e) = auth.require_session() {
+        tracing::warn!("github callback: no session cookie on the callback request");
+        return Err(e);
+    }
 
     // setup_action=request はオーナーへの承認リクエスト段階。インストール未完了なので拒否。
     if query.setup_action.as_deref() == Some("request") {
@@ -198,22 +211,65 @@ pub async fn github_callback(
         return Err(AppError::BadRequest);
     }
 
-    let payload = install_state::consume_state(&state.redis_client, &query.state)
+    let Some(payload) = install_state::consume_state(&state.redis_client, &query.state)
         .await
         .map_err(AppError::Internal)?
-        .ok_or(AppError::BadRequest)?;
+    else {
+        tracing::warn!(
+            installation_id = query.installation_id,
+            state_len = query.state.len(),
+            "github callback: state not found in redis (expired, already consumed, or never stored)"
+        );
+        return Err(AppError::BadRequest);
+    };
 
     if payload.user_id != auth.user_id {
+        tracing::warn!(
+            state_user_id = %payload.user_id,
+            session_user_id = %auth.user_id,
+            "github callback: user mismatch between install and callback"
+        );
         return Err(AppError::Forbidden);
     }
 
-    require_tenant_owner(&state, payload.tenant_id, auth.user_id).await?;
-    require_project_in_tenant(&state, payload.tenant_id, payload.project_id).await?;
+    // TODO(調査用ログ): 上と同じタイミングで削除する
+    tracing::info!(
+        tenant_id = %payload.tenant_id,
+        project_id = %payload.project_id,
+        bound_installation_id = ?payload.installation_id,
+        "github callback: state consumed"
+    );
+
+    if let Err(e) = require_tenant_owner(&state, payload.tenant_id, auth.user_id).await {
+        tracing::warn!(tenant_id = %payload.tenant_id, "github callback: not a tenant owner");
+        return Err(e);
+    }
+    if let Err(e) = require_project_in_tenant(&state, payload.tenant_id, payload.project_id).await {
+        tracing::warn!(
+            tenant_id = %payload.tenant_id,
+            project_id = %payload.project_id,
+            "github callback: project not in tenant"
+        );
+        return Err(e);
+    }
 
     let app = github_app(&state.http_client, github);
     // GitHub からの着地点なので、以降の失敗は素のエラーではなく設定画面へ理由付きで戻す。
     let redirect_to =
-        settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await?;
+        match settings_redirect_url(&state.db, github, payload.tenant_id, payload.project_id).await
+        {
+            Ok(url) => url,
+            Err(e) => {
+                tracing::warn!(
+                    tenant_id = %payload.tenant_id,
+                    project_id = %payload.project_id,
+                    "github callback: failed to build the settings redirect url"
+                );
+                return Err(e);
+            }
+        };
+    // TODO(調査用ログ): 切り分けが済んだら削除する
+    tracing::info!(redirect_to = %redirect_to, "github callback: redirect target resolved");
 
     // 新規インストールは state の TTL 内に作成されたものだけ受け付ける（古い
     // installation_id を差し込む攻撃を防ぐ）。再連携時は state に束縛済みの ID と照合する。
@@ -249,6 +305,13 @@ pub async fn github_callback(
             }
         }
     };
+
+    // TODO(調査用ログ): 切り分けが済んだら削除する
+    tracing::info!(
+        expected_installation_id = ?expected_installation_id,
+        query_installation_id = query.installation_id,
+        "github callback: installation binding resolved"
+    );
 
     // 所有者確認。新規に束縛するときだけ行う。
     //
@@ -338,6 +401,13 @@ pub async fn github_callback(
         Err(e) => return unavailable(e).await,
     };
 
+    // TODO(調査用ログ): 切り分けが済んだら削除する
+    tracing::info!(
+        repository_count = repositories.len(),
+        auto_selected = ?select_primary_repository(&repositories).map(|r| format!("{}/{}", r.owner, r.name)),
+        "github callback: repositories listed"
+    );
+
     // 0 件は連携先を選びようがない（GitHub 側でリポジトリ選択を外した状態）。
     // GitHub からの着地点なので、素のエラーではなく設定画面へ理由付きで戻す。
     if repositories.is_empty() {
@@ -379,6 +449,11 @@ pub async fn github_callback(
         )
         .await
         .map_err(AppError::Internal)?;
+        // TODO(調査用ログ): 切り分けが済んだら削除する
+        tracing::info!(
+            repository_count = repositories.len(),
+            "github callback: multiple repositories; redirecting with a select token"
+        );
         // トークンはクエリではなくフラグメントに載せる。
         // フラグメントは次の HTTP リクエストに乗らないので、
         // frontend / CDN のアクセスログにトークンが残らない
@@ -389,7 +464,7 @@ pub async fn github_callback(
         );
     };
 
-    upsert_integration(
+    if let Err(e) = upsert_integration(
         &state,
         github,
         payload.project_id,
@@ -399,7 +474,21 @@ pub async fn github_callback(
         &repo.name,
         &access,
     )
-    .await?;
+    .await
+    {
+        tracing::warn!(
+            project_id = %payload.project_id,
+            repo = %format!("{}/{}", repo.owner, repo.name),
+            "github callback: upsert_integration failed"
+        );
+        return Err(e);
+    }
+    // TODO(調査用ログ): 切り分けが済んだら削除する
+    tracing::info!(
+        project_id = %payload.project_id,
+        repo = %format!("{}/{}", repo.owner, repo.name),
+        "github callback: integration stored"
+    );
     // 連携は済んでいるので、後片付けの失敗で着地点をエラーにしない（TTL で切れる）。
     if let Err(e) = install_state::delete_pending_installation_if(
         &state.redis_client,
