@@ -95,20 +95,23 @@ describe('NavProjects', () => {
     expect(wrapper.findAll('a').length).toBe(0);
   });
 
-  it('行クリックで展開し、タスク/ラベル/設定の子リンクを出す', async () => {
+  it('行クリックで展開し、タスク/ラベル/レビュー/設定の子リンクを出す', async () => {
     const wrapper = mountNavProjects({});
     await findRowButton(wrapper, 'Team Alpha')!.trigger('click');
 
     const hrefs = wrapper.findAll('a').map((a) => a.attributes('href'));
     expect(hrefs).toContain('/acme/projects/ALPHA/tasks');
     expect(hrefs).toContain('/acme/projects/ALPHA/labels');
+    expect(hrefs).toContain('/acme/projects/ALPHA/reviews');
     expect(hrefs).toContain('/acme/projects/ALPHA/settings');
     expect(wrapper.text()).toContain('タスク');
     expect(wrapper.text()).toContain('ラベル');
+    expect(wrapper.text()).toContain('レビュー');
     expect(wrapper.text()).toContain('設定');
   });
 
-  it('個人プロジェクトには設定の子リンクを出さない', async () => {
+  // 個人プロジェクトは設定に入れない = GitHub 連携を張れないので、レビューも出さない
+  it('個人プロジェクトには設定とレビューの子リンクを出さない', async () => {
     const wrapper = mountNavProjects({});
     await findRowButton(wrapper, 'Personal')!.trigger('click');
 
@@ -116,6 +119,7 @@ describe('NavProjects', () => {
     expect(hrefs).toContain('/acme/projects/ME01/tasks');
     expect(hrefs).toContain('/acme/projects/ME01/labels');
     expect(hrefs).not.toContain('/acme/projects/ME01/settings');
+    expect(hrefs).not.toContain('/acme/projects/ME01/reviews');
   });
 
   it('現在のパスのプロジェクトは初期展開され、親子とも active になる', () => {
