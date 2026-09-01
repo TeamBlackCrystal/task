@@ -141,6 +141,26 @@ describe('findingActions', () => {
     );
   });
 
+  it('作成者が不在ならオーナーの代行で取り下げを出す（サーバーも同じ例外を持つ）', () => {
+    const others = finding({ severity: 'low' });
+
+    // 他人が出した指摘。代行が立たないうちは出さない
+    expect(findingActions(others, VIEWER, OTHER, false, false).map((a) => a.to)).toEqual([
+      'fixed',
+      'deferred',
+    ]);
+
+    // 代行が立てば取り下げを出す
+    expect(findingActions(others, VIEWER, OTHER, false, true).map((a) => a.to)).toContain(
+      'rejected',
+    );
+
+    // rejected からの再オープンも同じ例外に乗る（往復できないと戻せなくなる）
+    expect(
+      findingActions(finding({ state: 'rejected' }), VIEWER, OTHER, false, true).map((a) => a.to),
+    ).toEqual(['open']);
+  });
+
   it('fixed を宣言した本人には verified を押させない', () => {
     const actions = findingActions(
       finding({ state: 'fixed', fixed_by: VIEWER }),

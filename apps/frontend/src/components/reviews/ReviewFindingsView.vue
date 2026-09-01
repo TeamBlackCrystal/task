@@ -45,6 +45,8 @@ const props = defineProps<{
   projectKey: string;
   /** 現在の利用者。自分の修正を自分で確認できない判定に使う */
   viewerId: string;
+  /** テナントオーナー。不在の作成者に代わる取り下げの表示判定に使う（未解決なら null） */
+  tenantOwnerId?: string | null;
   /** 初期表示する PR（要約コメントのリンクから来たとき） */
   initialPr?: number | null;
 }>();
@@ -87,6 +89,18 @@ const isReviewerSide = (finding: ReviewFinding): boolean =>
   rounds.value.some(
     (round: Review) => round.reviewer.id === props.viewerId && round.round >= finding.round,
   );
+
+/**
+ * 閲覧者がオーナーとして、この指摘の取り下げを代行できるか。
+ *
+ * 指摘を出したラウンドの作成者がテナントの利用者でなくなっている場合だけ
+ * （`reviewer_left_tenant`。backend の `may_reject_on_behalf` と対。仕様 §3）。
+ * ラウンド一覧が未取得のうちは false に倒す（押しても 403 のボタンを出さない）。
+ */
+const mayRejectOnBehalf = (finding: ReviewFinding): boolean =>
+  props.viewerId === props.tenantOwnerId &&
+  (rounds.value.find((round: Review) => round.id === finding.review_id)?.reviewer_left_tenant ??
+    false);
 const summary = computed(() => summaryQuery.data.value ?? null);
 
 /** 初期 PR の指定が無ければ、最後にレビューされた PR を開く。 */
@@ -434,6 +448,7 @@ async function onRoundCreated() {
                       viewerId,
                       findingAuthorId(finding),
                       isReviewerSide(finding),
+                      mayRejectOnBehalf(finding),
                     )"
                     :key="action.to"
                     type="button"
@@ -452,6 +467,7 @@ async function onRoundCreated() {
                         viewerId,
                         findingAuthorId(finding),
                         isReviewerSide(finding),
+                        mayRejectOnBehalf(finding),
                       ).some((a) => a.disabledReason)
                     "
                     class="text-muted-foreground text-xs"

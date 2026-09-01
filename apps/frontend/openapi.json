@@ -21820,6 +21820,7 @@
           "round",
           "head_sha",
           "reviewer",
+          "reviewer_left_tenant",
           "summary",
           "created_at",
           "finding_count"
@@ -21859,6 +21860,10 @@
           },
           "reviewer": {
             "$ref": "#/components/schemas/UserSummary"
+          },
+          "reviewer_left_tenant": {
+            "type": "boolean",
+            "description": "このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。\n\n真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる\n（仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは\n常に偽（本人として取り下げられるので、代行の出番がない）"
           },
           "round": {
             "type": "integer",

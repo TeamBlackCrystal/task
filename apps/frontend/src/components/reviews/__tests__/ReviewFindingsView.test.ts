@@ -40,6 +40,8 @@ type MockState = {
   patchMessage?: string;
   /** ラウンドを出した人（取り下げを出してよいかの判定に使う） */
   roundReviewerId?: string;
+  /** ラウンドの作成者がテナントを離脱済みか（オーナー代行の判定に使う） */
+  roundReviewerLeft?: boolean;
   /** これまでのラウンド数（0 = 未レビュー） */
   rounds?: number;
   /** 集計対象のリポジトリ。null で「連携なし」を作る */
@@ -124,6 +126,7 @@ function stubFetch(state: MockState) {
             username: 'reviewer',
             avatar_url: null,
           },
+          reviewer_left_tenant: state.roundReviewerLeft ?? false,
           summary: '総評',
           pr_title: null,
           pr_author: null,
@@ -152,7 +155,7 @@ function stubFetch(state: MockState) {
   return { patched };
 }
 
-function mountView() {
+function mountView(extraProps: { tenantOwnerId?: string | null } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -164,6 +167,7 @@ function mountView() {
       projectKey: 'APP',
       viewerId: VIEWER_ID,
       initialPr: 618,
+      ...extraProps,
     },
     global: { plugins: [[VueQueryPlugin, { queryClient }]] },
     attachTo: document.body,
@@ -292,6 +296,45 @@ describe('ReviewFindingsView', () => {
     await flushPromises();
 
     expect(bodyButton('指摘を取り下げる')?.disabled).toBe(false);
+  });
+
+  it('作成者が居なくなった指摘は、オーナーが取り下げを代行できる', async () => {
+    // 除名・退会で取り下げる主体が消えると、直していないものを verified と
+    // 記録するしかなくなる。その例外を画面からも使えるようにする（仕様 §3）
+    stubFetch({
+      findings: [finding({ severity: 'low' })],
+      roundReviewerId: OTHER_ID,
+      roundReviewerLeft: true,
+    });
+    mountView({ tenantOwnerId: VIEWER_ID });
+    await flushPromises();
+
+    expect(bodyButton('指摘を取り下げる')?.disabled).toBe(false);
+  });
+
+  it('作成者が在籍していればオーナーでも代行させない（サーバーも 403 で拒否する）', async () => {
+    stubFetch({
+      findings: [finding({ severity: 'low' })],
+      roundReviewerId: OTHER_ID,
+      roundReviewerLeft: false,
+    });
+    mountView({ tenantOwnerId: VIEWER_ID });
+    await flushPromises();
+
+    expect(bodyButton('指摘を取り下げる')).toBeUndefined();
+  });
+
+  it('オーナーでなければ、作成者が居なくなっても代行させない', async () => {
+    stubFetch({
+      findings: [finding({ severity: 'low' })],
+      roundReviewerId: OTHER_ID,
+      roundReviewerLeft: true,
+    });
+    // tenantOwnerId を渡さない＝オーナーが分からない状態。出さない側に倒す
+    mountView();
+    await flushPromises();
+
+    expect(bodyButton('指摘を取り下げる')).toBeUndefined();
   });
 
   it('一覧バッジは件数だけを出し、可否を断定しない', async () => {

@@ -74,6 +74,12 @@ pub struct ReviewResponse {
     pub round: i32,
     pub head_sha: String,
     pub reviewer: UserSummary,
+    /// このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。
+    ///
+    /// 真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる
+    /// （仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは
+    /// 常に偽（本人として取り下げられるので、代行の出番がない）
+    pub reviewer_left_tenant: bool,
     pub summary: String,
     /// 要約コメント投稿時に GitHub から取得してキャッシュした PR タイトル
     #[schema(nullable)]
@@ -87,7 +93,12 @@ pub struct ReviewResponse {
 }
 
 impl ReviewResponse {
-    pub fn from_parts(model: reviews::Model, reviewer: entity::users::Model, count: u64) -> Self {
+    pub fn from_parts(
+        model: reviews::Model,
+        reviewer: entity::users::Model,
+        reviewer_left_tenant: bool,
+        count: u64,
+    ) -> Self {
         Self {
             id: model.id,
             project_id: model.project_id,
@@ -95,6 +106,7 @@ impl ReviewResponse {
             round: model.round,
             head_sha: model.head_sha,
             reviewer: reviewer.into(),
+            reviewer_left_tenant,
             summary: model.summary,
             pr_title: model.pr_title,
             pr_author: model.pr_author,

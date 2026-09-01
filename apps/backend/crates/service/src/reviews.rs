@@ -256,6 +256,40 @@ pub async fn is_reviewer_side<C: ConnectionTrait>(
     Ok(found.is_some())
 }
 
+/// 与えたユーザーのうち、テナントの利用者でなくなった（除名・退会した）人の集合。
+///
+/// [`may_reject_on_behalf`] の「作成者の不在」と同じ定義で、画面がラウンドごとの
+/// 代行ボタンの表示判定に使う（`ReviewResponse::reviewer_left_tenant`）。
+/// オーナーはテナント作成時に `tenant_members` 行を持たないが、テナントの利用者
+/// なので「不在」に数えない（数えると、オーナー自身のラウンドに代行の印が付く）。
+pub async fn users_left_tenant<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    user_ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>, sea_orm::DbErr> {
+    if user_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let Some(tenant) = tenants::Entity::find_by_id(tenant_id).one(db).await? else {
+        return Ok(std::collections::HashSet::new());
+    };
+    let members: std::collections::HashSet<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .filter(tenant_members::Column::UserId.is_in(user_ids.to_vec()))
+        .select_only()
+        .column(tenant_members::Column::UserId)
+        .into_tuple()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    Ok(user_ids
+        .iter()
+        .copied()
+        .filter(|id| *id != tenant.owner_id && !members.contains(id))
+        .collect())
+}
+
 /// 取り下げをテナントオーナーが代行してよいか。
 ///
 /// 取り下げは本来「その指摘を出したラウンドの作成者だけ」。ただし除名・退会で作成者が

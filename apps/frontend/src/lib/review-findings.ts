@@ -103,6 +103,12 @@ export function findingActions(
    * ラウンド一覧が引けないうちは false 側に倒し、レビュー側限定の操作を出さない
    */
   isReviewerSide = false,
+  /**
+   * 閲覧者がテナントオーナーとして取り下げを代行できるか——指摘を出したラウンドの
+   * 作成者がテナントの利用者でなくなっている場合だけ（backend の
+   * `may_reject_on_behalf` と対。仕様 §3）。判定材料が揃わないうちは false に倒す
+   */
+  mayRejectOnBehalf = false,
 ): FindingAction[] {
   const labels: Partial<Record<FindingState, string>> = {
     fixed: '修正した',
@@ -117,8 +123,11 @@ export function findingActions(
       canTransition(finding.state, to) &&
       // High / Medium は繰り延べられない（押しても 409 になるボタンを出さない）
       (to !== 'deferred' || canDefer(finding.severity)) &&
-      // 取り下げは指摘を出した本人だけ（押しても 403 になるボタンを出さない）
-      (!requiresFindingAuthor(finding.state, to) || viewerId === findingAuthorId) &&
+      // 取り下げは指摘を出した本人だけ（押しても 403 になるボタンを出さない）。
+      // 例外は「作成者が不在の指摘へのオーナー代行」（仕様 §3）
+      (!requiresFindingAuthor(finding.state, to) ||
+        viewerId === findingAuthorId ||
+        mayRejectOnBehalf) &&
       // 確認と差し戻しはレビュー側だけ（同上。修正だけを行う人には出さない）
       (!requiresReviewerSide(finding.state, to) || isReviewerSide),
   ).map((to) => {

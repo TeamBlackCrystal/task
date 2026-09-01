@@ -166,6 +166,8 @@ function mockFetch(overrides: { empty?: boolean } = {}) {
               round === 2
                 ? { id: VIEWER_ID, username: 'viewer', avatar_url: null }
                 : { id: OTHER_ID, username: 'reviewer', avatar_url: null },
+            // 作成者は在籍している。オーナー代行の取り下げは出ない状態
+            reviewer_left_tenant: false,
             summary: '総評',
             pr_title: null,
             pr_author: null,

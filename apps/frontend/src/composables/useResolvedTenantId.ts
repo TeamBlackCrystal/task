@@ -23,12 +23,19 @@ export function useResolvedTenantId(tenantDisplayId: MaybeRefOrGetter<string>) {
     staleTime: 60_000,
   });
 
-  const tenantId = computed<TenantUuid | null>(() => {
+  const resolvedTenant = computed<TenantResponse | null>(() => {
     const data = tenantsQuery.data.value;
     if (!data || !displayId.value) return null;
-    const id = data.find((t) => t.display_id === displayId.value)?.id;
+    return data.find((t) => t.display_id === displayId.value) ?? null;
+  });
+
+  const tenantId = computed<TenantUuid | null>(() => {
+    const id = resolvedTenant.value?.id;
     return id ? (id as TenantUuid) : null;
   });
+
+  /** 解決したテナントのオーナー。代行系の表示判定（レビュー画面など）が使う。 */
+  const tenantOwnerId = computed(() => resolvedTenant.value?.owner_id ?? null);
 
   const isTenantNotFound = computed(
     () =>
@@ -46,6 +53,7 @@ export function useResolvedTenantId(tenantDisplayId: MaybeRefOrGetter<string>) {
   return {
     tenantDisplayId: displayId,
     tenantId,
+    tenantOwnerId,
     isTenantNotFound,
     isResolving,
     isError,

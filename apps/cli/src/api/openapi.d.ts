@@ -2955,6 +2955,14 @@ export interface components {
             project_id: string;
             reviewer: components["schemas"]["UserSummary"];
             /**
+             * @description このラウンドの作成者がテナントの利用者でなくなったか（除名・退会）。
+             *
+             *     真のときだけ、テナントオーナーがこのラウンドの指摘の取り下げを代行できる
+             *     （仕様 §3）。画面が代行ボタンの表示判定に使う。オーナー自身のラウンドは
+             *     常に偽（本人として取り下げられるので、代行の出番がない）
+             */
+            reviewer_left_tenant: boolean;
+            /**
              * Format: int32
              * @description PR 内の連番（1 始まり）。表示は R1, R2, …
              */
