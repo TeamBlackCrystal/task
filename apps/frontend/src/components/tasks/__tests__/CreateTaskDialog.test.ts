@@ -87,11 +87,31 @@ const labels = [
   },
 ];
 
+const members = [
+  {
+    id: 'member-1',
+    project_id: 'project-uuid',
+    role: 'Member' as const,
+    user_id: 'user-1',
+    user: { id: 'user-1', username: 'yupix', avatar_url: null },
+  },
+  {
+    id: 'member-2',
+    project_id: 'project-uuid',
+    role: 'Member' as const,
+    user_id: 'user-2',
+    user: { id: 'user-2', username: 'someone', avatar_url: null },
+  },
+];
+
 type MountOptions = {
   open?: boolean;
   labels?: typeof labels;
   labelsLoading?: boolean;
   labelsError?: boolean;
+  members?: typeof members;
+  membersLoading?: boolean;
+  membersError?: boolean;
 };
 
 function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
@@ -105,6 +125,9 @@ function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
       labels: options.labels,
       labelsLoading: options.labelsLoading,
       labelsError: options.labelsError,
+      members: options.members,
+      membersLoading: options.membersLoading,
+      membersError: options.membersError,
     },
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
@@ -338,6 +361,57 @@ describe('CreateTaskDialog label selection', () => {
     if (!button) throw new Error(`label button ${name} not found`);
     return button as HTMLButtonElement;
   }
+
+  function memberButton(name: string) {
+    const button = [...document.body.querySelectorAll('button')].find(
+      (el) => el.textContent?.trim() === name,
+    );
+    if (!button) throw new Error(`member button ${name} not found`);
+    return button as HTMLButtonElement;
+  }
+
+  /**
+   * 担当者は作成後にしか付けられなかった。作成時に選べると、割り当て済みの状態で
+   * 一覧に出せる。role は詳細から付けるときと同じ primary に揃える。
+   */
+  it('選択した担当者を assignees として作成リクエストに含める', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('担当者付きで作成');
+
+    memberButton('yupix').click();
+    await nextTick();
+    expect(memberButton('yupix').getAttribute('aria-pressed')).toBe('true');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toEqual([
+      { user_id: 'user-1', role: 'primary' },
+    ]);
+    wrapper.unmount();
+  });
+
+  it('担当者を選ばなければ assignees を送らない', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('未割当で作成');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  // ラベルと同じく、選べるものが無い節は出さない
+  it('メンバーがいなければ担当者の節を出さない', async () => {
+    const wrapper = mountDialog(queryClient, { members: [] });
+    await nextTick();
+
+    expect(document.body.textContent).not.toContain('担当者');
+    wrapper.unmount();
+  });
 
   it('選択したラベルの label_ids を作成リクエストに含める', async () => {
     const wrapper = mountDialog(queryClient, { labels });

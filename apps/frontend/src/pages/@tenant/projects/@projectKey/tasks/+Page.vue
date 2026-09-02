@@ -66,6 +66,7 @@ import { parseTaskListUrlState, useTaskListUrlSync } from './task-list-url-state
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
 const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
+const LIST_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
 const TASKS_PAGE_SIZE = 20;
 const SEARCH_PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -348,6 +349,25 @@ const labelsQuery = useQuery({
 // ラベルも未取得を null で区別する（同上）
 const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
 const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
+watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
+
+// 作成時に担当者を選べるようにする。候補はプロジェクトのメンバー
+const membersQuery = useQuery({
+  queryKey: computed(() => [
+    'get',
+    LIST_MEMBERS_PATH,
+    { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
+  ]),
+  queryFn: async ({ signal }) => {
+    const { data, error } = await fetchClient.GET(LIST_MEMBERS_PATH, {
+      params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
+      signal,
+    });
+    if (error) throw error;
+    return data;
+  },
+  enabled: computed(() => !!tenantId.value && !!projectId.value),
+});
 watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
 const selectedLabelName = computed(
   () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
@@ -826,6 +846,9 @@ const table = useVueTable({
             :labels="labelsQuery.data.value"
             :labels-loading="labelsQuery.isLoading.value"
             :labels-error="labelsQuery.isError.value && !projectLabels.length"
+            :members="membersQuery.data.value"
+            :members-loading="membersQuery.isLoading.value"
+            :members-error="membersQuery.isError.value"
             @created="onTaskCreated"
             @retry-labels="labelsQuery.refetch()"
           />
