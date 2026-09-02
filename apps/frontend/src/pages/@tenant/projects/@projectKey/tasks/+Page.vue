@@ -449,7 +449,6 @@ const columns: ColumnDef<TaskRow>[] = [
     id: 'select',
     header: ({ table }) =>
       h(Checkbox, {
-        class: 'relative z-10',
         modelValue:
           table.getIsAllPageRowsSelected() ||
           (table.getIsSomePageRowsSelected() && 'indeterminate'),
