@@ -14,6 +14,7 @@ import NavMain from '@/components/sidebar/NavMain.vue';
 import NavProjects from '@/components/sidebar/NavProjects.vue';
 import NavUser from '@/components/sidebar/NavUser.vue';
 import TenantSwitcher from '@/components/sidebar/TenantSwitcher.vue';
+import { shouldCloseSidebarOnNavigate } from '@/components/sidebar/sidebar-navigation';
 
 import {
   Sidebar,
@@ -21,6 +22,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  useSidebar,
 } from '@/components/ui/sidebar';
 
 const props = withDefaults(defineProps<SidebarProps>(), {
@@ -88,6 +90,13 @@ const data = computed(() => ({
     },
   ],
 }));
+
+const { isMobile, setOpenMobile } = useSidebar();
+
+/** ナビから遷移したらモバイルのサイドバーを閉じる（判定は sidebar-navigation に切り出し）。 */
+function closeOnNavigate(event: MouseEvent) {
+  if (shouldCloseSidebarOnNavigate(event, isMobile.value)) setOpenMobile(false);
+}
 </script>
 
 <template>
@@ -102,7 +111,7 @@ const data = computed(() => ({
         @retry="tenantStore.loadTenants(tenantSlug)"
       />
     </SidebarHeader>
-    <SidebarContent>
+    <SidebarContent @click="closeOnNavigate">
       <!-- テナント外のページ（/settings/... など）ではテナント文脈が無く、
            リンク先も一覧も作れないためテナント依存のナビ自体を出さない。 -->
       <NavMain v-if="tenantSlug" :items="data.navMain" />
