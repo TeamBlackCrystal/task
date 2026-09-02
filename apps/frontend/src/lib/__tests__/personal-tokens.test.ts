@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   EXPIRATION_PRESETS,
@@ -9,6 +11,11 @@ import {
 } from '../personal-tokens';
 
 const NOW = new Date('2026-08-24T12:00:00Z');
+
+/** backend の `entity::scopes::Scope`（openapi の生成物を正とする） */
+const backendScopes: string[] = JSON.parse(
+  readFileSync(path.resolve(process.cwd(), 'openapi.json'), 'utf8'),
+).components.schemas.Scope.enum;
 
 describe('expiresAtFromPreset', () => {
   it.each([
@@ -76,9 +83,21 @@ describe('formatLastUsed', () => {
 });
 
 describe('SCOPE_CATALOG', () => {
-  it('重複がなく、backend の全 11 スコープを網羅する', () => {
+  /**
+   * 件数を数値で固定すると、backend にスコープが増えたときに漏れを固定してしまう。
+   * 実際 `toHaveLength(11)` だった間に read:review / write:review が抜けたまま通り続け、
+   * そのスコープを要る CLI のレビュー機能が使えなかった。生成物の全列挙と突き合わせる。
+   */
+  it('backend の全スコープを重複なく網羅する', () => {
     const scopes = SCOPE_CATALOG.map((entry) => entry.scope);
+
     expect(new Set(scopes).size).toBe(scopes.length);
-    expect(scopes).toHaveLength(11);
+    expect([...scopes].sort()).toEqual([...backendScopes].sort());
+  });
+
+  it('説明が空のスコープがない', () => {
+    for (const entry of SCOPE_CATALOG) {
+      expect(entry.description.trim()).not.toBe('');
+    }
   });
 });
