@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { shouldActivateRow } from '../task-list-row-activate';
+import { shouldActivateRow, shouldOpenRowInNewTab } from '../task-list-row-activate';
 
 /** 行のマークアップを組んで、指定要素を click の target にしたイベントを作る */
 function clickOn(selector: string, init: MouseEventInit = {}) {
@@ -63,5 +63,42 @@ describe('shouldActivateRow', () => {
     ['右クリック', 2],
   ])('%s は行では処理しない', (_label, button) => {
     expect(shouldActivateRow(clickOn('#key', { button }))).toBe(false);
+  });
+});
+
+/**
+ * 疑似要素で行全体を覆っていた間は、行のどこでも実リンクへの操作だったので
+ * Ctrl / Cmd + クリックと中クリックで別タブに開けた。判定を click へ移した分を行側で補う。
+ */
+describe('shouldOpenRowInNewTab', () => {
+  it.each([
+    ['metaKey', { metaKey: true }],
+    ['ctrlKey', { ctrlKey: true }],
+    ['shiftKey', { shiftKey: true }],
+  ])('タイトル以外のセルでも 修飾キー（%s）+ 左クリックで別タブに開く', (_label, init) => {
+    expect(shouldOpenRowInNewTab(clickOn('#key', init))).toBe(true);
+    expect(shouldOpenRowInNewTab(clickOn('#assignee-cell', init))).toBe(true);
+  });
+
+  it('中クリックでも別タブに開く', () => {
+    expect(shouldOpenRowInNewTab(clickOn('#key', { button: 1 }))).toBe(true);
+  });
+
+  // ダウンロードの合図に使うブラウザがあり、別タブを開く操作ではない
+  it('Alt + クリックでは開かない', () => {
+    expect(shouldOpenRowInNewTab(clickOn('#key', { altKey: true }))).toBe(false);
+  });
+
+  it('素の左クリックでは開かない（通常の遷移に任せる）', () => {
+    expect(shouldOpenRowInNewTab(clickOn('#key'))).toBe(false);
+  });
+
+  it('右クリックでは開かない（コンテキストメニュー）', () => {
+    expect(shouldOpenRowInNewTab(clickOn('#key', { button: 2 }))).toBe(false);
+  });
+
+  it('行内の操作要素では開かない（その要素本来の動作に任せる）', () => {
+    expect(shouldOpenRowInNewTab(clickOn('#title', { ctrlKey: true }))).toBe(false);
+    expect(shouldOpenRowInNewTab(clickOn('#checkbox', { button: 1 }))).toBe(false);
   });
 });

@@ -27,3 +27,23 @@ export function shouldActivateRow(event: MouseEvent): boolean {
   if (target?.closest?.(ROW_INTERACTIVE_SELECTOR)) return false;
   return true;
 }
+
+/**
+ * 行の操作を「別のタブ・ウィンドウで開く」として扱うか。
+ *
+ * 疑似要素で行全体を覆っていた間は、行のどこでも実リンクへの操作だったので
+ * Ctrl / Cmd + クリックと中クリックで詳細が別タブに開けた。判定を click へ移すと
+ * タイトルの文字以外でその操作が何も起きなくなるため、行側で補う。
+ *
+ * Alt + クリックは入れない。ブラウザによってはダウンロードの合図で、別タブを開く
+ * 操作ではない。
+ */
+export function shouldOpenRowInNewTab(event: MouseEvent): boolean {
+  const target = event.target as Element | null;
+  // 行内の操作要素は、その要素本来の動作（リンクなら別タブ）に任せる
+  if (target?.closest?.(ROW_INTERACTIVE_SELECTOR)) return false;
+  // 中クリック
+  if (event.button === 1) return true;
+  // 左クリック + 修飾キー
+  return event.button === 0 && (event.metaKey || event.ctrlKey || event.shiftKey);
+}
