@@ -14,3 +14,17 @@ export function shouldCloseSidebarOnNavigate(event: MouseEvent, isMobile: boolea
   }
   return !!(event.target as Element | null)?.closest?.('a');
 }
+
+/**
+ * リンクを踏まない遷移（ボタンから `navigate` を呼ぶ導線）のあと始末。
+ *
+ * 上のイベント委譲は `closest('a')` で拾うので、プログラム遷移するボタンは掛からない。
+ * サイドバーの「プロジェクトを作成」はこれに当たり、遷移してもサイドバーが開いたまま
+ * 作成画面を覆っていた。遷移する側から呼んで閉じる。
+ */
+export function closeSidebarForProgrammaticNavigate(
+  isMobile: boolean,
+  setOpenMobile: (value: boolean) => void,
+): void {
+  if (isMobile) setOpenMobile(false);
+}

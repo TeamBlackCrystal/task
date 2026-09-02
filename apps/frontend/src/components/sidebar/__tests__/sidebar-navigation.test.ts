@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { shouldCloseSidebarOnNavigate } from '../sidebar-navigation';
+import {
+  closeSidebarForProgrammaticNavigate,
+  shouldCloseSidebarOnNavigate,
+} from '../sidebar-navigation';
 
 /** サイドバーのナビを組んで、指定要素を click の target にしたイベントを作る */
 function clickOn(selector: string, init: MouseEventInit = {}) {
@@ -63,5 +66,27 @@ describe('shouldCloseSidebarOnNavigate', () => {
     ['右クリック', 2],
   ])('%s では閉じない', (_label, button) => {
     expect(shouldCloseSidebarOnNavigate(clickOn('#my-tasks', { button }), true)).toBe(false);
+  });
+});
+
+/**
+ * 「プロジェクトを作成」は <button> から navigate を呼ぶ。リンクを踏まないので
+ * イベント委譲（closest('a')）では拾えず、遷移しても作成画面がサイドバーに覆われていた。
+ */
+describe('closeSidebarForProgrammaticNavigate', () => {
+  it('モバイルなら閉じる', () => {
+    const setOpenMobile = vi.fn();
+
+    closeSidebarForProgrammaticNavigate(true, setOpenMobile);
+
+    expect(setOpenMobile).toHaveBeenCalledWith(false);
+  });
+
+  it('デスクトップでは触らない', () => {
+    const setOpenMobile = vi.fn();
+
+    closeSidebarForProgrammaticNavigate(false, setOpenMobile);
+
+    expect(setOpenMobile).not.toHaveBeenCalled();
   });
 });

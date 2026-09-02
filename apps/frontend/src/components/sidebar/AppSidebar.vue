@@ -14,7 +14,10 @@ import NavMain from '@/components/sidebar/NavMain.vue';
 import NavProjects from '@/components/sidebar/NavProjects.vue';
 import NavUser from '@/components/sidebar/NavUser.vue';
 import TenantSwitcher from '@/components/sidebar/TenantSwitcher.vue';
-import { shouldCloseSidebarOnNavigate } from '@/components/sidebar/sidebar-navigation';
+import {
+  closeSidebarForProgrammaticNavigate,
+  shouldCloseSidebarOnNavigate,
+} from '@/components/sidebar/sidebar-navigation';
 
 import {
   Sidebar,
@@ -71,7 +74,11 @@ function retryProjects() {
 }
 
 // ---- プロジェクト作成導線（編集・削除は各プロジェクトの設定ページへ集約） ----
+const { isMobile, setOpenMobile } = useSidebar();
+
 function onCreateProject() {
+  // 作成ボタンはリンクではないので、SidebarContent のイベント委譲では閉じられない
+  closeSidebarForProgrammaticNavigate(isMobile.value, setOpenMobile);
   void navigate(`/${tenantSlug.value}/projects/new`);
 }
 
@@ -90,8 +97,6 @@ const data = computed(() => ({
     },
   ],
 }));
-
-const { isMobile, setOpenMobile } = useSidebar();
 
 /** ナビから遷移したらモバイルのサイドバーを閉じる（判定は sidebar-navigation に切り出し）。 */
 function closeOnNavigate(event: MouseEvent) {
