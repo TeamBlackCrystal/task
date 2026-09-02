@@ -439,10 +439,16 @@ pub async fn delete_share(
 }
 
 // --- Public link APIs (no auth) ---
+//
+// path は routes 側の `.nest("/drive", ...)` 位置からの相対で書く。ここに
+// `/v1/drive/...` と絶対で書くと二重連結され、`/v1/drive/v1/drive/share/{token}`
+// として登録される（OpenAPI も同じ URL になり、仕様の口では 404 になる）。
+// 同じ nest に載る drive_files::get_file_content が `/files/{id}/content` と
+// 相対で書いているのが正しい形。
 
 #[utoipa::path(
     get,
-    path = "/v1/drive/share/{token}",
+    path = "/share/{token}",
     tag = "Drive Shares",
     summary = "公開リンクでフォルダメタデータ取得（認証不要）",
     params(("token" = String, Path, description = "共有トークン")),
@@ -471,7 +477,7 @@ pub async fn get_public_share_folder(
 
 #[utoipa::path(
     get,
-    path = "/v1/drive/share/{token}/files",
+    path = "/share/{token}/files",
     tag = "Drive Shares",
     summary = "公開リンク経由でファイル一覧取得（認証不要）",
     params(("token" = String, Path, description = "共有トークン")),
