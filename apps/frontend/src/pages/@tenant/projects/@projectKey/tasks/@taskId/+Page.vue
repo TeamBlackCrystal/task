@@ -51,6 +51,12 @@ const {
   priorityError,
   labelsUpdating,
   labelsError,
+  projectMembers,
+  projectMembersLoading,
+  projectMembersError,
+  assigneesUpdating,
+  assigneesError,
+  onToggleAssignee,
   fieldUpdating,
   fieldErrors,
   isLoading,
@@ -152,6 +158,11 @@ function onDeleteDialogCancel(event: Event) {
     :priority-error="priorityError"
     :labels-updating="labelsUpdating"
     :labels-error="labelsError"
+    :project-members="projectMembers"
+    :project-members-loading="projectMembersLoading"
+    :project-members-error="projectMembersError"
+    :assignees-updating="assigneesUpdating"
+    :assignees-error="assigneesError"
     :field-updating="fieldUpdating"
     :field-errors="fieldErrors"
     :loading="isLoading"
@@ -165,6 +176,7 @@ function onDeleteDialogCancel(event: Event) {
     @save:soft_deadline="onSaveSoftDeadline"
     @save:hard_deadline="onSaveHardDeadline"
     @save:label_ids="onSaveLabels"
+    @toggle:assignee="onToggleAssignee"
     :delete-disabled="deletePending"
     @delete-request="openDeleteDialog"
   >

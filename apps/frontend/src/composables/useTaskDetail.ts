@@ -13,10 +13,23 @@ const GET_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}'
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
 const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
+const LIST_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
+const ASSIGNEES_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}/assignees' as const;
+const ASSIGNEE_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}/assignees/{user_id}' as const;
+
+/**
+ * 担当者に付ける役割。
+ *
+ * backend は 1 文字以上の任意の文字列を受けるが、仕様書（docs/features/tasks/1.core.md）が
+ * `primary` を使っているのでそれに合わせる。役割を使い分ける UI はまだ無い。
+ */
+const DEFAULT_ASSIGNEE_ROLE = 'primary';
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
-export type MutatingField = EditableField | 'status_id' | 'labels' | 'priority';
+export type MutatingField = EditableField | 'status_id' | 'labels' | 'priority' | 'assignees';
 
 /**
  * コードポイント順の文字列比較。
@@ -85,6 +98,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
 
   const statusError = ref<string | null>(null);
   const priorityError = ref<string | null>(null);
+  const assigneesError = ref<string | null>(null);
   const labelsError = ref<string | null>(null);
   const deleteError = ref<string | null>(null);
   const fieldErrors = ref<Partial<Record<EditableField, string>>>({});
@@ -165,6 +179,24 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     enabled: computed(() => !!tenantId.value && !!projectId.value),
   });
 
+  // 担当者に選べるのはプロジェクトのメンバーだけ（backend も require_project_access で弾く）
+  const membersQuery = useQuery({
+    queryKey: computed(() => [
+      'get',
+      LIST_MEMBERS_PATH,
+      { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
+    ]),
+    queryFn: async ({ signal }) => {
+      const { data, error } = await fetchClient.GET(LIST_MEMBERS_PATH, {
+        params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
+        signal,
+      });
+      if (error) throw error;
+      return data;
+    },
+    enabled: computed(() => !!tenantId.value && !!projectId.value),
+  });
+
   watch(
     () => taskQuery.data.value?.status_id,
     (statusId) => {
@@ -192,6 +224,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
 
   const statusUpdating = computed(() => pendingFieldRevisions.value.status_id !== undefined);
   const priorityUpdating = computed(() => pendingFieldRevisions.value.priority !== undefined);
+  const assigneesUpdating = computed(() => pendingFieldRevisions.value.assignees !== undefined);
   const labelsUpdating = computed(() => pendingFieldRevisions.value.labels !== undefined);
 
   const updateTaskMutation = apiClient.useMutation('put', GET_TASK_PATH);
@@ -242,6 +275,10 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       labelsError.value = 'ラベルの更新に失敗しました';
       return;
     }
+    if (field === 'assignees') {
+      assigneesError.value = '担当者の更新に失敗しました';
+      return;
+    }
     fieldErrors.value = {
       ...fieldErrors.value,
       [field]: '更新に失敗しました',
@@ -279,6 +316,8 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       priorityError.value = null;
     } else if (field === 'labels') {
       labelsError.value = null;
+    } else if (field === 'assignees') {
+      assigneesError.value = null;
     } else {
       fieldErrors.value = { ...fieldErrors.value, [field]: undefined };
     }
@@ -297,6 +336,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     if (field === 'status_id') statusError.value = null;
     else if (field === 'priority') priorityError.value = null;
     else if (field === 'labels') labelsError.value = null;
+    else if (field === 'assignees') assigneesError.value = null;
     else fieldErrors.value = { ...fieldErrors.value, [field]: undefined };
 
     // mutate() のコールバックは observer の unmount（分割ビューのペイン切替）で
@@ -401,6 +441,63 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     mutateTask({ hard_deadline: iso }, { hard_deadline: iso }, 'hard_deadline');
   }
 
+  /**
+   * 担当者を 1 人ずつ付け外しする。
+   *
+   * 担当者は PUT /tasks/{id} では変えられず（UpdateTaskRequest に assignees が無い）、
+   * 専用の POST / DELETE を使う。共通の mutateTask は単一の PUT 前提なので、
+   * 楽観的更新とロールバックだけ同じ枠組みに載せて送信はここで行う。
+   */
+  function onToggleAssignee(userId: string) {
+    const current = taskQuery.data.value;
+    if (!current || !tenantId.value || !projectId.value || !taskId.value) return;
+
+    const assigned = current.assignees.find((assignee) => assignee.user.id === userId);
+    const member = (membersQuery.data.value ?? []).find((entry) => entry.user.id === userId);
+    // 一覧に無い相手は backend でも弾かれる（プロジェクト外）
+    if (!assigned && !member) return;
+
+    const nextAssignees = assigned
+      ? current.assignees.filter((assignee) => assignee.user.id !== userId)
+      : [...current.assignees, { role: DEFAULT_ASSIGNEE_ROLE, user: member!.user }];
+
+    const revision = ++nextMutationRevision;
+    optimisticTask.value = { ...optimisticTask.value, assignees: nextAssignees };
+    pendingFieldRevisions.value = { ...pendingFieldRevisions.value, assignees: revision };
+    assigneesError.value = null;
+
+    const path = {
+      tenant_id: tenantId.value,
+      project_id: projectId.value,
+      id: taskId.value,
+    };
+    const request = assigned
+      ? fetchClient.DELETE(ASSIGNEE_PATH, { params: { path: { ...path, user_id: userId } } })
+      : fetchClient.POST(ASSIGNEES_PATH, {
+          params: { path },
+          body: { user_id: userId, role: DEFAULT_ASSIGNEE_ROLE },
+        });
+
+    void request
+      .then(({ error }) => {
+        if (error) throw error;
+        // 応答はタスク全体ではないので、確定値はタスクを取り直して受ける
+        return queryClient.invalidateQueries({ queryKey: taskQueryKey.value });
+      })
+      .then(() => {
+        if (pendingFieldRevisions.value.assignees !== revision) return;
+        const nextOptimistic = { ...optimisticTask.value };
+        delete nextOptimistic.assignees;
+        optimisticTask.value = nextOptimistic;
+        const nextPending = { ...pendingFieldRevisions.value };
+        delete nextPending.assignees;
+        pendingFieldRevisions.value = nextPending;
+        void invalidateTaskListCaches();
+        params.onAfterFieldSaved?.('assignees');
+      })
+      .catch(() => rollbackOptimistic('assignees', revision));
+  }
+
   function onSaveLabels(labelIds: string[]) {
     const current = taskQuery.data.value;
     if (!current) return;
@@ -479,6 +576,12 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     priorityUpdating,
     priorityError,
     onPriorityChange,
+    projectMembers: computed(() => membersQuery.data.value ?? []),
+    projectMembersLoading: computed(() => membersQuery.isLoading.value),
+    projectMembersError: computed(() => membersQuery.isError.value),
+    assigneesUpdating,
+    assigneesError,
+    onToggleAssignee,
     labelsUpdating,
     labelsError,
     fieldUpdating,

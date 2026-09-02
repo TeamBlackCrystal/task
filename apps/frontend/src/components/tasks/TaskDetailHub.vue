@@ -36,6 +36,7 @@ import '@/lib/remark-kfm-mermaid/style.css';
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type StatusOption = components['schemas']['ProjectStatusResponse'];
 type LabelOption = components['schemas']['LabelResponse'];
+type MemberOption = components['schemas']['ProjectMemberResponse'];
 
 const props = defineProps<{
   task: TaskDetail | null;
@@ -51,6 +52,11 @@ const props = defineProps<{
   projectLabelsError?: boolean;
   labelsUpdating?: boolean;
   labelsError?: string | null;
+  projectMembers?: MemberOption[];
+  projectMembersLoading?: boolean;
+  projectMembersError?: boolean;
+  assigneesUpdating?: boolean;
+  assigneesError?: string | null;
   fieldUpdating?: Partial<Record<EditableField, boolean>>;
   fieldErrors?: Partial<Record<EditableField, string>>;
   loading?: boolean;
@@ -89,6 +95,7 @@ const emit = defineEmits<{
   'save:soft_deadline': [value: string | null];
   'save:hard_deadline': [value: string | null];
   'save:label_ids': [value: string[]];
+  'toggle:assignee': [userId: string];
   'delete-request': [];
 }>();
 
@@ -557,7 +564,43 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
           </section>
 
           <section class="rounded-lg border p-4">
-            <h2 class="mb-3 text-sm font-medium text-muted-foreground">担当者</h2>
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="text-sm font-medium text-muted-foreground">担当者</h2>
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    class="size-7"
+                    aria-label="担当者を編集"
+                    :disabled="assigneesUpdating || projectMembersLoading"
+                  >
+                    <Pencil class="size-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <p v-if="projectMembersError" class="px-2 py-1.5 text-sm text-destructive">
+                    メンバーを読み込めませんでした
+                  </p>
+                  <p
+                    v-else-if="!projectMembers?.length"
+                    class="px-2 py-1.5 text-sm text-muted-foreground"
+                  >
+                    メンバーがいません
+                  </p>
+                  <DropdownMenuCheckboxItem
+                    v-for="member in projectMembers"
+                    :key="member.user.id"
+                    :model-value="task.assignees.some((a) => a.user.id === member.user.id)"
+                    :disabled="assigneesUpdating || projectMembersError"
+                    @update:model-value="() => emit('toggle:assignee', member.user.id)"
+                  >
+                    {{ member.user.username }}
+                  </DropdownMenuCheckboxItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <AvatarGroup
               v-if="task.assignees.length"
               :users="task.assignees.map((a) => a.user)"
@@ -565,6 +608,7 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               hide-names
             />
             <p v-else class="text-sm text-muted-foreground">未割当</p>
+            <p v-if="assigneesError" class="mt-2 text-xs text-destructive">{{ assigneesError }}</p>
           </section>
 
           <section class="rounded-lg border p-4">

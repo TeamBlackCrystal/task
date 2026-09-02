@@ -56,6 +56,88 @@ const featureLabel: components['schemas']['LabelResponse'] = {
   project_id: 'project-id',
 };
 
+const members: components['schemas']['ProjectMemberResponse'][] = [
+  {
+    id: 'member-1',
+    project_id: 'project-id',
+    role: 'Member',
+    user_id: 'user-1',
+    user: { id: 'user-1', username: 'yupix', avatar_url: null },
+  },
+  {
+    id: 'member-2',
+    project_id: 'project-id',
+    role: 'Member',
+    user_id: 'user-2',
+    user: { id: 'user-2', username: 'someone', avatar_url: null },
+  },
+];
+
+function mountWithMembers(overrides: Record<string, unknown> = {}) {
+  return mount(TaskDetailHub, {
+    props: {
+      task,
+      projectKey: 'TEST',
+      statuses: [],
+      statusId: task.status_id,
+      projectMembers: members,
+      ...overrides,
+    },
+    attachTo: document.body,
+  });
+}
+
+describe('TaskDetailHub 担当者', () => {
+  /**
+   * 担当者は PUT /tasks/{id} では変えられず（UpdateTaskRequest に assignees が無い）、
+   * 画面にも変更 UI が無かったため、どこからも割り当てられなかった。
+   */
+  it('メンバーを選ぶと toggle:assignee を emit する', async () => {
+    const wrapper = mountWithMembers();
+
+    await wrapper.get('button[aria-label="担当者を編集"]').trigger('click');
+    const items = document.body.querySelectorAll('[role="menuitemcheckbox"]');
+    expect(items).toHaveLength(2);
+
+    (items[0] as HTMLElement).click();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.emitted('toggle:assignee')).toEqual([['user-1']]);
+  });
+
+  it('割り当て済みのメンバーにはチェックが付く', async () => {
+    const wrapper = mountWithMembers({
+      task: { ...task, assignees: [{ role: 'primary', user: members[1]!.user }] },
+    });
+
+    await wrapper.get('button[aria-label="担当者を編集"]').trigger('click');
+    const items = [...document.body.querySelectorAll('[role="menuitemcheckbox"]')];
+
+    expect(items[0]?.getAttribute('aria-checked')).toBe('false');
+    expect(items[1]?.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('更新中は担当者を触れない', () => {
+    const wrapper = mountWithMembers({ assigneesUpdating: true });
+
+    expect(wrapper.get('button[aria-label="担当者を編集"]').attributes('disabled')).toBeDefined();
+  });
+
+  it('担当者の更新に失敗したら理由を出す', () => {
+    const wrapper = mountWithMembers({ assigneesError: '担当者の更新に失敗しました' });
+
+    expect(wrapper.text()).toContain('担当者の更新に失敗しました');
+  });
+
+  it('メンバーを読み込めなければその旨を出す', async () => {
+    const wrapper = mountWithMembers({ projectMembers: [], projectMembersError: true });
+
+    await wrapper.get('button[aria-label="担当者を編集"]').trigger('click');
+
+    expect(document.body.textContent).toContain('メンバーを読み込めませんでした');
+  });
+});
+
 describe('TaskDetailHub', () => {
   /**
    * 優先度は表示だけで変更できなかった（作成時にしか決められなかった）。
