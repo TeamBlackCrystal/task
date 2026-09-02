@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { createPinia, setActivePinia } from 'pinia';
 import { expect, fn, userEvent, within } from 'storybook/test';
-import CreateTenantDialog from '@/components/sidebar/CreateTenantDialog.vue';
+import CreateTenantDialog from '@/components/header/CreateTenantDialog.vue';
 import { useTenantStore } from '@/stores/tenant';
 
 const createTenant = fn(async () => ({ display_id: 'acme' }));

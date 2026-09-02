@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar';
-import { useAuthSession } from '@/composables/useAuthSession';
 import { useRouteAlignedTenantId } from '@/composables/useRouteAlignedTenantId';
-import { useAuthStore } from '@/stores/auth';
-import { useTenantStore, type Tenant } from '@/stores/tenant';
+import { useTenantStore } from '@/stores/tenant';
 import { useProjectsQuery } from '@/lib/api-vue-query';
 import { usePageContext } from 'vike-vue/usePageContext';
 import { navigate } from 'vike/client/router';
@@ -12,30 +10,19 @@ import { computed, watch } from 'vue';
 import { ListTodo } from '@lucide/vue';
 import NavMain from '@/components/sidebar/NavMain.vue';
 import NavProjects from '@/components/sidebar/NavProjects.vue';
-import NavUser from '@/components/sidebar/NavUser.vue';
-import TenantSwitcher from '@/components/sidebar/TenantSwitcher.vue';
 import {
   closeSidebarForProgrammaticNavigate,
   shouldCloseSidebarOnNavigate,
 } from '@/components/sidebar/sidebar-navigation';
 
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarRail,
-  useSidebar,
-} from '@/components/ui/sidebar';
+import { Sidebar, SidebarContent, SidebarRail, useSidebar } from '@/components/ui/sidebar';
 
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: 'icon',
 });
 
 const pageContext = usePageContext();
-const authStore = useAuthStore();
 const tenantStore = useTenantStore();
-const { logout } = useAuthSession();
 
 const tenantSlug = computed(() => {
   const { tenant } = pageContext.routeParams;
@@ -61,14 +48,6 @@ const navProjectsLoading = computed(
 
 watch(tenantSlug, (slug) => void tenantStore.loadTenants(slug || undefined), { immediate: true });
 
-function selectTenant(tenant: Tenant) {
-  tenantStore.selectTenant(tenant);
-  if (tenant.display_id !== tenantSlug.value) {
-    // Use a full navigation so tenant-scoped application state is reset.
-    window.location.assign(`/${tenant.display_id}/my-tasks`);
-  }
-}
-
 function retryProjects() {
   void projectsQuery.refetch();
 }
@@ -83,11 +62,6 @@ function onCreateProject() {
 }
 
 const data = computed(() => ({
-  user: {
-    name: authStore.user?.username ?? 'User',
-    email: authStore.user?.email ?? '',
-    avatar: authStore.user?.avatar_url ?? '',
-  },
   navMain: [
     {
       title: 'My Tasks',
@@ -106,16 +80,6 @@ function closeOnNavigate(event: MouseEvent) {
 
 <template>
   <Sidebar v-bind="props">
-    <SidebarHeader>
-      <TenantSwitcher
-        :tenants="tenantStore.tenants"
-        :selected-tenant-id="tenantStore.selectedTenantId"
-        :loading="tenantStore.isLoading"
-        :error="tenantStore.error"
-        @select="selectTenant"
-        @retry="tenantStore.loadTenants(tenantSlug)"
-      />
-    </SidebarHeader>
     <SidebarContent @click="closeOnNavigate">
       <!-- テナント外のページ（/settings/... など）ではテナント文脈が無く、
            リンク先も一覧も作れないためテナント依存のナビ自体を出さない。 -->
@@ -131,9 +95,6 @@ function closeOnNavigate(event: MouseEvent) {
         @create="onCreateProject"
       />
     </SidebarContent>
-    <SidebarFooter>
-      <NavUser :user="data.user" :on-logout="logout" />
-    </SidebarFooter>
     <SidebarRail />
   </Sidebar>
 </template>
