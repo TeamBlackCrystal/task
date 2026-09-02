@@ -20219,7 +20219,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Scope"
-            }
+            },
+            "minItems": 1
           },
           "tenant_id": {
             "type": "string",
