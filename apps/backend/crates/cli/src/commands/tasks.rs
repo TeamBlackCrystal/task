@@ -134,11 +134,13 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
             let body = match resolve_body(body, body_file, "comment body")? {
                 Some(text) => text,
                 None => read_stdin("comment body")?
+                    .unwrap_or_default()
                     .trim_end_matches(['\n', '\r'])
                     .to_string(),
             };
             if body.is_empty() {
-                return Err(CliError::new("Comment body is required"));
+                // 引数・投入の検証エラーは 2（README の終了コード表）
+                return Err(CliError::validation("Comment body is required"));
             }
             let target = check_task_target(&task_ref, project.as_deref())?;
             let api = &context.connect()?;

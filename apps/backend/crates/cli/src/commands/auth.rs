@@ -22,7 +22,7 @@ pub async fn run(command: AuthCommand, context: &Context, output: OutputOptions)
                 .filter(|v| !v.is_empty())
             {
                 Some(token) => token,
-                None => read_stdin("token")?.trim().to_string(),
+                None => read_stdin("token")?.unwrap_or_default().trim().to_string(),
             };
             if token.is_empty() {
                 return Err(CliError::new("Token is required"));
