@@ -18,6 +18,7 @@ pub struct CreateFolderRequest {
 pub struct UpdateFolderRequest {
     pub name: Option<String>,
     /// `null` でルートへ移動。フィールド省略時は変更なし。
+    #[serde(default, deserialize_with = "crate::nullable::deserialize_some")]
     #[schema(value_type = String, format = "uuid", nullable)]
     pub parent_id: Option<Option<Uuid>>,
 }

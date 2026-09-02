@@ -225,6 +225,104 @@ pub fn is_editable_mime(mime: &str) -> bool {
     )
 }
 
+/// プロジェクト配下のリソース（ファイル・フォルダ）にアクセスできるか。
+///
+/// ファイル ID だけで引ける配信経路があるため、プロジェクトの所属だけを見ると
+/// テナント境界を越えられる。テナントに入れることを先に確かめてから、
+/// メンバー未指定のプロジェクトはテナント全体に開放する（#568）。
+///
+/// drive_files と drive_folders の両ハンドラーが同じ判定を使うので service に置く。
+pub async fn can_access_project(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, AppError> {
+    if is_tenant_owner(db, tenant_id, user_id).await? {
+        return Ok(true);
+    }
+    if !crate::access::is_tenant_member(db, tenant_id, user_id).await? {
+        return Ok(false);
+    }
+    crate::access::project_is_open_or_member(db, project_id, user_id).await
+}
+
+/// プロジェクト作成時に自動生成されたルートフォルダか。
+///
+/// `create_project` が「1 プロジェクト = 1 ルートフォルダ」で作るもの（`project_id` 付き・
+/// 親なし）。これを直接削除・移動できると、プロジェクトとドライブの対応が壊れる。
+/// 破棄はプロジェクト削除の CASCADE に任せる。
+pub fn is_project_root_folder(folder: &entity::drive_folders::Model) -> bool {
+    folder.project_id.is_some() && folder.parent_id.is_none()
+}
+
+/// フォルダの子孫フォルダ ID を集める（自身は含まない）。
+///
+/// 階層は通常浅い（3〜5 段）が、深さを前提にしない反復で辿る。移動時に配下の
+/// `project_id` を揃えるために使う。
+pub async fn descendant_folder_ids<C: ConnectionTrait>(
+    conn: &C,
+    folder_id: Uuid,
+) -> Result<Vec<Uuid>, AppError> {
+    let mut collected = Vec::new();
+    let mut frontier = vec![folder_id];
+
+    while !frontier.is_empty() {
+        let children: Vec<Uuid> = entity::drive_folders::Entity::find()
+            .filter(entity::drive_folders::Column::ParentId.is_in(frontier.clone()))
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|folder| folder.id)
+            .collect();
+
+        // 循環は validate_parent_folder が作らせないが、万一混ざっても止まるように
+        // 既知の ID は辿らない
+        frontier = children
+            .into_iter()
+            .filter(|id| !collected.contains(id) && *id != folder_id)
+            .collect();
+        collected.extend(frontier.iter().copied());
+    }
+
+    Ok(collected)
+}
+
+/// フォルダとその配下（フォルダ・ファイル）の `project_id` を揃える。
+///
+/// 移動でプロジェクト境界を跨いだとき、配下だけ古い `project_id` を持つと
+/// 「プロジェクトファイルなのに別プロジェクトの配下に居る」状態になり、
+/// 配信の認可（`project_id` で判定する）が階層と食い違う。
+/// 呼び出し側がトランザクションを渡し、移動と同一トランザクションで揃える。
+pub async fn sync_subtree_project_id<C: ConnectionTrait>(
+    txn: &C,
+    folder_id: Uuid,
+    project_id: Option<Uuid>,
+) -> Result<(), AppError> {
+    let mut folder_ids = vec![folder_id];
+    folder_ids.extend(descendant_folder_ids(txn, folder_id).await?);
+
+    entity::drive_folders::Entity::update_many()
+        .col_expr(
+            entity::drive_folders::Column::ProjectId,
+            sea_orm::sea_query::Expr::value(project_id),
+        )
+        .filter(entity::drive_folders::Column::Id.is_in(folder_ids.clone()))
+        .exec(txn)
+        .await?;
+
+    entity::drive_files::Entity::update_many()
+        .col_expr(
+            entity::drive_files::Column::ProjectId,
+            sea_orm::sea_query::Expr::value(project_id),
+        )
+        .filter(entity::drive_files::Column::FolderId.is_in(folder_ids))
+        .exec(txn)
+        .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
