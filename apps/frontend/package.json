@@ -21,8 +21,14 @@
     "verify": "vue-tsc --noEmit && vp lint && vp fmt --check"
   },
   "dependencies": {
+    "@codemirror/commands": "catalog:",
+    "@codemirror/lang-markdown": "catalog:",
+    "@codemirror/language": "catalog:",
+    "@codemirror/state": "catalog:",
+    "@codemirror/view": "catalog:",
     "@elysiajs/static": "1.4.10",
     "@koyori-app/openapi-vue-query": "0.1.4",
+    "@lezer/highlight": "catalog:",
     "@lucide/vue": "1.31.0",
     "@phosphor-icons/vue": "2.2.1",
     "@sentry/vue": "10.69.0",

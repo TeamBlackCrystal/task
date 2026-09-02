@@ -37,6 +37,14 @@ vi.mock('@/lib/api-vue-query', async (importOriginal) => {
   };
 });
 
+/*
+ * MarkdownEditor (CodeMirror) は happy-dom では起動できないため textarea の
+ * 代役に差し替える (説明は stub 側)。実物は story が実ブラウザで見る。
+ */
+vi.mock('@/components/markdown/MarkdownEditor.vue', async () => ({
+  default: (await import('@/components/markdown/__tests__/markdown-editor-stub')).default,
+}));
+
 import CreateTaskDialog from '../CreateTaskDialog.vue';
 
 const statuses = [

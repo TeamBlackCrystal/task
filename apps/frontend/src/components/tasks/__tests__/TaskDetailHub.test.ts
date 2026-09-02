@@ -1,9 +1,20 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 import type { components } from '@/generated/api';
+
+/*
+ * MarkdownEditor (CodeMirror) は happy-dom では起動できない。ここで見たいのは
+ * 「TaskDetailHub が下書きを編集器へ渡し、編集中は KFM 表示を引っ込める」という
+ * 器側の配線なので、編集器は textarea の代役に差し替える (代役の説明は stub 側)。
+ * 実物の CodeMirror は実ブラウザで動く story (TaskDetail.stories.ts の説明編集) が見る。
+ */
+vi.mock('@/components/markdown/MarkdownEditor.vue', async () => ({
+  default: (await import('@/components/markdown/__tests__/markdown-editor-stub')).default,
+}));
+
 import TaskDetailHub from '../TaskDetailHub.vue';
 
 enableAutoUnmount(afterEach);
