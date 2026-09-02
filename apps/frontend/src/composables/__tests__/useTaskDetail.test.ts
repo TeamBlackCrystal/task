@@ -10,74 +10,123 @@ const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as
 const TASK_SEARCH_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/search' as const;
 
 // vi.mock の factory から参照するため hoisted に置く
-const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl, fetchMock } =
-  vi.hoisted(() => {
-    const TENANT_ID = 'tenant-1';
-    const PROJECT_ID = 'project-1';
-    const TASK_SEQ_KEY = 'ENG-1';
+const {
+  TENANT_ID,
+  PROJECT_ID,
+  TASK_SEQ_KEY,
+  OTHER_TASK_SEQ_KEY,
+  baseTask,
+  otherTask,
+  putControl,
+  labelsControl,
+  membersControl,
+  assigneeControl,
+  fetchMock,
+} = vi.hoisted(() => {
+  const TENANT_ID = 'tenant-1';
+  const PROJECT_ID = 'project-1';
+  const TASK_SEQ_KEY = 'ENG-1';
+  const OTHER_TASK_SEQ_KEY = 'ENG-2';
 
-    const baseTask = {
-      id: '00000000-0000-0000-0000-000000000010',
-      seq_key: TASK_SEQ_KEY,
-      title: '元のタイトル',
-      description: null,
-      status_id: 'status-1',
-      priority: 'Medium',
-      progress_pct: 0,
-      soft_deadline: null,
-      hard_deadline: null,
-      // テストごとに差し替えるため、空配列（never[]）に推論させない
-      labels: [] as Record<string, unknown>[],
-    };
+  const baseTask = {
+    id: '00000000-0000-0000-0000-000000000010',
+    seq_key: TASK_SEQ_KEY,
+    title: '元のタイトル',
+    description: null,
+    status_id: 'status-1',
+    priority: 'Medium',
+    progress_pct: 0,
+    soft_deadline: null,
+    hard_deadline: null,
+    // テストごとに差し替えるため、空配列（never[]）に推論させない
+    labels: [] as Record<string, unknown>[],
+    assignees: [] as Record<string, unknown>[],
+  };
 
-    function jsonResponse(body: unknown, status = 200) {
-      return new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
+  const otherTask = {
+    ...baseTask,
+    id: '00000000-0000-0000-0000-000000000011',
+    seq_key: OTHER_TASK_SEQ_KEY,
+    title: '別のタスク',
+    assignees: [] as Record<string, unknown>[],
+  };
+
+  function jsonResponse(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // PUT を保留して任意のタイミングで完了（成功/失敗）させるための deferred
+  const putControl: {
+    resolve?: (task: Record<string, unknown>) => void;
+    fail?: (status?: number) => void;
+  } = {};
+
+  // ラベル一覧 GET の応答をテストごとに切り替える
+  const labelsControl: { mode: 'success' | 'error' | 'pending'; data: unknown[] } = {
+    mode: 'success',
+    data: [],
+  };
+
+  const membersControl: { data: unknown[] } = { data: [] };
+
+  // 担当者の POST を保留して任意のタイミングで完了させるための deferred
+  const assigneeControl: { resolve?: () => void } = {};
+
+  const fetchMock = async (input: Request) => {
+    const url = input.url;
+    const method = input.method.toUpperCase();
+
+    if (method === 'GET' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+      return jsonResponse(baseTask);
+    }
+    if (method === 'GET' && url.endsWith(`/tasks/${OTHER_TASK_SEQ_KEY}`)) {
+      return jsonResponse(otherTask);
+    }
+    if (method === 'GET' && url.endsWith('/members')) {
+      return jsonResponse(membersControl.data);
+    }
+    if (method === 'POST' && url.includes('/assignees')) {
+      return new Promise<Response>((resolve) => {
+        assigneeControl.resolve = () => resolve(new Response(null, { status: 201 }));
       });
     }
+    if (method === 'GET' && url.endsWith('/statuses')) {
+      return jsonResponse([]);
+    }
+    if (method === 'GET' && url.endsWith('/labels')) {
+      if (labelsControl.mode === 'pending') return new Promise<Response>(() => {});
+      if (labelsControl.mode === 'error') return jsonResponse({ message: 'boom' }, 500);
+      return jsonResponse(labelsControl.data);
+    }
+    if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+      return new Promise<Response>((resolve) => {
+        putControl.resolve = (task) => resolve(jsonResponse(task));
+        putControl.fail = (status = 400) => resolve(jsonResponse({ message: 'invalid' }, status));
+      });
+    }
+    if (method === 'DELETE' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
+      return new Response(null, { status: 204 });
+    }
+    return jsonResponse({ message: 'not found' }, 404);
+  };
 
-    // PUT を保留して任意のタイミングで完了（成功/失敗）させるための deferred
-    const putControl: {
-      resolve?: (task: Record<string, unknown>) => void;
-      fail?: (status?: number) => void;
-    } = {};
-
-    // ラベル一覧 GET の応答をテストごとに切り替える
-    const labelsControl: { mode: 'success' | 'error' | 'pending'; data: unknown[] } = {
-      mode: 'success',
-      data: [],
-    };
-
-    const fetchMock = async (input: Request) => {
-      const url = input.url;
-      const method = input.method.toUpperCase();
-
-      if (method === 'GET' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-        return jsonResponse(baseTask);
-      }
-      if (method === 'GET' && url.endsWith('/statuses')) {
-        return jsonResponse([]);
-      }
-      if (method === 'GET' && url.endsWith('/labels')) {
-        if (labelsControl.mode === 'pending') return new Promise<Response>(() => {});
-        if (labelsControl.mode === 'error') return jsonResponse({ message: 'boom' }, 500);
-        return jsonResponse(labelsControl.data);
-      }
-      if (method === 'PUT' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-        return new Promise<Response>((resolve) => {
-          putControl.resolve = (task) => resolve(jsonResponse(task));
-          putControl.fail = (status = 400) => resolve(jsonResponse({ message: 'invalid' }, status));
-        });
-      }
-      if (method === 'DELETE' && url.endsWith(`/tasks/${TASK_SEQ_KEY}`)) {
-        return new Response(null, { status: 204 });
-      }
-      return jsonResponse({ message: 'not found' }, 404);
-    };
-
-    return { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl, fetchMock };
-  });
+  return {
+    TENANT_ID,
+    PROJECT_ID,
+    TASK_SEQ_KEY,
+    OTHER_TASK_SEQ_KEY,
+    baseTask,
+    otherTask,
+    putControl,
+    labelsControl,
+    membersControl,
+    assigneeControl,
+    fetchMock,
+  };
+});
 
 vi.mock('@/lib/api-vue-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api-vue-query')>();
@@ -169,6 +218,58 @@ describe('useTaskDetail のキャッシュ同期', () => {
     labelsControl.mode = 'success';
     labelsControl.data = [];
     baseTask.labels = [];
+  });
+
+  /**
+   * 担当者の更新は専用の POST / DELETE を使うため、共通の mutateTask を通らない。
+   * 応答を待つ間に別タスクへ移ると、リアクティブな query key を使っていると
+   * 更新したタスクではなく移動先を invalidate してしまう。
+   */
+  it('応答前に別タスクへ移っても、更新したタスクのキャッシュを invalidate する', async () => {
+    membersControl.data = [
+      {
+        id: 'member-1',
+        project_id: PROJECT_ID,
+        role: 'Member',
+        user_id: 'user-1',
+        user: { id: 'user-1', username: 'yupix', avatar_url: null },
+      },
+    ];
+    const currentTaskId = ref(TASK_SEQ_KEY);
+    const Host = defineComponent({
+      setup() {
+        detail = useTaskDetail({
+          tenantDisplayId: 'acme',
+          projectKey: 'ENG',
+          taskId: currentTaskId,
+          onAfterDelete,
+        });
+        return () => null;
+      },
+    });
+    mount(Host, { global: { plugins: [[VueQueryPlugin, { queryClient }]] } });
+    await flushPromises();
+
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    detail.onToggleAssignee('user-1');
+    await flushPromises();
+
+    // 応答を待たずに別タスクへ移る（分割ビューでの選択替え）
+    currentTaskId.value = OTHER_TASK_SEQ_KEY;
+    await flushPromises();
+
+    assigneeControl.resolve?.();
+    await flushPromises();
+
+    const detailInvalidations = invalidateSpy.mock.calls
+      .map(([arg]) => (arg as { queryKey?: readonly unknown[] } | undefined)?.queryKey)
+      .filter((key): key is readonly unknown[] => key?.[1] === GET_TASK_PATH);
+
+    expect(detailInvalidations).not.toHaveLength(0);
+    for (const key of detailInvalidations) {
+      expect(key).toEqual(taskQueryKey);
+    }
   });
 
   it('ラベル一覧の取得失敗は projectLabelsError として公開し、詳細全体の isError にはしない', async () => {

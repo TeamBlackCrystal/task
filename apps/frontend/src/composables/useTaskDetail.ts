@@ -471,6 +471,10 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       project_id: projectId.value,
       id: taskId.value,
     };
+    // 送信先と同じく query key も開始時点で固定する。分割ビューで応答を待たずに
+    // 別タスクへ移ると taskQueryKey は移動先のキーへ変わるので、リアクティブな値を
+    // 使うと更新したタスクのキャッシュが古いまま残り、無関係な移動先を取り直す
+    const queryKey = taskQueryKey.value;
     const request = assigned
       ? fetchClient.DELETE(ASSIGNEE_PATH, { params: { path: { ...path, user_id: userId } } })
       : fetchClient.POST(ASSIGNEES_PATH, {
@@ -482,7 +486,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       .then(({ error }) => {
         if (error) throw error;
         // 応答はタスク全体ではないので、確定値はタスクを取り直して受ける
-        return queryClient.invalidateQueries({ queryKey: taskQueryKey.value });
+        return queryClient.invalidateQueries({ queryKey });
       })
       .then(() => {
         if (pendingFieldRevisions.value.assignees !== revision) return;
