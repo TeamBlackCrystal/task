@@ -55,8 +55,10 @@ export function taskListPlaceholderData<T>(
 export function useTaskLabelFilter(
   pagination: Ref<PaginationState>,
   projectKey: Readonly<Ref<string>>,
+  /** URL から復元した初期値（`null` は「すべて」） */
+  initialLabelId: string | null = null,
 ) {
-  const selectedLabelId = ref<string | null>(null);
+  const selectedLabelId = ref<string | null>(initialLabelId);
 
   watch(selectedLabelId, () => {
     pagination.value = { ...pagination.value, pageIndex: 0 };

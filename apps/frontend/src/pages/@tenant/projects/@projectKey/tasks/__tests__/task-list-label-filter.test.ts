@@ -133,4 +133,33 @@ describe('タスク一覧のラベルフィルタ', () => {
     expect(pagination.value.pageIndex).toBe(0);
     scope.stop();
   });
+
+  // URL から復元した絞り込みを初期値として受ける（リロード・戻りでの保持）
+  it('初期値を渡すとその絞り込みから始まる', () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 2, pageSize: 20 });
+    const projectKey = ref('ENG');
+    let selectedLabelId: ReturnType<typeof useTaskLabelFilter>['selectedLabelId'] | undefined;
+    scope.run(() => {
+      selectedLabelId = useTaskLabelFilter(pagination, projectKey, 'label-bug').selectedLabelId;
+    });
+
+    expect(selectedLabelId!.value).toBe('label-bug');
+    // 初期値を据えただけでページを先頭へ戻さない（復元したページが消える）
+    expect(pagination.value.pageIndex).toBe(2);
+    scope.stop();
+  });
+
+  it('初期値を渡さなければ「すべて」から始まる', () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    let selectedLabelId: ReturnType<typeof useTaskLabelFilter>['selectedLabelId'] | undefined;
+    scope.run(() => {
+      selectedLabelId = useTaskLabelFilter(pagination, projectKey).selectedLabelId;
+    });
+
+    expect(selectedLabelId!.value).toBeNull();
+    scope.stop();
+  });
 });
