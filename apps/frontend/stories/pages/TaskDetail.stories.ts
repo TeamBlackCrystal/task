@@ -604,14 +604,146 @@ export const DescriptionEdit: Story = {
     ).resolves.toBeInTheDocument();
 
     await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
-    const textarea = await canvas.findByRole('textbox', { name: '説明' });
-    await user.clear(textarea);
-    await user.type(textarea, '更新後の説明');
+    // 編集器は CodeMirror (contenteditable)。form 要素ではないので user.clear は使えず、
+    // 全選択して打ち直す。role=textbox / 名前「説明」は contentAttributes 経由で付く
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await expect(editor).toHaveAttribute('contenteditable', 'true');
+    await expect(editor.textContent).toBe('OIDC フローとセッション管理を実装する。');
+    await user.click(editor);
+    // user.type は既定で対象をクリックし直して選択を潰すため、全選択のあとは
+    // keyboard で直接打つ
+    await user.keyboard('{Control>}a{/Control}');
+    await user.keyboard('更新後の説明');
     await user.tab();
 
     await expect(canvas.findByText('更新後の説明')).resolves.toBeInTheDocument();
     const puts = (DescriptionEdit as { puts?: unknown[] }).puts ?? [];
     await expect(puts).toContainEqual({ description: '更新後の説明' });
+  },
+};
+
+export const DescriptionEditorMarkdown: Story = {
+  name: '説明編集（markdown の着色）',
+  beforeEach: () => createMockFetch(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+    await user.keyboard('# 見出し{Enter}**強調** と `コード`');
+
+    // 見出しと強調が地の文と違う描かれ方になる (= markdown として解釈されている)。
+    // 実値ではなく相対比較にして、テーマの色替えで壊れないようにする
+    const heading = editor.querySelector('.cm-line:first-child span');
+    await expect(heading).not.toBeNull();
+    await expect(getComputedStyle(heading as Element).fontWeight).toBe('600');
+    // 行の折り返しが有効 (長い 1 行が器を押し広げない)
+    await expect(editor.scrollWidth).toBeLessThanOrEqual(editor.clientWidth + 1);
+  },
+};
+
+export const DescriptionEditorTab: Story = {
+  name: '説明編集（Tab はリスト内でだけ字下げ）',
+  beforeEach: () => createMockFetch(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+
+    // リスト項目の中では字下げになる (入れ子リストが打てないと markdown が書けない)。
+    // Enter でリスト記号は自動で継がれるので、2 行目は本文だけ打つ
+    await user.keyboard('- 親{Enter}子');
+    await user.keyboard('{Tab}');
+    await expect(editor).toHaveFocus();
+    await expect(editor.textContent).toContain('  - 子');
+
+    // 地の文では字下げにせず、既定どおりフォーカスを次へ渡す
+    // (常に奪うと blur で確定する inline 編集から出られなくなる)
+    await user.keyboard('{Control>}a{/Control}');
+    await user.keyboard('ただの本文');
+    await user.keyboard('{Tab}');
+    await expect(editor).not.toHaveFocus();
+  },
+};
+
+export const DescriptionEditorSubmitShortcut: Story = {
+  name: '説明編集（Mod-Enter で確定）',
+  beforeEach: () => {
+    const puts: unknown[] = [];
+    const restore = createMockFetch({
+      onPut: (body) => puts.push(body),
+    });
+    (DescriptionEditorSubmitShortcut as { puts?: unknown[] }).puts = puts;
+    return restore;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+    // リストの中は Tab が字下げに使われる = Tab では抜けられない文脈。
+    // そこからキーボードだけで確定して抜けられることを示す
+    await user.keyboard('- 一覧の項目');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+
+    // 編集器が閉じて本文が確定する (SSR 済み HTML が無い story なので素のまま出る)
+    await expect(canvas.findByText('- 一覧の項目')).resolves.toBeInTheDocument();
+    const puts = (DescriptionEditorSubmitShortcut as { puts?: unknown[] }).puts ?? [];
+    await expect(puts).toContainEqual({ description: '- 一覧の項目' });
+  },
+};
+
+export const DescriptionEditEscape: Story = {
+  name: '説明編集の取り消し（Escape）',
+  beforeEach: () => {
+    const puts: unknown[] = [];
+    const restore = createMockFetch({
+      onPut: (body) => puts.push(body),
+    });
+    (DescriptionEditEscape as { puts?: unknown[] }).puts = puts;
+    return restore;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+    await user.keyboard('捨てられるはずの下書き');
+    await user.keyboard('{Escape}');
+
+    // 編集器が閉じ、元の本文が戻る
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+    // 取り消しなので保存は 1 度も飛ばない。編集器の破棄で blur → 確定へ落ちると
+    // 下書き (や空文字) が保存されてしまうため、そこをここで塞ぐ
+    const puts = (DescriptionEditEscape as { puts?: unknown[] }).puts ?? [];
+    await expect(puts).toEqual([]);
   },
 };
 
