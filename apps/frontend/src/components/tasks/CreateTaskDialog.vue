@@ -105,8 +105,22 @@ watch(
   },
 );
 
+// 閉じたら入力と結果表示を捨てる。
+//
+// onOpenChange 側だけで捨てていたときは、作成に成功して親が open を false にする
+// 経路（created を受けてダイアログを閉じる）がここを通らないため、「タスクを
+// 作成しました」が残り、次に開いた瞬間に前回の成功が表示されていた。
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) resetForm();
+  },
+);
+
 function onOpenChange(value: boolean) {
   if (!value && createMutation.isPending.value) return;
+  // 親が open を握っていない場合でも捨てられるよう、ここでも呼ぶ。
+  // resetForm は冪等なので watch と二重に走っても問題ない
   if (!value) resetForm();
   emit('update:open', value);
 }
