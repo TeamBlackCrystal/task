@@ -3,6 +3,7 @@ import {
   PhCaretRight,
   PhFolderOpen,
   PhGear,
+  PhGitPullRequest,
   PhListChecks,
   PhPlus,
   PhTag,
@@ -69,8 +70,10 @@ function projectChildren(project: ProjectNavItem): ProjectChild[] {
     { label: 'タスク', href: `${base}/tasks`, icon: PhListChecks },
     { label: 'ラベル', href: `${base}/labels`, icon: PhTag },
   ];
-  // 個人プロジェクト（個人 Inbox）はシステム管理のため設定を出さない
+  // 個人プロジェクト（個人 Inbox）はシステム管理のため設定を出さない。
+  // レビューも、設定へ入れない＝GitHub 連携を張る手段が無いので出さない
   if (!project.is_personal) {
+    children.push({ label: 'レビュー', href: `${base}/reviews`, icon: PhGitPullRequest });
     children.push({ label: '設定', href: `${base}/settings`, icon: PhGear });
   }
   return children;
