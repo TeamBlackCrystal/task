@@ -14,11 +14,6 @@ struct ProjectListing<T> {
     projects: T,
 }
 
-#[derive(Serialize)]
-struct StatusListing<T> {
-    statuses: T,
-}
-
 pub async fn run(
     context: &Context,
     command: ProjectsCommand,
@@ -48,12 +43,11 @@ pub async fn run(
             if output.json {
                 print(&statuses, output);
             } else {
-                print(
-                    &StatusListing {
-                        statuses: &statuses,
-                    },
-                    output,
-                );
+                // 人間向けは名前だけ 1 行ずつ。オブジェクトを渡すと render_human が
+                // 畳めず（特別扱いは `tasks` だけ）、id や日時まで含む JSON が出て
+                // 「`--status` に渡せる名前を知る」という用途に合わなくなる
+                let names: Vec<&str> = statuses.iter().map(|s| s.name.as_str()).collect();
+                print(&names, output);
             }
         }
         ProjectsCommand::Show { key } => print(&resolve_project(api, &key).await?, output),
