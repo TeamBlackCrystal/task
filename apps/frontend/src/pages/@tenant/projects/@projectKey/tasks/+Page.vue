@@ -141,7 +141,20 @@ watch(projectKey, () => {
   selectedTaskId.value = null;
 });
 
+/**
+ * 行のクリック。広い画面では右ペインで開き、狭い画面は詳細ページへ送る。
+ *
+ * **判定は描画時ではなくクリック時に読む。** `useMediaQuery` は
+ * `useSupported`（内部で `useMounted`）に依存するためマウント前は必ず false で、
+ * マウント後に true へ変わる。この値を列定義の `cell` へ焼き込むと、TanStack の
+ * `FlexRender` がセルを描き直さず false のまま固まり、広い画面なのに詳細ページへ
+ * 飛ぶ（右ペインは出ているのに一覧のクリックだけ遷移する形で本番で発生した）。
+ */
 function onSelectRow(seqId: number) {
+  if (!canInline.value) {
+    void navigate(taskDetailHref(tenantDisplayId.value, projectKey.value, seqId));
+    return;
+  }
   selectedTaskId.value = taskSeqKey(projectKey.value, seqId);
 }
 
@@ -150,11 +163,9 @@ function onRowActivate(event: MouseEvent, seqId: number) {
   // 修飾キー付きは別タブ。分割ビューでも「別タブで開く」を優先する
   if (openRowInNewTab(event, seqId)) return;
   if (!shouldActivateRow(event)) return;
-  if (canInline.value) {
-    onSelectRow(seqId);
-    return;
-  }
-  void navigate(taskDetailHref(tenantDisplayId.value, projectKey.value, seqId));
+  // 右ペインに出すか詳細ページへ送るかは onSelectRow に任せる。ここで同じ分岐を
+  // 書くと、タイトルの `a` を押した経路と行を押した経路で判定が二重になる
+  onSelectRow(seqId);
 }
 
 /** 中クリックは click ではなく auxclick で来る。 */
@@ -488,7 +499,6 @@ const columns: ColumnDef<TaskRow>[] = [
           projectKey: projectKey.value,
           seqId: task.seq_id,
           title: task.title,
-          inlineSelect: canInline.value,
           onSelect: onSelectRow,
         }),
       ]);
@@ -851,7 +861,6 @@ const table = useVueTable({
                           :project-key="projectKey"
                           :seq-id="task.seq_id"
                           :title="task.title"
-                          :inline-select="canInline"
                           @select="onSelectRow"
                         />
                       </TableCell>
