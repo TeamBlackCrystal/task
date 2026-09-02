@@ -34,6 +34,8 @@ const {
   selectedStatusId,
   statusUpdating,
   statusError,
+  priorityUpdating,
+  priorityError,
   labelsUpdating,
   labelsError,
   fieldUpdating,
@@ -42,6 +44,7 @@ const {
   isNotFound,
   isError,
   onStatusChange,
+  onPriorityChange,
   onSaveTitle,
   onSaveDescription,
   onSaveProgressPct,
@@ -88,6 +91,8 @@ function onDeleteDialogCancel(event: Event) {
         :status-id="selectedStatusId"
         :status-updating="statusUpdating"
         :status-error="statusError"
+        :priority-updating="priorityUpdating"
+        :priority-error="priorityError"
         :labels-updating="labelsUpdating"
         :labels-error="labelsError"
         :field-updating="fieldUpdating"
@@ -96,6 +101,7 @@ function onDeleteDialogCancel(event: Event) {
         :not-found="isNotFound"
         :error="isError"
         @update:status-id="onStatusChange"
+        @change:priority="onPriorityChange"
         @save:title="onSaveTitle"
         @save:description="onSaveDescription"
         @save:progress_pct="onSaveProgressPct"
