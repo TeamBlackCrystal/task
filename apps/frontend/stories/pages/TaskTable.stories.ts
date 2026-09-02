@@ -131,6 +131,15 @@ const mockUsers = {
   },
 } as const;
 
+/** 担当者の候補（作成ダイアログが引くプロジェクトメンバー） */
+const sampleProjectMembers = Object.values(mockUsers).map((user, index) => ({
+  id: `member-${index + 1}`,
+  project_id: 'proj-eng',
+  user_id: user.id,
+  role: index === 0 ? 'admin' : 'member',
+  user,
+}));
+
 const assignee = (user: (typeof mockUsers)[keyof typeof mockUsers]) => ({
   role: 'assignee',
   user,
@@ -347,6 +356,9 @@ function createMockFetch(
       // 詳細レスポンスは labels を含む（一覧用フィクスチャには無いのでここで補う）
       return jsonResponse({ ...(found ?? list[0]), labels: [] });
     }
+    if (url.includes('/members')) {
+      return jsonResponse(sampleProjectMembers);
+    }
     if (url.includes('/tasks')) {
       return jsonResponse(overrides.tasks ?? sampleTasks);
     }
@@ -441,6 +453,9 @@ function createProjectSwitchMockFetch(): ProjectSwitchMock {
     if (url.includes('/statuses')) {
       return jsonResponse(sampleStatuses);
     }
+    if (url.includes('/members')) {
+      return jsonResponse(sampleProjectMembers);
+    }
     if (url.includes('/tasks') && url.includes('proj-mkt')) {
       await mktTasksGate;
       return jsonResponse(mktSampleTasks);
@@ -492,6 +507,9 @@ function createLabelFilterMockFetch(): LabelFilterMock {
     }
     if (url.includes('/labels')) {
       return jsonResponse(sampleLabels);
+    }
+    if (url.includes('/members')) {
+      return jsonResponse(sampleProjectMembers);
     }
     if (url.includes('/tasks') && url.includes('label_id=label-bug')) {
       await filteredTasksGate;
