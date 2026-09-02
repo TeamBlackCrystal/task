@@ -119,6 +119,12 @@ pub enum TasksCommand {
         /// Task title
         #[arg(long)]
         title: String,
+        /// Task description
+        #[arg(long)]
+        description: Option<String>,
+        /// Read the description from a file (`-` for stdin)
+        #[arg(long, conflicts_with = "description")]
+        description_file: Option<String>,
         /// Task priority
         #[arg(long)]
         priority: Option<String>,
@@ -144,6 +150,12 @@ pub enum TasksCommand {
         /// New title
         #[arg(long)]
         title: Option<String>,
+        /// New description
+        #[arg(long)]
+        description: Option<String>,
+        /// Read the new description from a file (`-` for stdin)
+        #[arg(long, conflicts_with = "description")]
+        description_file: Option<String>,
         /// Status name
         #[arg(long)]
         status: Option<String>,
@@ -163,8 +175,11 @@ pub enum TasksCommand {
     Comment {
         /// Task ref (KEY-N or UUID)
         task_ref: String,
-        /// Comment body
-        body: String,
+        /// Comment body (omit to read from stdin)
+        body: Option<String>,
+        /// Read the comment body from a file (`-` for stdin)
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<String>,
         /// Project key when using UUID
         #[arg(long)]
         project: Option<String>,

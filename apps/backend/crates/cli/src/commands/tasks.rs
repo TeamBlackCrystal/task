@@ -17,6 +17,7 @@ use crate::resolve::{
     TaskRef, default_status_id, find_done_status_id, parse_task_ref, resolve_project,
     resolve_status_id,
 };
+use crate::text_input::{read_stdin, resolve_body};
 
 pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions) -> Result<i32> {
     match command {
@@ -37,10 +38,15 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
         TasksCommand::Create {
             project,
             title,
+            description,
+            description_file,
             priority,
             status,
         } => {
             let priority = priority.as_deref().map(parse_priority).transpose()?;
+            // 本文の読み取りは API を叩く前に済ませる（ファイルが無いときに
+            // タスクを作ってから落ちるのを避ける）
+            let description = resolve_body(description, description_file, "description")?;
             let api = &context.connect()?;
             let project = resolve_project(api, &project).await?;
             let status_id = match status {
@@ -50,7 +56,7 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
             };
             let body = CreateTaskRequest {
                 title,
-                description: None,
+                description,
                 status_id,
                 priority,
                 progress_pct: None,
@@ -82,10 +88,13 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
             task_ref,
             project,
             title,
+            description,
+            description_file,
             status,
             priority,
         } => {
             let priority = priority.as_deref().map(parse_priority).transpose()?;
+            let description = resolve_body(description, description_file, "description")?;
             let target = check_task_target(&task_ref, project.as_deref())?;
             let api = &context.connect()?;
             let (project, task_id) = resolve_task_target(api, target).await?;
@@ -95,6 +104,7 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
             };
             let body = update_request(UpdateFields {
                 title,
+                description,
                 status_id,
                 priority,
             });
@@ -117,8 +127,21 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
         TasksCommand::Comment {
             task_ref,
             body,
+            body_file,
             project,
         } => {
+            // 位置引数・ファイル・標準入力のいずれか。どれも無ければ空のまま送らない
+            let body = match resolve_body(body, body_file, "comment body")? {
+                Some(text) => text,
+                None => read_stdin("comment body")?
+                    .unwrap_or_default()
+                    .trim_end_matches(['\n', '\r'])
+                    .to_string(),
+            };
+            if body.is_empty() {
+                // 引数・投入の検証エラーは 2（README の終了コード表）
+                return Err(CliError::validation("Comment body is required"));
+            }
             let target = check_task_target(&task_ref, project.as_deref())?;
             let api = &context.connect()?;
             let (project, task_id) = resolve_task_target(api, target).await?;
@@ -155,6 +178,7 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
 pub(crate) fn done_request(status_id: Uuid) -> UpdateTaskRequest {
     update_request(UpdateFields {
         title: None,
+        description: None,
         status_id: Some(status_id),
         priority: None,
     })
@@ -162,6 +186,7 @@ pub(crate) fn done_request(status_id: Uuid) -> UpdateTaskRequest {
 
 struct UpdateFields {
     title: Option<String>,
+    description: Option<String>,
     status_id: Option<Uuid>,
     priority: Option<TaskPriority>,
 }
@@ -170,7 +195,7 @@ struct UpdateFields {
 fn update_request(fields: UpdateFields) -> UpdateTaskRequest {
     UpdateTaskRequest {
         title: fields.title,
-        description: None,
+        description: fields.description,
         clear_description: false,
         status_id: fields.status_id,
         priority: fields.priority,
@@ -276,9 +301,41 @@ mod tests {
     }
 
     #[test]
+    fn an_update_sends_the_description_when_it_is_given() {
+        let body = update_request(UpdateFields {
+            title: None,
+            description: Some("## 見出し\n\n本文".into()),
+            status_id: None,
+            priority: None,
+        });
+        let json = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(json["description"], "## 見出し\n\n本文");
+        // 本文を渡しただけで解除が立ってはいけない
+        assert_eq!(json["clear_description"], false);
+        assert!(json["title"].is_null());
+    }
+
+    /// 空文字は「本文を空にする」意図。`clear_description` とは別扱いで、そのまま送る。
+    #[test]
+    fn an_update_sends_an_empty_description_as_is() {
+        let body = update_request(UpdateFields {
+            title: None,
+            description: Some(String::new()),
+            status_id: None,
+            priority: None,
+        });
+        let json = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(json["description"], "");
+        assert_eq!(json["clear_description"], false);
+    }
+
+    #[test]
     fn an_update_touches_only_the_fields_that_were_given() {
         let body = update_request(UpdateFields {
             title: Some("New".into()),
+            description: None,
             status_id: None,
             priority: None,
         });
@@ -301,6 +358,7 @@ mod tests {
         // 一覧の絞り込み（クエリ）は snake_case、本文は enum の綴り。取り違えると 400 になる
         let body = update_request(UpdateFields {
             title: None,
+            description: None,
             status_id: None,
             priority: Some(TaskPriority::CriticalFire),
         });
