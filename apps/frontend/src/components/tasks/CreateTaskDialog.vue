@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
+import MarkdownEditor from '@/components/markdown/MarkdownEditor.vue';
 import type { components } from '@/generated/api';
 import { apiClient } from '@/lib/api-vue-query';
 import { PRIORITY_CONFIG } from '@/lib/task-display';
@@ -219,8 +219,15 @@ async function submit() {
         </div>
 
         <div class="space-y-1.5">
-          <Label for="task-description">説明</Label>
-          <Textarea id="task-description" v-model="description" name="description" rows="3" />
+          <!-- CodeMirror の実体は contenteditable で label の for が効かないため、
+               名前は editor 側の aria-label で与える -->
+          <Label>説明</Label>
+          <MarkdownEditor
+            v-model="description"
+            aria-label="説明"
+            placeholder="markdown で書けます"
+            min-height-class="min-h-24"
+          />
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2">

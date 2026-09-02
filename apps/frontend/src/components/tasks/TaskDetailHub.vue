@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import MarkdownEditor from '@/components/markdown/MarkdownEditor.vue';
 import {
   PRIORITY_CONFIG,
   clampProgressPct,
@@ -135,6 +135,12 @@ async function startEditing(field: EditableField) {
   }
   await nextTick();
   const control = editingControlRef.value;
+  // MarkdownEditor は器の div を focus しても効かない (実体は CodeMirror の
+  // contenteditable)。expose された focus() を優先し、素の要素だけ DOM の focus へ落とす
+  if (control && typeof (control as { focus?: unknown }).focus === 'function') {
+    (control as { focus: () => void }).focus();
+    return;
+  }
   const element =
     control instanceof HTMLElement ? control : (control?.$el as HTMLElement | undefined);
   element?.focus();
@@ -147,6 +153,9 @@ function cancelEditing() {
 
 function commitEditing(field: EditableField) {
   if (!props.task) return;
+  // 編集を閉じた後に届く確定要求は捨てる。編集器の破棄で blur が飛ぶ経路があり、
+  // これが無いと取り消し (Escape) の直後に空の下書きが確定として保存される
+  if (editingField.value !== field) return;
 
   switch (field) {
     case 'title': {
@@ -340,15 +349,16 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               </Button>
             </div>
 
-            <Textarea
+            <MarkdownEditor
               v-if="editingField === 'description'"
               v-model="draftValue"
               ref="editingControlRef"
               data-editing="description"
-              class="min-h-28"
               :disabled="isFieldUpdating('description')"
               aria-label="説明"
+              placeholder="markdown で書けます"
               @keydown="onEditKeydown($event, 'description')"
+              @submit="commitEditing('description')"
               @blur="commitEditing('description')"
             />
             <!--

@@ -176,6 +176,9 @@ jobs:
 
     permissions:
       contents: write
+      # cosign の keyless 署名が OIDC トークンを使う。build には要らないので
+      # release ジョブだけに絞る
+      id-token: write
 
     steps:
       - name: Download every build
@@ -185,6 +188,37 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
+
+      # 配布物ぜんぶの hash を SHA256SUMS 一枚に束ね、その一枚へ keyless 署名する。
+      # 各 .sha256 はこれまでどおり残す（一つだけ落として検める人向け）。
+      # 署名対象を一枚にするのは、archive ごとに署名を増やすと検める側の手数が
+      # 配布物の数だけ増えるため
+      - name: Create and sign SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum task-*.tar.gz task-*.zip > SHA256SUMS
+          cat SHA256SUMS
+          cosign sign-blob SHA256SUMS \
+            --yes \
+            --bundle SHA256SUMS.cosign.bundle
+
+      # 署名したその場で検める（壊れた署名を Release へ添えない）。
+      # 身元は「この repo のこの workflow が、タグから走った」ことまで縛る
+      - name: Verify the signature before publishing
+        run: |
+          set -euo pipefail
+          cd dist
+          cosign verify-blob SHA256SUMS \
+            --bundle SHA256SUMS.cosign.bundle \
+            --certificate-identity-regexp '^https://github\.com/koyori-app/task/\.github/workflows/release-cli\.yml@refs/tags/' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      # SHA256SUMS と SHA256SUMS.cosign.bundle も dist に居るので dist/* に含まれる
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

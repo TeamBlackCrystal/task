@@ -64,4 +64,20 @@ describe('TaskTitleLink', () => {
     await wrapper.get('a').trigger('click', { button: 1 });
     expect(wrapper.emitted('select')).toBeFalsy();
   });
+
+  /**
+   * 当たり判定を行全体へ広げる疑似要素を持たせてはいけない。
+   * `<tr>` は WebKit で絶対配置の包含ブロックにならないため、判定が行を飛び越えて
+   * テーブル全体へ広がり、全行が重なって「どこをタップしても一番下の行が開く」状態に
+   * なる。行全体の当たり判定は一覧側（TableRow の click）が持つ。
+   *
+   * CSS の包含ブロックの問題そのものは jsdom では再現できないので、ここでは
+   * 原因になったクラスが戻ってこないことだけを固定する。
+   */
+  it('当たり判定を行全体へ広げる疑似要素を持たない', () => {
+    const wrapper = mountLink();
+    const className = wrapper.get('a').classes().join(' ');
+    expect(className).not.toContain('after:absolute');
+    expect(className).not.toContain('after:inset-0');
+  });
 });

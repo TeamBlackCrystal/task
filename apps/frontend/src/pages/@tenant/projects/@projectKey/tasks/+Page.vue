@@ -59,6 +59,7 @@ import {
   useTaskLabelFilter,
   watchAvailableTaskLabels,
 } from './task-list-label-filter';
+import { shouldActivateRow, shouldOpenRowInNewTab } from './task-list-row-activate';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -155,6 +156,34 @@ function onSelectRow(seqId: number) {
     return;
   }
   selectedTaskId.value = taskSeqKey(projectKey.value, seqId);
+}
+
+/** 行のどこを押しても詳細へ入れるようにする（判定は task-list-row-activate に切り出し）。 */
+function onRowActivate(event: MouseEvent, seqId: number) {
+  // 修飾キー付きは別タブ。分割ビューでも「別タブで開く」を優先する
+  if (openRowInNewTab(event, seqId)) return;
+  if (!shouldActivateRow(event)) return;
+  // 右ペインに出すか詳細ページへ送るかは onSelectRow に任せる。ここで同じ分岐を
+  // 書くと、タイトルの `a` を押した経路と行を押した経路で判定が二重になる
+  onSelectRow(seqId);
+}
+
+/** 中クリックは click ではなく auxclick で来る。 */
+function onRowAuxClick(event: MouseEvent, seqId: number) {
+  openRowInNewTab(event, seqId);
+}
+
+/**
+ * 行を別タブで開けたら true。
+ *
+ * 行全体を覆う実リンクを外した代わりに、行側で新しいタブの操作を引き受ける。
+ * `noopener` を付けて開いた先から元のページを触れないようにする。
+ */
+function openRowInNewTab(event: MouseEvent, seqId: number): boolean {
+  if (!shouldOpenRowInNewTab(event)) return false;
+  event.preventDefault();
+  window.open(taskDetailHref(tenantDisplayId.value, projectKey.value, seqId), '_blank', 'noopener');
+  return true;
 }
 
 function closeDetail() {
@@ -431,7 +460,6 @@ const columns: ColumnDef<TaskRow>[] = [
     id: 'select',
     header: ({ table }) =>
       h(Checkbox, {
-        class: 'relative z-10',
         modelValue:
           table.getIsAllPageRowsSelected() ||
           (table.getIsSomePageRowsSelected() && 'indeterminate'),
@@ -819,8 +847,10 @@ const table = useVueTable({
                     <TableRow
                       v-for="task in taskSearchQuery.data.value?.tasks ?? []"
                       :key="task.id"
-                      class="relative h-10"
+                      class="h-10 cursor-pointer"
                       :class="isRowActive(task.seq_id) && 'bg-muted'"
+                      @click="onRowActivate($event, task.seq_id)"
+                      @auxclick="onRowAuxClick($event, task.seq_id)"
                     >
                       <TableCell class="px-3 py-1.5 font-mono text-xs text-muted-foreground">
                         {{ projectKey }}-{{ task.seq_id }}
@@ -882,8 +912,10 @@ const table = useVueTable({
                       v-for="row in table.getRowModel().rows"
                       :key="row.id"
                       :data-state="row.getIsSelected() && 'selected'"
-                      class="relative h-10"
+                      class="h-10 cursor-pointer"
                       :class="isRowActive(row.original.seq_id) && 'bg-muted'"
+                      @click="onRowActivate($event, row.original.seq_id)"
+                      @auxclick="onRowAuxClick($event, row.original.seq_id)"
                     >
                       <TableCell
                         v-for="cell in row.getVisibleCells()"
