@@ -54,6 +54,31 @@ mkdir -p ~/.local/bin && tar -xzf "$asset" -C ~/.local/bin
 `--version` が名乗る版はタグと一致する（リリース時にタグから注入し、その場で
 突き合わせている）。タグ以外でビルドしたバイナリはクレートの版を名乗る。
 
+### 検め方
+
+リリースには、四つの配布物の hash を束ねた `SHA256SUMS` と、それへの keyless 署名
+`SHA256SUMS.cosign.bundle` も添えてある。`.sha256` の突き合わせで分かるのは
+「壊れていないか」まで。署名の検証まで行うと「この repo の release workflow が
+タグから作った物か」まで確かめられる。
+
+[cosign](https://github.com/sigstore/cosign) の **v3 以上**が要る。
+
+```bash
+version=v0.1.9
+gh release download "$version" --repo koyori-app/task --pattern "SHA256SUMS*"
+
+# 署名を検める。--certificate-identity-regexp と --certificate-oidc-issuer を
+# 省いてはならない。省くと「誰かが Sigstore で署名した」ことしか確かめておらず、
+# 別人が作った SHA256SUMS でも通ってしまう
+cosign verify-blob SHA256SUMS \
+  --bundle SHA256SUMS.cosign.bundle \
+  --certificate-identity-regexp '^https://github\.com/koyori-app/task/\.github/workflows/release-cli\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# 手元へ落とした配布物が SHA256SUMS と一致することを確かめる
+sha256sum --check SHA256SUMS --ignore-missing   # macOS は shasum -a 256 --check --ignore-missing
+```
+
 ## ビルド
 
 `apps/backend` の Cargo ワークスペースのメンバーなので、`cargo fmt --all` /
