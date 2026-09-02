@@ -127,6 +127,17 @@ task auth token < token.txt        # 引数を省くと標準入力から読む
 task auth whoami
 ```
 
+## 指定できる値の調べ方
+
+名前で指定する引数は、綴りを外したときにエラーへ候補が出る。事前に知りたいときは次で引ける。
+
+```bash
+task projects list                        # --project に渡せるキー
+task projects statuses --project TASK     # --status に渡せる名前（プロジェクトごとに違う）
+```
+
+固定の値は `--help` に列挙してある（`--priority`、`sprints list --status`、`review --state` / `--severity`、`my list --filter`）。
+
 ## 終了コード
 
 ゲートとして使えるよう、失敗の理由を終了コードで分ける。

@@ -93,6 +93,12 @@ pub enum ConfigCommand {
 pub enum ProjectsCommand {
     /// List projects
     List,
+    /// List the statuses a project's tasks can be in
+    Statuses {
+        /// Project key or UUID
+        #[arg(long)]
+        project: String,
+    },
     /// Show a project by key or UUID
     Show {
         /// Project key or UUID
@@ -107,7 +113,7 @@ pub enum TasksCommand {
         /// Project key or UUID
         #[arg(long)]
         project: String,
-        /// Filter by priority
+        /// Filter by priority (critical_fire,critical,high,medium,low,trivial)
         #[arg(long)]
         priority: Option<String>,
     },
@@ -126,6 +132,7 @@ pub enum TasksCommand {
         #[arg(long, conflicts_with = "description")]
         description_file: Option<String>,
         /// Task priority
+        /// Accepted values: critical_fire, critical, high, medium, low, trivial
         #[arg(long)]
         priority: Option<String>,
         /// Status name
@@ -159,7 +166,7 @@ pub enum TasksCommand {
         /// Status name
         #[arg(long)]
         status: Option<String>,
-        /// Priority
+        /// Priority (critical_fire,critical,high,medium,low,trivial)
         #[arg(long)]
         priority: Option<String>,
     },
@@ -216,7 +223,7 @@ pub enum SprintsCommand {
         /// Project key or UUID
         #[arg(long)]
         project: String,
-        /// Filter by sprint status
+        /// Filter by sprint status (planning,active,completed)
         #[arg(long)]
         status: Option<String>,
     },
