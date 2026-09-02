@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, defineComponent, h, ref } from 'vue';
+import { computed, defineComponent, h, nextTick, ref } from 'vue';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 
 const { navigateSpy, projectsControl, tenantStoreStub } = vi.hoisted(() => ({
@@ -85,6 +85,22 @@ function mountSidebar(setOpenMobile: (value: boolean) => void) {
   return mount(Host, { attachTo: document.body });
 }
 
+function findLink(href: string) {
+  const link = document.body.querySelector<HTMLAnchorElement>(`a[href="${href}"]`);
+  if (!link) throw new Error(`link "${href}" not found`);
+  return link;
+}
+
+/** ユーザーメニューの開閉ボタン。テナント切り替えにも同じ trigger があるので名前で選ぶ。 */
+function findUserMenuTrigger() {
+  const triggers = document.body.querySelectorAll<HTMLButtonElement>(
+    '[data-slot="dropdown-menu-trigger"]',
+  );
+  const trigger = [...triggers].find((el) => el.textContent?.includes('yupix'));
+  if (!trigger) throw new Error('user menu trigger not found');
+  return trigger;
+}
+
 function findButton(label: string) {
   const button = [...document.body.querySelectorAll('button')].find(
     (el) => el.getAttribute('title') === label || el.textContent?.trim() === label,
@@ -106,6 +122,38 @@ beforeEach(() => {
  * SidebarContent のイベント委譲（closest('a')）では拾えず、遷移しても作成画面が
  * モバイルのサイドバーに覆われたままになっていた。導線は 2 か所ある。
  */
+/**
+ * ナビのリンクは SidebarContent に置いたイベント委譲で拾う。効かなくなる現実的な
+ * 壊れ方は `@click` の行が消えることではなく、ナビが SidebarContent の外へ移ったり
+ * 別のコンポーネントで包まれたりして委譲の下から抜けることなので、純粋関数ではなく
+ * 実際のマークアップから辿って確認する。
+ */
+describe('AppSidebar のナビリンク', () => {
+  it('モバイルでナビのリンクを押したらサイドバーを閉じる', () => {
+    const setOpenMobile = vi.fn<(value: boolean) => void>();
+    mountSidebar(setOpenMobile);
+
+    findLink('/acme/my-tasks').click();
+
+    expect(setOpenMobile).toHaveBeenCalledWith(false);
+  });
+
+  /**
+   * ユーザーメニューは DropdownMenuPortal でサイドバーの外へ出るため、
+   * SidebarContent の委譲には掛からない。リンク側で閉じている。
+   */
+  it('ユーザーメニューの Account を押してもサイドバーを閉じる', async () => {
+    const setOpenMobile = vi.fn<(value: boolean) => void>();
+    mountSidebar(setOpenMobile);
+
+    findUserMenuTrigger().click();
+    await nextTick();
+    findLink('/settings/profile').click();
+
+    expect(setOpenMobile).toHaveBeenCalledWith(false);
+  });
+});
+
 describe('AppSidebar のプロジェクト作成導線', () => {
   it('空状態の作成ボタンで、遷移してサイドバーを閉じる', async () => {
     const setOpenMobile = vi.fn<(value: boolean) => void>();
