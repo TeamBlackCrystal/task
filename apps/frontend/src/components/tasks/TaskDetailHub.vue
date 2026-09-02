@@ -358,6 +358,7 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
               aria-label="説明"
               placeholder="markdown で書けます"
               @keydown="onEditKeydown($event, 'description')"
+              @submit="commitEditing('description')"
               @blur="commitEditing('description')"
             />
             <!--

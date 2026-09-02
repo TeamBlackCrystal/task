@@ -648,6 +648,70 @@ export const DescriptionEditorMarkdown: Story = {
   },
 };
 
+export const DescriptionEditorTab: Story = {
+  name: '説明編集（Tab はリスト内でだけ字下げ）',
+  beforeEach: () => createMockFetch(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+
+    // リスト項目の中では字下げになる (入れ子リストが打てないと markdown が書けない)。
+    // Enter でリスト記号は自動で継がれるので、2 行目は本文だけ打つ
+    await user.keyboard('- 親{Enter}子');
+    await user.keyboard('{Tab}');
+    await expect(editor).toHaveFocus();
+    await expect(editor.textContent).toContain('  - 子');
+
+    // 地の文では字下げにせず、既定どおりフォーカスを次へ渡す
+    // (常に奪うと blur で確定する inline 編集から出られなくなる)
+    await user.keyboard('{Control>}a{/Control}');
+    await user.keyboard('ただの本文');
+    await user.keyboard('{Tab}');
+    await expect(editor).not.toHaveFocus();
+  },
+};
+
+export const DescriptionEditorSubmitShortcut: Story = {
+  name: '説明編集（Mod-Enter で確定）',
+  beforeEach: () => {
+    const puts: unknown[] = [];
+    const restore = createMockFetch({
+      onPut: (body) => puts.push(body),
+    });
+    (DescriptionEditorSubmitShortcut as { puts?: unknown[] }).puts = puts;
+    return restore;
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    await expect(
+      canvas.findByText('OIDC フローとセッション管理を実装する。'),
+    ).resolves.toBeInTheDocument();
+
+    await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
+    const editor = await canvas.findByRole('textbox', { name: '説明' });
+    await user.click(editor);
+    await user.keyboard('{Control>}a{/Control}');
+    // リストの中は Tab が字下げに使われる = Tab では抜けられない文脈。
+    // そこからキーボードだけで確定して抜けられることを示す
+    await user.keyboard('- 一覧の項目');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+
+    // 編集器が閉じて本文が確定する (SSR 済み HTML が無い story なので素のまま出る)
+    await expect(canvas.findByText('- 一覧の項目')).resolves.toBeInTheDocument();
+    const puts = (DescriptionEditorSubmitShortcut as { puts?: unknown[] }).puts ?? [];
+    await expect(puts).toContainEqual({ description: '- 一覧の項目' });
+  },
+};
+
 export const DescriptionEditEscape: Story = {
   name: '説明編集の取り消し（Escape）',
   beforeEach: () => {

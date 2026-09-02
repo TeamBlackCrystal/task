@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import {
+  history,
+  historyKeymap,
+  defaultKeymap,
+  indentMore,
+  indentLess,
+} from '@codemirror/commands';
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { EditorState, type Extension } from '@codemirror/state';
+import type { EditorView as EditorViewType } from '@codemirror/view';
 import { EditorView, keymap, placeholder as placeholderExt } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
@@ -43,6 +50,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string];
   blur: [event: FocusEvent];
   keydown: [event: KeyboardEvent];
+  /** Mod-Enter。字下げで Tab を使う文脈からキーボードだけで確定して抜けるための口 */
+  submit: [];
 }>();
 
 const host = useTemplateRef<HTMLDivElement>('host');
@@ -97,6 +106,54 @@ const theme = EditorView.theme({
 });
 
 /**
+ * 字下げが意味を持つ文脈 (リスト項目・コードブロック・引用) にカーソルがあるか。
+ * markdown の入れ子リストとコードの字下げは Tab で打てないと書けない一方、
+ * 地の文で Tab を奪うと編集器から出られなくなるため、文脈で分ける。
+ */
+function inIndentableBlock(view: EditorViewType): boolean {
+  const { state } = view;
+  const tree = syntaxTree(state);
+  return state.selection.ranges.some((range) => {
+    for (let node = tree.resolveInner(range.head, -1); node; node = node.parent as never) {
+      if (INDENTABLE_NODES.has(node.name)) return true;
+      if (!node.parent) return false;
+    }
+    return false;
+  });
+}
+
+const INDENTABLE_NODES = new Set([
+  'ListItem',
+  'BulletList',
+  'OrderedList',
+  'FencedCode',
+  'CodeBlock',
+  'CodeText',
+  'Blockquote',
+]);
+
+/**
+ * Tab の扱い。
+ *
+ * 常に字下げに使うと、blur で確定する inline 編集ではフォーカスが編集器から
+ * 出られず確定もできなくなる。逆に常にフォーカス移動にすると、入れ子リストと
+ * コードブロックの字下げが打てない。そこで
+ *
+ * - 複数行にまたがる選択がある、または字下げが意味を持つ文脈にいる → 字下げ
+ * - それ以外 (地の文) → 何もせず既定のフォーカス移動に任せる
+ *
+ * 字下げ側に入った状態から抜ける手段として Mod-Enter (確定) を用意する。
+ */
+function tabIndents(view: EditorViewType): boolean {
+  const spansLines = view.state.selection.ranges.some(
+    (range) =>
+      !range.empty &&
+      view.state.doc.lineAt(range.from).number !== view.state.doc.lineAt(range.to).number,
+  );
+  return spansLines || inIndentableBlock(view);
+}
+
+/**
  * 差し替えが要る設定 (disabled / placeholder) は Compartment ではなく
  * state の作り直しで扱う。編集中に切り替わるのは保存中の一瞬だけで、
  * その間の履歴やカーソルは捨ててよいため、機構を増やさない。
@@ -104,10 +161,24 @@ const theme = EditorView.theme({
 function extensions(): Extension[] {
   return [
     history(),
-    // Escape は呼び出し側 (編集の取り消し) に渡すため CodeMirror の既定に載せない。
-    // Tab も取らない: 説明欄は blur で確定する inline 編集なので、Tab を
-    // インデントに使うとフォーカスが出られず確定もできなくなる
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    // Escape は呼び出し側 (編集の取り消し) に渡すため CodeMirror の既定に載せない
+    keymap.of([
+      // 既定より先に置く (先に登録した束が優先される)
+      {
+        key: 'Tab',
+        run: (view) => (tabIndents(view) ? indentMore(view) : false),
+        shift: (view) => (tabIndents(view) ? indentLess(view) : false),
+      },
+      {
+        key: 'Mod-Enter',
+        run: () => {
+          emit('submit');
+          return true;
+        },
+      },
+      ...defaultKeymap,
+      ...historyKeymap,
+    ]),
     // codeLanguages は渡さない: @codemirror/language-data は言語ごとの文法を
     // 全部引き連れてきてクライアントのチャンクが 100 個以上増える。説明欄は
     // markdown の構造が見えれば足り、コードの着色は表示側 (starry-night) が持つ
