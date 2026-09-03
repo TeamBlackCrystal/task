@@ -19,6 +19,16 @@ type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
 /** 一覧の行から直接変えられる項目。詳細を開かずに済ませたいものだけを載せる。 */
 export type TaskRowField = 'status_id' | 'priority' | 'soft_deadline' | 'label_ids' | 'assignees';
 
+/** 作成時にその場で決められる項目。未指定は API の既定に任せる。 */
+export type CreateTaskInput = {
+  title: string;
+  statusId: string;
+  assigneeIds?: string[];
+  softDeadline?: string | null;
+  priority?: TaskResponse['priority'] | null;
+  labelIds?: string[];
+};
+
 export type TaskRowMutationsParams = {
   tenantId: MaybeRefOrGetter<string | null | undefined>;
   projectId: MaybeRefOrGetter<string | null | undefined>;
@@ -114,31 +124,54 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
   }
 
   /**
-   * 担当者の入れ替え。`UpdateTaskRequest` に assignees が無く、専用の口しかないため
-   * 「今の担当を外して、新しい担当を足す」の 2 手で行う。`null` は解除。
+   * 担当者の付け外し。担当は複数持てるので、入れ替えではなく 1 人ずつ足す/外す。
+   *
+   * `UpdateTaskRequest` に assignees が無く専用の口しかないため、追加は POST、
+   * 解除は DELETE を叩く。
    */
-  function setAssignee(task: TaskResponse, userId: string | null) {
+  function toggleAssignee(task: TaskResponse, userId: string, checked: boolean) {
     const currentIds = task.assignees.map((assignee) => assignee.user.id);
-    if (userId && currentIds.length === 1 && currentIds[0] === userId) return Promise.resolve();
+    if (checked === currentIds.includes(userId)) return Promise.resolve();
 
     return run(task.id, 'assignees', async () => {
-      for (const id of currentIds) {
-        if (id === userId) continue;
-        const { error } = await fetchClient.DELETE(ASSIGNEE_PATH, {
-          params: { path: { ...pathParams(task.id), user_id: id } },
-        });
-        if (error) throw error;
-      }
-      if (userId && !currentIds.includes(userId)) {
+      if (checked) {
         const { error } = await fetchClient.POST(ASSIGNEES_PATH, {
           params: { path: pathParams(task.id) },
           // role はタスク作成時と同じ既定値。レビュアー等の役割はこの口で扱わない
           body: { user_id: userId, role: 'assignee' },
         });
         if (error) throw error;
+        return;
       }
+      const { error } = await fetchClient.DELETE(ASSIGNEE_PATH, {
+        params: { path: { ...pathParams(task.id), user_id: userId } },
+      });
+      if (error) throw error;
     });
   }
+
+  /** グループ（ステータス）の末尾からタスクを足す。 */
+  const createTask = useMutation({
+    mutationFn: async (input: CreateTaskInput) => {
+      const { error } = await fetchClient.POST(LIST_TASKS_PATH, {
+        params: { path: { tenant_id: tenantId.value, project_id: projectId.value } },
+        body: {
+          title: input.title,
+          status_id: input.statusId,
+          // 未指定のキーは送らない（API 側の既定を上書きしない）
+          // 作成時の担当は role 付きで渡す（追加の口と同じ既定値）
+          ...(input.assigneeIds?.length
+            ? { assignees: input.assigneeIds.map((user_id) => ({ user_id, role: 'assignee' })) }
+            : {}),
+          ...(input.softDeadline ? { soft_deadline: input.softDeadline } : {}),
+          ...(input.priority ? { priority: input.priority } : {}),
+          ...(input.labelIds?.length ? { label_ids: input.labelIds } : {}),
+        },
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateLists(),
+  });
 
   const addComment = useMutation({
     mutationFn: async (input: { taskId: string; body: string }) => {
@@ -158,7 +191,8 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
     setPriority,
     setSoftDeadline,
     toggleLabel,
-    setAssignee,
+    toggleAssignee,
     addComment,
+    createTask,
   };
 }

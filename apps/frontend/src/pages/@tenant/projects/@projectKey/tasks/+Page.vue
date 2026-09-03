@@ -15,10 +15,10 @@ import {
   getSortedRowModel,
   useVueTable,
 } from '@tanstack/vue-table';
-import { PhCaretDown, PhCaretUp, PhCaretUpDown } from '@phosphor-icons/vue';
-import { computed, h, onUnmounted, ref, watch } from 'vue';
+import { PhCaretDown, PhCaretUp, PhCaretUpDown, PhRows, PhTable } from '@phosphor-icons/vue';
+import { computed, h, onUnmounted, ref, watch, type Component } from 'vue';
 import type { Column } from '@tanstack/vue-table';
-import { useQuery, keepPreviousData } from '@tanstack/vue-query';
+import { useQueries, useQuery, keepPreviousData } from '@tanstack/vue-query';
 import { navigate } from 'vike/client/router';
 import { usePageContext } from 'vike-vue/usePageContext';
 import { useMediaQuery } from '@vueuse/core';
@@ -60,11 +60,22 @@ import {
   watchAvailableTaskLabels,
 } from './task-list-label-filter';
 import { shouldActivateRow, shouldOpenRowInNewTab } from './task-list-row-activate';
-import { parseTaskListUrlState, useTaskListUrlSync } from './task-list-url-state';
+import {
+  parseTaskListUrlState,
+  useTaskListUrlSync,
+  type TaskListView,
+} from './task-list-url-state';
+import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
+import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
+import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
+import { useTaskRowMutations, type CreateTaskInput } from '@/composables/useTaskRowMutations';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
+const LIST_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
+/** List 表示でステータスごとに最初に取る件数。「もっと見る」でこの単位ずつ増やす */
+const GROUP_PAGE_SIZE = 20;
 const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
 const TASKS_PAGE_SIZE = 20;
 const SEARCH_PAGE_SIZE = 50;
@@ -190,6 +201,14 @@ function isRowActive(seqId: number) {
 }
 
 // ---- サーバー側検索 ----
+// ---- 表示形式（既定は List）----
+const VIEW_OPTIONS: { value: TaskListView; label: string; icon: Component }[] = [
+  { value: 'list', label: 'List', icon: PhRows },
+  { value: 'table', label: 'Table', icon: PhTable },
+];
+const view = ref<TaskListView>(initialListState.view);
+const isListView = computed(() => view.value === 'list');
+
 const searchInput = ref(initialListState.q);
 const submittedSearchQuery = ref(initialListState.q);
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -345,9 +364,153 @@ const labelsQuery = useQuery({
   enabled: computed(() => !!tenantId.value && !!projectId.value),
 });
 
-// ラベルも未取得を null で区別する（同上）
+// ラベルも未取得を null で区別する（表示用は空配列へ畳む）
 const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
 const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
+
+// ---- クエリ④: プロジェクトメンバー（List 表示の担当者候補）----
+const membersQuery = useQuery({
+  queryKey: computed(() => [
+    'get',
+    LIST_MEMBERS_PATH,
+    { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
+  ]),
+  queryFn: async ({ signal }) => {
+    const { data, error } = await fetchClient.GET(LIST_MEMBERS_PATH, {
+      params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
+      signal,
+    });
+    if (error) throw error;
+    return data;
+  },
+  // 担当者の割り当ては List 表示でしか出さないので、Table のときは取りに行かない
+  enabled: computed(() => !!tenantId.value && !!projectId.value && isListView.value),
+});
+
+const projectMembers = computed(() => (membersQuery.data.value ?? []).map((member) => member.user));
+
+// ---- List 表示: ステータスごとの取得 ----
+// 1 本の一覧クエリを画面側で仕分けると、グループの件数がページ内の件数になってしまう
+// （「Todo 3」なのに実際は 40 件、など）。ステータスで絞った問い合わせを並べ、
+// 件数はサーバの total を使う。
+const groupLimits = ref<Record<string, number>>({});
+
+// プロジェクトやラベル絞り込みを変えたら取得済み件数を戻す（前の条件の分だけ残さない）
+watch([projectKey, selectedLabelId], () => {
+  groupLimits.value = {};
+});
+
+const workflowStatuses = computed(() => statusesQuery.data.value ?? []);
+
+const groupQueries = useQueries({
+  queries: computed(() =>
+    workflowStatuses.value.map((status) => {
+      const limit = groupLimits.value[status.id] ?? GROUP_PAGE_SIZE;
+      const params = {
+        params: {
+          path: { tenant_id: tenantId.value!, project_id: projectId.value! },
+          query: {
+            status_id: status.id,
+            label_id: selectedLabelId.value ?? undefined,
+            limit,
+            offset: 0,
+          },
+        },
+      };
+      return {
+        queryKey: ['get', LIST_TASKS_PATH, params],
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
+          const { data, error } = await fetchClient.GET(LIST_TASKS_PATH, { ...params, signal });
+          if (error) throw error;
+          return data;
+        },
+        enabled: !!tenantId.value && !!projectId.value && isListView.value && !isSearchActive.value,
+      };
+    }),
+  ),
+});
+
+const taskGroups = computed<TaskGroup[]>(() =>
+  workflowStatuses.value.map((status, index) => {
+    const query = groupQueries.value[index];
+    const tasks = query?.data?.tasks ?? [];
+    const total = query?.data?.total ?? 0;
+    return {
+      status,
+      tasks,
+      total,
+      isLoading: !!query?.isLoading,
+      isError: !!query?.isError,
+      hasMore: tasks.length < total,
+    };
+  }),
+);
+
+function loadMoreInGroup(statusId: string) {
+  const current = groupLimits.value[statusId] ?? GROUP_PAGE_SIZE;
+  groupLimits.value = { ...groupLimits.value, [statusId]: current + GROUP_PAGE_SIZE };
+}
+
+// ---- List 表示: 行からの更新 ----
+const rowMutations = useTaskRowMutations({
+  tenantId: () => tenantId.value,
+  projectId: () => projectId.value,
+});
+const commentPendingTaskId = ref<string | null>(null);
+
+async function onRowComment(task: { id: string }, body: string) {
+  commentPendingTaskId.value = task.id;
+  try {
+    await rowMutations.addComment.mutateAsync({ taskId: task.id, body });
+  } finally {
+    commentPendingTaskId.value = null;
+  }
+}
+
+const creatingStatusId = ref<string | null>(null);
+
+async function onCreateInGroup(input: CreateTaskInput) {
+  creatingStatusId.value = input.statusId;
+  try {
+    await rowMutations.createTask.mutateAsync(input);
+  } finally {
+    creatingStatusId.value = null;
+  }
+}
+
+// ---- List 表示: 詳細のオーバーレイ ----
+const overlayTaskSeqKey = ref<string | null>(null);
+
+/**
+ * 閉じるアニメーションの間だけ、直前に開いていたタスクを保持する。
+ *
+ * 選択を null にした瞬間に v-if でオーバーレイごと消すと、Dialog の退場
+ * アニメーションが再生されないまま画面から消える。
+ */
+const overlayRenderedTaskSeqKey = ref<string | null>(null);
+let overlayCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch(overlayTaskSeqKey, (seqKey) => {
+  if (overlayCleanupTimer) clearTimeout(overlayCleanupTimer);
+  if (seqKey) {
+    overlayRenderedTaskSeqKey.value = seqKey;
+    return;
+  }
+  // Dialog の duration-200 に合わせて、閉じ切ってから外す
+  overlayCleanupTimer = setTimeout(() => {
+    overlayRenderedTaskSeqKey.value = null;
+  }, 250);
+});
+
+onUnmounted(() => {
+  if (overlayCleanupTimer) clearTimeout(overlayCleanupTimer);
+});
+
+function openOverlay(taskId: string) {
+  const task = taskGroups.value.flatMap((group) => group.tasks).find((t) => t.id === taskId);
+  if (!task) return;
+  overlayTaskSeqKey.value = taskSeqKey(projectKey.value, task.seq_id);
+}
 watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
 const selectedLabelName = computed(
   () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
@@ -619,6 +782,7 @@ const rowSelection = ref({});
 // 範囲外のページを丸める（配線ごと task-list-url-state に寄せてテストしている）。
 useTaskListUrlSync({
   selectedTaskId,
+  view,
   pagination,
   submittedSearchQuery,
   selectedLabelId,
@@ -816,6 +980,27 @@ const table = useVueTable({
             </DropdownMenu>
           </div>
 
+          <!-- 表示形式の切り替え。既定は List -->
+          <div class="flex items-center gap-1 border-b" role="tablist" aria-label="表示形式">
+            <button
+              v-for="option in VIEW_OPTIONS"
+              :key="option.value"
+              type="button"
+              role="tab"
+              :aria-selected="view === option.value"
+              class="-mb-px flex items-center gap-1.5 border-b-2 px-2.5 py-1.5 text-sm transition-colors"
+              :class="
+                view === option.value
+                  ? 'border-foreground font-semibold text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              "
+              @click="view = option.value"
+            >
+              <component :is="option.icon" class="size-4" />
+              {{ option.label }}
+            </button>
+          </div>
+
           <CreateTaskDialog
             v-if="tenantId && projectId"
             v-model:open="isCreateDialogOpen"
@@ -903,6 +1088,32 @@ const table = useVueTable({
               </div>
             </template>
 
+            <!-- List 表示: ステータスごとに並べる（既定） -->
+            <TaskGroupedList
+              v-else-if="isListView"
+              :groups="taskGroups"
+              :statuses="workflowStatuses"
+              :project-labels="projectLabels"
+              :members="projectMembers"
+              :pending="rowMutations.pending.value"
+              :errors="rowMutations.errors.value"
+              :comment-pending-task-id="commentPendingTaskId"
+              @open="openOverlay"
+              @more="loadMoreInGroup"
+              @update:status="(task, statusId) => rowMutations.setStatus(task, statusId)"
+              @update:priority="(task, priority) => rowMutations.setPriority(task, priority)"
+              @update:soft-deadline="(task, iso) => rowMutations.setSoftDeadline(task, iso)"
+              @toggle:assignee="
+                (task, userId, checked) => rowMutations.toggleAssignee(task, userId, checked)
+              "
+              @toggle:label="
+                (task, labelId, checked) => rowMutations.toggleLabel(task, labelId, checked)
+              "
+              @comment="onRowComment"
+              :creating-status-id="creatingStatusId"
+              @create="onCreateInGroup"
+            />
+
             <!-- 通常一覧テーブル -->
             <div v-else class="rounded-md border overflow-x-auto">
               <Table>
@@ -957,9 +1168,10 @@ const table = useVueTable({
             </div>
           </div>
 
-          <!-- ページネーション（API total 連動のサーバーサイド） -->
+          <!-- ページネーション（API total 連動のサーバーサイド）。
+               List 表示はステータスごとに「もっと見る」で伸ばすのでページャは出さない -->
           <div
-            v-if="!isSearchActive"
+            v-if="!isSearchActive && !isListView"
             class="flex items-center justify-between text-xs text-muted-foreground"
           >
             <span>
@@ -995,7 +1207,7 @@ const table = useVueTable({
         </div>
       </ResizablePanel>
 
-      <template v-if="showDetail">
+      <template v-if="showDetail && !isListView">
         <ResizableHandle with-handle />
         <ResizablePanel :order="2" :default-size="40" :min-size="26" class="min-w-0">
           <TaskDetailPane
@@ -1008,5 +1220,20 @@ const table = useVueTable({
         </ResizablePanel>
       </template>
     </ResizablePanelGroup>
+
+    <!-- List 表示の詳細は分割ではなくオーバーレイ -->
+    <TaskDetailOverlay
+      v-if="overlayRenderedTaskSeqKey"
+      :key="overlayRenderedTaskSeqKey"
+      :open="!!overlayTaskSeqKey"
+      :tenant-display-id="tenantDisplayId"
+      :project-key="projectKey"
+      :task-id="overlayRenderedTaskSeqKey"
+      @update:open="
+        (value) => {
+          if (!value) overlayTaskSeqKey = null;
+        }
+      "
+    />
   </div>
 </template>

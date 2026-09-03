@@ -20074,6 +20074,10 @@
         "type": "object",
         "required": ["id", "name"],
         "properties": {
+          "avatar_url": {
+            "type": ["string", "null"],
+            "description": "画面でアイコンを出すために返す。未設定なら頭文字で描く"
+          },
           "id": {
             "type": "string",
             "format": "uuid"

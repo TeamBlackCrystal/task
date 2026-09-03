@@ -4,9 +4,13 @@ import { navigate } from 'vike/client/router';
 import { useData } from 'vike-vue/useData';
 import { usePageContext } from 'vike-vue/usePageContext';
 
+import TaskActivityFeed from '@/components/tasks/TaskActivityFeed.vue';
 import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useProjectMembersQuery } from '@/lib/api-vue-query';
+import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
+import { useTaskActivities } from '@/composables/useTaskActivities';
 import { useTaskComments } from '@/composables/useTaskComments';
 import { useTaskDetail } from '@/composables/useTaskDetail';
 import { useMeQuery } from '@/lib/api-vue-query';
@@ -118,6 +122,23 @@ const {
   deleteComment,
 } = useTaskComments({ tenantId, projectId, taskId });
 
+// 担当者の割り当て（詳細でも一覧の行と同じ口を使う）
+const membersQuery = useProjectMembersQuery(tenantId, projectId);
+const members = computed(() => (membersQuery.data.value ?? []).map((member) => member.user));
+const rowMutations = useTaskRowMutations({ tenantId, projectId });
+
+function onToggleAssignee(userId: string, checked: boolean) {
+  const task = displayTask.value;
+  if (!task) return;
+  void rowMutations.toggleAssignee(task, userId, checked);
+}
+
+const { activities, activitiesLoading, activitiesError, refetchActivities } = useTaskActivities({
+  tenantId,
+  projectId,
+  taskId,
+});
+
 // 編集ボタンの出し分け用（TaskCommentItem 参照）。Layout の useAuthSession が
 // 同じ query key で /v1/auth/me を取得済みのため追加リクエストにはならない
 const meQuery = useMeQuery();
@@ -165,6 +186,8 @@ function onDeleteDialogCancel(event: Event) {
     @save:soft_deadline="onSaveSoftDeadline"
     @save:hard_deadline="onSaveHardDeadline"
     @save:label_ids="onSaveLabels"
+    :members="members"
+    @toggle:assignee="onToggleAssignee"
     :delete-disabled="deletePending"
     @delete-request="openDeleteDialog"
   >
@@ -204,7 +227,8 @@ function onDeleteDialogCancel(event: Event) {
         </div>
       </dialog>
     </template>
-    <template #main>
+    <!-- モックに合わせ、コメント（アクティビティ）は右の欄に置く -->
+    <template #sidebar>
       <TaskComments
         :threads="threads"
         :loading="commentsLoading"
@@ -227,7 +251,16 @@ function onDeleteDialogCancel(event: Event) {
         :on-clear-reply-error="clearReplyError"
         :on-clear-update-error="clearUpdateError"
         :on-clear-delete-error="clearDeleteError"
-      />
+      >
+        <template #before-list>
+          <TaskActivityFeed
+            :activities="activities"
+            :loading="activitiesLoading"
+            :error="activitiesError"
+            :on-retry="refetchActivities"
+          />
+        </template>
+      </TaskComments>
     </template>
     <template #footer>
       <p class="text-xs text-muted-foreground">

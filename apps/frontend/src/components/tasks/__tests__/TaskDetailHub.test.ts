@@ -38,6 +38,42 @@ const task: TaskDetail = {
   updated_at: '2026-07-16T00:00:00Z',
 };
 
+type StatusOption = components['schemas']['ProjectStatusResponse'];
+
+/** ワークフロー順（position）の 3 段。「次へ」と「完了にする」の検証で使う。 */
+const statuses: StatusOption[] = [
+  {
+    id: 'status-id',
+    name: 'Todo',
+    color: '#94a3b8',
+    position: 0,
+    is_default: true,
+    is_done_state: false,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+  {
+    id: 'status-progress',
+    name: 'In Progress',
+    color: '#3b82f6',
+    position: 1,
+    is_default: false,
+    is_done_state: false,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+  {
+    id: 'status-done',
+    name: 'Done',
+    color: '#22c55e',
+    position: 2,
+    is_default: false,
+    is_done_state: true,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+];
+
 const bugLabel: components['schemas']['LabelResponse'] = {
   id: 'label-bug',
   name: 'bug',
@@ -389,7 +425,7 @@ describe('TaskDetailHub description KFM 表示', () => {
     });
 
     expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
-    expect(wrapper.text()).toContain('説明はありません');
+    expect(wrapper.text()).toContain('説明を追加');
   });
 
   it('descriptionSource が最新 description と不一致なら stale HTML を捨ててプレーン表示へ倒す', () => {
@@ -433,5 +469,37 @@ describe('TaskDetailHub v-html 経路の source 契約', () => {
     const source = readFileSync(path.join(__dirname, '../TaskDetailHub.vue'), 'utf-8');
     const bindings = source.match(/v-html="[^"]*"/g) ?? [];
     expect(bindings).toEqual(['v-html="freshDescriptionHtml"']);
+  });
+});
+
+describe('TaskDetailHub ステータスの操作', () => {
+  function mountWithStatuses(statusId: string) {
+    return mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses, statusId },
+    });
+  }
+
+  it('右矢印はワークフロー順の次のステータスへ進める', async () => {
+    const wrapper = mountWithStatuses('status-id');
+
+    await wrapper.get('button[aria-label="In Progress にする"]').trigger('click');
+
+    expect(wrapper.emitted('update:statusId')).toEqual([['status-progress']]);
+  });
+
+  it('最後のステータスでは右矢印を出さない', () => {
+    const wrapper = mountWithStatuses('status-done');
+
+    expect(
+      wrapper.findAll('button').some((b) => b.attributes('aria-label')?.endsWith('にする')),
+    ).toBe(false);
+  });
+
+  it('チェックは完了扱いのステータスへ移す', async () => {
+    const wrapper = mountWithStatuses('status-id');
+
+    await wrapper.get('button[aria-label="Done にする（完了）"]').trigger('click');
+
+    expect(wrapper.emitted('update:statusId')).toEqual([['status-done']]);
   });
 });

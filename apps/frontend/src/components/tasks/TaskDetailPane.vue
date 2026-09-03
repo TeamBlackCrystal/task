@@ -1,19 +1,36 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
+import TaskActivityFeed from '@/components/tasks/TaskActivityFeed.vue';
+import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useProjectMembersQuery } from '@/lib/api-vue-query';
+import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
+import { useTaskActivities } from '@/composables/useTaskActivities';
+import { useTaskComments } from '@/composables/useTaskComments';
 import { useTaskDetail } from '@/composables/useTaskDetail';
+import { useMeQuery } from '@/lib/api-vue-query';
 
-const props = defineProps<{
-  /** ルートの tenant セグメント（表示ID） */
-  tenantDisplayId: string;
-  /** プロジェクトの key */
-  projectKey: string;
-  /** タスク識別子（URL と同じ seq key 形式。例: "ENG-42"） */
-  taskId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** ルートの tenant セグメント（表示ID） */
+    tenantDisplayId: string;
+    /** プロジェクトの key */
+    projectKey: string;
+    /** タスク識別子（URL と同じ seq key 形式。例: "ENG-42"） */
+    taskId: string;
+    /**
+     * 詳細の並び。分割ビューは幅が狭いので 1 カラム（`pane`）、
+     * オーバーレイは広いので詳細ページと同じ 3 カラム（`page`）にする。
+     */
+    layout?: 'page' | 'pane';
+    /** 器が閉じる手段を持つ場合（オーバーレイの × など）は自前の閉じるボタンを出さない */
+    showCloseButton?: boolean;
+  }>(),
+  { layout: 'pane', showCloseButton: true },
+);
 
 const emit = defineEmits<{
   close: [];
@@ -26,6 +43,8 @@ function closeDeleteDialog() {
 }
 
 const {
+  tenantId,
+  projectId,
   displayTask,
   statuses,
   projectLabels,
@@ -65,6 +84,56 @@ const {
   },
 });
 
+// アクティビティ（コメント）。詳細ページと同じ composable を使い、
+// オーバーレイでも本文と同じ画面でやり取りできるようにする
+const {
+  threads,
+  commentsLoading,
+  commentsError,
+  refetchComments,
+  submitPending,
+  submitError,
+  replyError,
+  replyErrorThreadId,
+  updatingCommentId,
+  updateError,
+  updateErrorCommentId,
+  deletingCommentId,
+  deleteError: commentDeleteError,
+  deleteErrorCommentId,
+  clearReplyError,
+  clearUpdateError,
+  clearDeleteError,
+  submitComment,
+  updateComment,
+  deleteComment,
+} = useTaskComments({
+  tenantId,
+  projectId,
+  taskId: computed(() => props.taskId),
+});
+
+// 履歴はコメントと別の口。片方が落ちてももう片方は読み書きできる
+const { activities, activitiesLoading, activitiesError, refetchActivities } = useTaskActivities({
+  tenantId,
+  projectId,
+  taskId: computed(() => props.taskId),
+});
+
+// 担当者の割り当て。詳細でも一覧の行と同じ口（専用の POST/DELETE）を使う
+const membersQuery = useProjectMembersQuery(tenantId, projectId);
+const members = computed(() => (membersQuery.data.value ?? []).map((member) => member.user));
+const rowMutations = useTaskRowMutations({ tenantId, projectId });
+
+function onToggleAssignee(userId: string, checked: boolean) {
+  const task = displayTask.value;
+  if (!task) return;
+  void rowMutations.toggleAssignee(task, userId, checked);
+}
+
+const meQuery = useMeQuery();
+const currentUserId = computed(() => meQuery.data.value?.id ?? null);
+
 function openDeleteDialog() {
   deleteError.value = null;
   deleteDialogRef.value?.showModal();
@@ -79,9 +148,13 @@ function onDeleteDialogCancel(event: Event) {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
+    <!--
+      横の余白はここで付けない。アクティビティ列の境界線と入力欄の帯を
+      器の端まで通すため、余白は本文・列のそれぞれが持つ（TaskDetailHub）。
+    -->
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
       <TaskDetailHub
-        layout="pane"
+        :layout="layout"
         :task="displayTask"
         :project-key="projectKey"
         :statuses="statuses"
@@ -108,11 +181,48 @@ function onDeleteDialogCancel(event: Event) {
         @save:soft_deadline="onSaveSoftDeadline"
         @save:hard_deadline="onSaveHardDeadline"
         @save:label_ids="onSaveLabels"
+        :members="members"
+        @toggle:assignee="onToggleAssignee"
         :delete-disabled="deletePending"
         @delete-request="openDeleteDialog"
       >
+        <template #sidebar>
+          <TaskComments
+            :threads="threads"
+            :loading="commentsLoading"
+            :list-error="commentsError"
+            :on-retry="refetchComments"
+            :current-user-id="currentUserId"
+            :submit-pending="submitPending"
+            :submit-error="submitError"
+            :reply-error="replyError"
+            :reply-error-thread-id="replyErrorThreadId"
+            :updating-comment-id="updatingCommentId"
+            :update-error="updateError"
+            :update-error-comment-id="updateErrorCommentId"
+            :deleting-comment-id="deletingCommentId"
+            :delete-error="commentDeleteError"
+            :delete-error-comment-id="deleteErrorCommentId"
+            :on-submit="submitComment"
+            :on-update="updateComment"
+            :on-delete="deleteComment"
+            :on-clear-reply-error="clearReplyError"
+            :on-clear-update-error="clearUpdateError"
+            :on-clear-delete-error="clearDeleteError"
+          >
+            <template #before-list>
+              <TaskActivityFeed
+                :activities="activities"
+                :loading="activitiesLoading"
+                :error="activitiesError"
+                :on-retry="refetchActivities"
+              />
+            </template>
+          </TaskComments>
+        </template>
         <template #header-actions>
           <Button
+            v-if="showCloseButton"
             type="button"
             variant="ghost"
             size="icon"

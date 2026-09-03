@@ -33,27 +33,26 @@ function initials(username: string) {
 
 <template>
   <div class="flex items-center gap-1.5">
-    <!-- 重ねアバター群 -->
-    <div class="flex -space-x-2">
-      <div
-        v-for="user in visibleUsers"
-        :key="user.id"
-        class="size-7 rounded-full ring-2 ring-background"
-      >
-        <Avatar class="size-full">
-          <AvatarImage v-if="user.avatar_url" :src="user.avatar_url" :alt="user.username" />
-          <AvatarFallback class="text-[10px] bg-muted text-muted-foreground">
-            {{ initials(user.username) }}
-          </AvatarFallback>
-        </Avatar>
-      </div>
+    <!--
+      重ねアバター群。縁取りは器の子セレクタ（*:data-[slot=avatar]）で一括して当てる。
+      アバターごとにラッパー div を挟むと、Avatar 側の丸めや大きさと二重管理になる。
+      +N も Avatar として置くことで同じ縁取りが乗る。
+    -->
+    <div
+      class="flex -space-x-2 *:data-[slot=avatar]:size-7 *:data-[slot=avatar]:ring-2 *:data-[slot=avatar]:ring-background"
+    >
+      <Avatar v-for="user in visibleUsers" :key="user.id">
+        <AvatarImage v-if="user.avatar_url" :src="user.avatar_url" :alt="user.username" />
+        <AvatarFallback class="bg-muted text-[10px] text-muted-foreground">
+          {{ initials(user.username) }}
+        </AvatarFallback>
+      </Avatar>
       <!-- +N オーバーフローチップ（comp-409 準拠） -->
-      <div
-        v-if="overflowCount > 0"
-        class="size-7 rounded-full bg-muted text-muted-foreground text-[10px] font-medium flex items-center justify-center ring-2 ring-background"
-      >
-        +{{ overflowCount }}
-      </div>
+      <Avatar v-if="overflowCount > 0">
+        <AvatarFallback class="bg-muted text-[10px] font-medium text-muted-foreground">
+          +{{ overflowCount }}
+        </AvatarFallback>
+      </Avatar>
     </div>
     <!-- 先頭名 + 他N名 テキスト（殿指示により維持。N は overflowCount と同義）。
          hideNames 指定時はアバターのみ（タスク詳細の担当者欄で使用） -->

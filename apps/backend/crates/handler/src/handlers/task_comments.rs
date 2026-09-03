@@ -22,6 +22,19 @@ use payload::task_comments::*;
 use service::notifications::{notify_comment_added, notify_mentioned};
 use service::task_activities::{extract_mentions, record_activity};
 
+/// コメントの投稿者。名前が引けない場合も表示は続けたいので `unknown` へ倒す。
+fn comment_user(map: &HashMap<Uuid, (String, Option<String>)>, user_id: Uuid) -> CommentUser {
+    let (name, avatar_url) = map
+        .get(&user_id)
+        .cloned()
+        .unwrap_or_else(|| ("unknown".into(), None));
+    CommentUser {
+        id: user_id,
+        name,
+        avatar_url,
+    }
+}
+
 fn comment_body(model: &task_comments::Model) -> Option<String> {
     if model.deleted_at.is_some() {
         None
@@ -63,7 +76,8 @@ pub async fn list_comments(
         .await?;
 
     let user_ids: Vec<Uuid> = all.iter().map(|c| c.user_id).collect();
-    let users_map: HashMap<Uuid, String> = if user_ids.is_empty() {
+    // 名前とアイコンをまとめて引く（コメント一覧が両方を出す）
+    let users_map: HashMap<Uuid, (String, Option<String>)> = if user_ids.is_empty() {
         HashMap::new()
     } else {
         users::Entity::find()
@@ -71,7 +85,7 @@ pub async fn list_comments(
             .all(&state.db)
             .await?
             .into_iter()
-            .map(|u| (u.id, u.username))
+            .map(|u| (u.id, (u.username, u.avatar_url)))
             .collect()
     };
 
@@ -95,38 +109,22 @@ pub async fn list_comments(
     let comments = top_level
         .into_iter()
         .map(|parent| {
-            let user_name = users_map
-                .get(&parent.user_id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".into());
             let mut thread_replies = replies_by_parent.remove(&parent.id).unwrap_or_default();
             thread_replies.sort_by_key(|a| a.created_at);
             let replies = thread_replies
                 .into_iter()
-                .map(|reply| {
-                    let reply_user = users_map
-                        .get(&reply.user_id)
-                        .cloned()
-                        .unwrap_or_else(|| "unknown".into());
-                    CommentReply {
-                        id: reply.id,
-                        user: CommentUser {
-                            id: reply.user_id,
-                            name: reply_user,
-                        },
-                        body: comment_body(&reply),
-                        created_at: reply.created_at.with_timezone(&Utc),
-                        updated_at: reply.updated_at.with_timezone(&Utc),
-                        is_deleted: reply.deleted_at.is_some(),
-                    }
+                .map(|reply| CommentReply {
+                    id: reply.id,
+                    user: comment_user(&users_map, reply.user_id),
+                    body: comment_body(&reply),
+                    created_at: reply.created_at.with_timezone(&Utc),
+                    updated_at: reply.updated_at.with_timezone(&Utc),
+                    is_deleted: reply.deleted_at.is_some(),
                 })
                 .collect();
             CommentThread {
                 id: parent.id,
-                user: CommentUser {
-                    id: parent.user_id,
-                    name: user_name,
-                },
+                user: comment_user(&users_map, parent.user_id),
                 body: comment_body(&parent),
                 replies,
                 created_at: parent.created_at.with_timezone(&Utc),

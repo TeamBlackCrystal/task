@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, nextTick, ref } from 'vue';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
+import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query';
 import type { components } from '@/generated/api';
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
@@ -65,6 +66,9 @@ import TaskDetailPane from '../TaskDetailPane.vue';
 
 enableAutoUnmount(afterEach);
 
+let queryClient: QueryClient;
+
+// ペインはアクティビティ（コメント）も自分で取りに行くので QueryClient が要る
 function mountPane() {
   return mount(TaskDetailPane, {
     props: {
@@ -72,6 +76,7 @@ function mountPane() {
       projectKey: 'ENG',
       taskId: 'ENG-42',
     },
+    global: { plugins: [[VueQueryPlugin, { queryClient }]] },
   });
 }
 
@@ -79,6 +84,9 @@ describe('TaskDetailPane', () => {
   beforeEach(() => {
     confirmDelete.mockReset();
     capturedParams = null;
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
   });
 
   it('選択タスクのタイトルを描画する', () => {

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, screen, userEvent, within } from 'storybook/test';
 import { provide } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import TaskDetailPage from '@/pages/@tenant/projects/@projectKey/tasks/@taskId/+Page.vue';
@@ -513,9 +513,11 @@ export const StatusChange: Story = {
       canvas.findByRole('heading', { name: 'OAuth 対応を実装する' }),
     ).resolves.toBeInTheDocument();
 
-    const select = await canvas.findByRole('combobox', { name: 'ステータス' });
-    await user.selectOptions(select, 's-done');
-    await expect(select).toHaveValue('s-done');
+    // ステータスはモックに合わせて枠付きピル + メニューにした（素の select ではない）
+    const trigger = await canvas.findByRole('combobox', { name: 'ステータス' });
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /Done/ }));
+    await expect(trigger).toHaveTextContent('Done');
   },
 };
 
@@ -529,11 +531,13 @@ export const StatusChangeFailure500: Story = {
       canvas.findByRole('heading', { name: 'OAuth 対応を実装する' }),
     ).resolves.toBeInTheDocument();
 
-    const select = await canvas.findByRole('combobox', { name: 'ステータス' });
-    await expect(select).toHaveValue('s-progress');
-    await user.selectOptions(select, 's-done');
+    const trigger = await canvas.findByRole('combobox', { name: 'ステータス' });
+    await expect(trigger).toHaveTextContent('In Progress');
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /Done/ }));
     await expect(canvas.findByText('ステータスの更新に失敗しました')).resolves.toBeInTheDocument();
-    await expect(select).toHaveValue('s-progress');
+    // 失敗したら元の表示へ戻る
+    await expect(trigger).toHaveTextContent('In Progress');
   },
 };
 
@@ -547,11 +551,13 @@ export const StatusChangeFailure413: Story = {
       canvas.findByRole('heading', { name: 'OAuth 対応を実装する' }),
     ).resolves.toBeInTheDocument();
 
-    const select = await canvas.findByRole('combobox', { name: 'ステータス' });
-    await expect(select).toHaveValue('s-progress');
-    await user.selectOptions(select, 's-done');
+    const trigger = await canvas.findByRole('combobox', { name: 'ステータス' });
+    await expect(trigger).toHaveTextContent('In Progress');
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /Done/ }));
     await expect(canvas.findByText('ステータスの更新に失敗しました')).resolves.toBeInTheDocument();
-    await expect(select).toHaveValue('s-progress');
+    // 失敗したら元の表示へ戻る
+    await expect(trigger).toHaveTextContent('In Progress');
   },
 };
 
@@ -767,9 +773,7 @@ export const DescriptionClear: Story = {
     await user.click(canvas.getByText('OIDC フローとセッション管理を実装する。'));
     await user.click(await canvas.findByRole('button', { name: 'クリア' }));
 
-    await expect(
-      canvas.findByText('説明はありません（クリックして追加）'),
-    ).resolves.toBeInTheDocument();
+    await expect(canvas.findByText('説明を追加')).resolves.toBeInTheDocument();
     const puts = (DescriptionClear as { puts?: unknown[] }).puts ?? [];
     await expect(puts).toContainEqual({ clear_description: true });
   },

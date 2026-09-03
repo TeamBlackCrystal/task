@@ -45,6 +45,9 @@ pub struct CommentUser {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     pub name: String,
+    /// 画面でアイコンを出すために返す。未設定なら頭文字で描く
+    #[schema(nullable)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]

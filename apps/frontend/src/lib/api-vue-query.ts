@@ -76,6 +76,37 @@ export function useProjectsQuery(tenantId: MaybeRefOrGetter<TenantUuid | null | 
   );
 }
 
+const PROJECT_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
+
+/** プロジェクトのメンバー。担当者の選択肢として使う。 */
+export function useProjectMembersQuery(
+  // 表示用 ID をそのまま渡させない（api-path-params の規則）。解決済みの UUID を受ける
+  tenantId: MaybeRefOrGetter<TenantUuid | null | undefined>,
+  projectId: MaybeRefOrGetter<ProjectUuid | null | undefined>,
+) {
+  return useQuery(
+    computed(() => {
+      const tenant = toValue(tenantId);
+      const project = toValue(projectId);
+      const params = {
+        params: { path: { tenant_id: tenant as TenantUuid, project_id: project as ProjectUuid } },
+      };
+      return {
+        queryKey: ['get', PROJECT_MEMBERS_PATH, params],
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
+          const { data, error } = await fetchClient.GET(PROJECT_MEMBERS_PATH, {
+            ...params,
+            signal,
+          });
+          if (error) throw error;
+          return data;
+        },
+        enabled: !!tenant && !!project,
+      };
+    }),
+  );
+}
+
 export function useMeQuery(options?: { enabled?: MaybeRefOrGetter<boolean> }) {
   return apiClient.useQuery('get', '/v1/auth/me', undefined, {
     staleTime: AUTH_ME_STALE_TIME_MS,

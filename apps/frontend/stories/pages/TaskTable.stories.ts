@@ -6,9 +6,12 @@ import TaskTablePage from '@/pages/@tenant/projects/@projectKey/tasks/+Page.vue'
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
 
+// 一覧の既定表示は List になったので、この Table 用の story 群では view=table を明示する
+// （ページは pageContext.urlParsed.search から表示形式を読む）
 const mockContext = {
   urlPathname: '/tenant-123/projects/ENG/tasks',
   routeParams: { tenant: 'tenant-123', projectKey: 'ENG' },
+  urlParsed: { search: { view: 'table' } },
 };
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
@@ -294,6 +297,46 @@ const sampleSearchTasks = {
 /**
  * fetch モックで全 API エンドポイントを差し替える
  */
+/** オーバーレイのアクティビティ欄で、コメントのカード表示を見るためのフィクスチャ。 */
+const sampleComments = [
+  {
+    id: 'comment-1',
+    body: 'ここは PKCE の検証を先に入れたほうがよさそうです。',
+    is_deleted: false,
+    created_at: '2026-06-10T00:00:00Z',
+    updated_at: '2026-06-10T00:00:00Z',
+    user: { id: 'user-1', name: 'yupix', avatar_url: null },
+    replies: [
+      {
+        id: 'comment-1-reply-1',
+        body: '対応しました。レビューお願いします。',
+        is_deleted: false,
+        created_at: '2026-06-11T00:00:00Z',
+        updated_at: '2026-06-11T00:00:00Z',
+        user: { id: 'user-2', name: 'sousuke', avatar_url: null },
+        replies: [],
+      },
+    ],
+  },
+];
+
+const sampleMembers = [
+  {
+    id: 'pm-1',
+    project_id: 'proj-eng',
+    user_id: 'user-1',
+    role: 'member',
+    user: { id: 'user-1', username: 'yupix', avatar_url: null },
+  },
+  {
+    id: 'pm-2',
+    project_id: 'proj-eng',
+    user_id: 'user-2',
+    role: 'member',
+    user: { id: 'user-2', username: 'sousuke', avatar_url: null },
+  },
+];
+
 function createMockFetch(
   overrides: {
     projects?: typeof sampleProjects;
@@ -305,6 +348,7 @@ function createMockFetch(
     rejectTenantsList?: boolean;
     rejectLabels?: boolean;
     hang?: boolean;
+    comments?: unknown[];
   } = {},
 ) {
   const original = globalThis.fetch;
@@ -331,6 +375,39 @@ function createMockFetch(
       }
       return jsonResponse(sampleLabels);
     }
+    if (url.includes('/activities')) {
+      return jsonResponse({
+        activities: [
+          {
+            id: 'act-2',
+            event_type: 'status_changed',
+            payload: { from: 'Backlog', to: 'In Progress' },
+            created_at: new Date(Date.now() - 60_000).toISOString(),
+            user: { id: 'user-1', name: 'yupix' },
+          },
+          {
+            id: 'act-1',
+            event_type: 'task_created',
+            payload: {},
+            created_at: '2026-06-01T00:00:00Z',
+            user: { id: 'user-1', name: 'yupix' },
+          },
+        ],
+      });
+    }
+    if (url.includes('/comments')) {
+      return jsonResponse({ comments: overrides.comments ?? [] });
+    }
+    if (url.includes('/members')) {
+      return jsonResponse(sampleMembers);
+    }
+    // List 表示はステータスごとに問い合わせる。件数（total）もその絞り込みで返す
+    const statusFilter = new URL(url, 'http://localhost').searchParams.get('status_id');
+    if (statusFilter && url.includes('/tasks')) {
+      const all = (overrides.tasks ?? sampleTasks).tasks as Array<{ status_id: string }>;
+      const filtered = all.filter((task) => task.status_id === statusFilter);
+      return jsonResponse({ tasks: filtered, total: filtered.length });
+    }
     if (url.includes('/tasks/search')) {
       if (overrides.rejectSearch) {
         return jsonResponse({ message: 'search failed' }, 500);
@@ -344,8 +421,9 @@ function createMockFetch(
       const found = list.find(
         (t) => `${mockContext.routeParams.projectKey}-${t.seq_id}` === detailMatch[1],
       );
-      // 詳細レスポンスは labels を含む（一覧用フィクスチャには無いのでここで補う）
-      return jsonResponse({ ...(found ?? list[0]), labels: [] });
+      // 一覧のフィクスチャが持つラベルをそのまま返す（詳細のラベル欄を story で見るため）
+      const task = (found ?? list[0]) as { labels?: unknown[] };
+      return jsonResponse({ ...task, labels: task.labels ?? [] });
     }
     if (url.includes('/tasks')) {
       return jsonResponse(overrides.tasks ?? sampleTasks);
@@ -540,7 +618,11 @@ function storyDecoratorReactive() {
 }
 
 function storyDecorator(
-  context: { urlPathname: string; routeParams: Record<string, string> } = mockContext,
+  context: {
+    urlPathname: string;
+    routeParams: Record<string, string>;
+    urlParsed?: { search?: Record<string, string> };
+  } = mockContext,
 ) {
   return () => ({
     setup() {
@@ -662,6 +744,60 @@ export const SearchApiError: Story = {
 
     await expect(canvas.findByText('検索に失敗しました')).resolves.toBeInTheDocument();
     await expect(canvas.findByRole('button', { name: '再試行' })).resolves.toBeInTheDocument();
+  },
+};
+
+const listContext = {
+  urlPathname: '/tenant-123/projects/ENG/tasks',
+  routeParams: { tenant: 'tenant-123', projectKey: 'ENG' },
+  urlParsed: { search: {} },
+};
+
+export const ListView: Story = {
+  name: 'List 表示（既定）',
+  decorators: [storyDecorator(listContext)],
+  beforeEach: mockFetch,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // ステータスごとの塊で出る（Table のヘッダー行ではなく、グループの見出し）
+    await expect(canvas.findByRole('tab', { name: 'List' })).resolves.toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(canvas.findAllByText('In Review')).resolves.not.toHaveLength(0);
+    // 行から直接触れる項目が出ている
+    await expect(canvas.findAllByLabelText('優先度')).resolves.not.toHaveLength(0);
+    // ステータスはグループが表すので列にせず、名前の左の丸から変える
+    await expect(canvas.findAllByLabelText(/^ステータス: /)).resolves.not.toHaveLength(0);
+    await expect(canvas.findAllByLabelText('コメントを追加')).resolves.not.toHaveLength(0);
+  },
+};
+
+export const ListViewDetailOverlay: Story = {
+  name: 'List 表示の詳細オーバーレイ（履歴とコメント）',
+  decorators: [storyDecorator(listContext)],
+  beforeEach: () => createMockFetch({ comments: sampleComments }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // 行のタイトルから詳細をオーバーレイで開く（分割ビューではない）
+    const user = userEvent.setup();
+    await user.click(await canvas.findByRole('button', { name: 'OAuth 対応を実装する' }));
+
+    const dialog = await screen.findByRole('dialog');
+    // 履歴は箇条書き、コメントはカードで並ぶ
+    await expect(
+      within(dialog).findByText(/ステータスを In Progress に変更しました/),
+    ).resolves.toBeInTheDocument();
+    await expect(
+      within(dialog).findByText('ここは PKCE の検証を先に入れたほうがよさそうです。'),
+    ).resolves.toBeInTheDocument();
+    await expect(
+      within(dialog).findByText('対応しました。レビューお願いします。'),
+    ).resolves.toBeInTheDocument();
+    // タイトルの変更は詳細でだけできる
+    await expect(
+      within(dialog).getByRole('heading', { name: 'OAuth 対応を実装する' }),
+    ).toBeInTheDocument();
   },
 };
 

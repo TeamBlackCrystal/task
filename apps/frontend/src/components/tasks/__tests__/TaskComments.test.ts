@@ -33,7 +33,7 @@ function mountComments(props: Partial<InstanceType<typeof TaskComments>['$props'
 }
 
 describe('TaskComments', () => {
-  it('スレッドと返信を素テキストで表示し、HTML はエスケープされたまま出す', () => {
+  it('スレッドと返信を素テキストで表示し、HTML はエスケープされたまま出す', async () => {
     const wrapper = mountComments({
       threads: [
         thread('c-1', '一行目\n<script>alert(1)</script>', {
@@ -51,12 +51,21 @@ describe('TaskComments', () => {
       ],
     });
 
-    const bodies = wrapper.findAll('[data-task-comment] p.whitespace-pre-wrap');
-    expect(bodies).toHaveLength(2);
+    // 一覧は親コメントだけを出す（返信はスレッド表示で見る）
+    const listBodies = wrapper.findAll('[data-task-comment] p.whitespace-pre-wrap');
+    expect(listBodies).toHaveLength(1);
     // v-html ではないため、タグはテキストとしてそのまま残る
-    expect(bodies[0].text()).toContain('<script>alert(1)</script>');
+    expect(listBodies[0].text()).toContain('<script>alert(1)</script>');
     expect(wrapper.find('script').exists()).toBe(false);
-    expect(bodies[1].text()).toBe('返信本文');
+
+    // 返信件数のボタンでスレッドへ切り替えると、親と返信が並ぶ
+    const openThread = wrapper.findAll('button').find((b) => b.text() === '1件の返信');
+    expect(openThread).toBeDefined();
+    await openThread!.trigger('click');
+    const threadBodies = wrapper.findAll('[data-task-comment] p.whitespace-pre-wrap');
+    expect(threadBodies).toHaveLength(2);
+    expect(threadBodies[1].text()).toBe('返信本文');
+    expect(wrapper.find('script').exists()).toBe(false);
   });
 
   it('コメントが無いときは空メッセージを出す', () => {
@@ -109,19 +118,22 @@ describe('TaskComments', () => {
     const onSubmit = vi.fn(async () => true);
     const wrapper = mountComments({ threads: [thread('c-1', '親コメント')], onSubmit });
 
+    // 返信は列をスレッド表示へ切り替えてから、下端の入力欄で送る
     const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
     expect(replyOpenButton).toBeDefined();
     await replyOpenButton!.trigger('click');
-    const replyArea = wrapper.get('textarea[aria-label="返信"]');
+    const replyArea = wrapper.get('textarea[aria-label="返信を入力"]');
     await replyArea.setValue('返信します');
-    const replyButton = wrapper.findAll('button').find((button) => button.text() === '返信する');
-    expect(replyButton).toBeDefined();
-    await replyButton!.trigger('click');
+    // 送信ボタンは type=submit なので、フォームの submit で確定させる
+    expect(wrapper.find('button[aria-label="返信する"]').exists()).toBe(true);
+    await wrapper.get('form').trigger('submit');
     await flushPromises();
 
     expect(onSubmit).toHaveBeenCalledWith('返信します', 'c-1');
-    // 成功で返信フォームは閉じる
-    expect(wrapper.find('textarea[aria-label="返信"]').exists()).toBe(false);
+    // 成功で下書きは消える（スレッド表示は続けて返信できるよう開いたまま）
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]').element.value,
+    ).toBe('');
   });
 
   it('編集は onUpdate をコメント ID と新本文で呼ぶ', async () => {
@@ -184,21 +196,21 @@ describe('TaskComments', () => {
     );
   });
 
-  it('返信フォームを開いたままスレッド削除に成功したらフォームを閉じる', async () => {
+  it('スレッドを開いたまま削除に成功したら一覧へ戻す', async () => {
     const onDelete = vi.fn(async () => true);
     const wrapper = mountComments({ threads: [thread('c-1', '消すスレッド')], onDelete });
 
     const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
     await replyOpenButton!.trigger('click');
-    expect(wrapper.find('textarea[aria-label="返信"]').exists()).toBe(true);
+    expect(wrapper.find('button[aria-label="コメント一覧へ戻る"]').exists()).toBe(true);
 
     await wrapper.get('button[aria-label="コメントを削除"]').trigger('click');
     const confirmButton = wrapper.findAll('button').find((button) => button.text() === '削除する');
     await confirmButton!.trigger('click');
     await flushPromises();
 
-    // 削除済みスレッドへは返信できない（backend が 400 で弾く）ため、フォームは残さない
-    expect(wrapper.find('textarea[aria-label="返信"]').exists()).toBe(false);
+    // 削除済みスレッドへは返信できない（backend が 400 で弾く）ため、一覧へ戻す
+    expect(wrapper.find('button[aria-label="コメント一覧へ戻る"]').exists()).toBe(false);
   });
 
   it('編集 UI の開閉で前回の失敗表示を消す（返信フォームと同型）', async () => {
@@ -291,7 +303,7 @@ describe('TaskComments', () => {
     expect(wrapper.findAll('button[aria-label="コメントを削除"]')).toHaveLength(2);
   });
 
-  it('返信の失敗は対象スレッドの返信フォーム直下に出す', async () => {
+  it('返信の失敗はスレッド表示の中に出す', async () => {
     const wrapper = mountComments({
       threads: [thread('c-1', '親コメント')],
       onSubmit: vi.fn(async () => false),
@@ -304,12 +316,12 @@ describe('TaskComments', () => {
       replyErrorThreadId: 'c-1',
     });
 
-    const replyForm = wrapper.find('textarea[aria-label="返信"]');
-    expect(replyForm.exists()).toBe(true);
+    // スレッド表示のまま、その場に拒否理由を出す
+    expect(wrapper.find('textarea[aria-label="返信を入力"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('返信を投稿できませんでした（bad-request）');
   });
 
-  it('返信フォームを開き直すとき前回の失敗表示を消す', async () => {
+  it('スレッドの開閉で前回の失敗表示を消す', async () => {
     const onClearReplyError = vi.fn();
     const wrapper = mountComments({
       threads: [thread('c-1', '親コメント')],
@@ -322,9 +334,9 @@ describe('TaskComments', () => {
     await replyOpenButton!.trigger('click');
     expect(onClearReplyError).toHaveBeenCalledTimes(1);
 
+    // 一覧へ戻るときにも消す（次に開いたスレッドへ前の失敗を持ち越さない）
     await wrapper.setProps({ replyError: null, replyErrorThreadId: null });
-    const cancelButton = wrapper.findAll('button').find((button) => button.text() === 'キャンセル');
-    await cancelButton!.trigger('click');
+    await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
     expect(onClearReplyError).toHaveBeenCalledTimes(2);
   });
 
