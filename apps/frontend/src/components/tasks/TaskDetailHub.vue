@@ -81,6 +81,8 @@ const props = defineProps<{
   /** 担当者の更新中。ピッカーを止める（止めないと 2 回目が無言で捨てられる） */
   assigneeUpdating?: boolean;
   assigneeError?: string | null;
+  /** 候補の取得状態。取得中・失敗を「候補 0 人」と混ぜない */
+  membersState?: { loading?: boolean; error?: boolean; onRetry?: () => void };
   projectLabels?: LabelOption[];
   projectLabelsLoading?: boolean;
   projectLabelsError?: boolean;
@@ -767,6 +769,7 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
                     :members="members"
                     :selected="task.assignees.map((assignee) => assignee.user)"
                     :disabled="assigneeUpdating"
+                    :members-state="membersState"
                     @toggle="(userId, checked) => emit('toggle:assignee', userId, checked)"
                   />
                   <AvatarGroup

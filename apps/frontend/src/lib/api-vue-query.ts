@@ -76,10 +76,17 @@ export function useProjectsQuery(tenantId: MaybeRefOrGetter<TenantUuid | null | 
   );
 }
 
-const PROJECT_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
+const ASSIGNABLE_USERS_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/assignable-users' as const;
 
-/** プロジェクトのメンバー。担当者の選択肢として使う。 */
-export function useProjectMembersQuery(
+/**
+ * タスクの担当者に指定できる利用者。
+ *
+ * メンバー一覧（`/members`）は使わない。あちらはメンバー管理の口で
+ * プロジェクト管理者しか読めず、担当者を触れる人が候補だけ 403 になる。
+ * メンバー指定のない共有プロジェクトはテナント全体へ開放されるため、返る集合も違う。
+ */
+export function useAssignableUsersQuery(
   // 表示用 ID をそのまま渡させない（api-path-params の規則）。解決済みの UUID を受ける
   tenantId: MaybeRefOrGetter<TenantUuid | null | undefined>,
   projectId: MaybeRefOrGetter<ProjectUuid | null | undefined>,
@@ -93,9 +100,9 @@ export function useProjectMembersQuery(
         params: { path: { tenant_id: tenantUuid!, project_id: projectUuid! } },
       };
       return {
-        queryKey: ['get', PROJECT_MEMBERS_PATH, params],
+        queryKey: ['get', ASSIGNABLE_USERS_PATH, params],
         queryFn: async ({ signal }: { signal: AbortSignal }) => {
-          const { data, error } = await fetchClient.GET(PROJECT_MEMBERS_PATH, {
+          const { data, error } = await fetchClient.GET(ASSIGNABLE_USERS_PATH, {
             ...params,
             signal,
           });

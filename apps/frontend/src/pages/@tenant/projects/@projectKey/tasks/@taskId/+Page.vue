@@ -8,7 +8,7 @@ import TaskActivityFeed from '@/components/tasks/TaskActivityFeed.vue';
 import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
-import { useProjectMembersQuery } from '@/lib/api-vue-query';
+import { useAssignableUsersQuery } from '@/lib/api-vue-query';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 import { useTaskActivities } from '@/composables/useTaskActivities';
 import { useTaskComments } from '@/composables/useTaskComments';
@@ -123,8 +123,15 @@ const {
 } = useTaskComments({ tenantId, projectId, taskId });
 
 // 担当者の割り当て（詳細でも一覧の行と同じ口を使う）
-const membersQuery = useProjectMembersQuery(tenantId, projectId);
-const members = computed(() => (membersQuery.data.value ?? []).map((member) => member.user));
+const membersQuery = useAssignableUsersQuery(tenantId, projectId);
+const members = computed(() => membersQuery.data.value ?? []);
+
+// 候補の取得状態はピッカーへ渡す（取得中・失敗を「候補 0 人」と混ぜない）
+const membersState = computed(() => ({
+  loading: membersQuery.isLoading.value,
+  error: membersQuery.isError.value,
+  onRetry: () => void membersQuery.refetch(),
+}));
 const rowMutations = useTaskRowMutations({ tenantId, projectId });
 
 function onToggleAssignee(userId: string, checked: boolean) {
@@ -144,7 +151,15 @@ const assigneeError = computed(() => {
   return id ? (rowMutations.errors.value[id] ?? null) : null;
 });
 
-const { activities, activitiesLoading, activitiesError, refetchActivities } = useTaskActivities({
+const {
+  activities,
+  activitiesLoading,
+  activitiesError,
+  hasMoreActivities,
+  activitiesFetchingMore,
+  loadMoreActivities,
+  refetchActivities,
+} = useTaskActivities({
   tenantId,
   projectId,
   taskId,
@@ -200,6 +215,7 @@ function onDeleteDialogCancel(event: Event) {
     :members="members"
     :assignee-updating="assigneeUpdating"
     :assignee-error="assigneeError"
+    :members-state="membersState"
     @toggle:assignee="onToggleAssignee"
     :delete-disabled="deletePending"
     @delete-request="openDeleteDialog"
@@ -271,6 +287,9 @@ function onDeleteDialogCancel(event: Event) {
             :loading="activitiesLoading"
             :error="activitiesError"
             :on-retry="refetchActivities"
+            :has-more="hasMoreActivities"
+            :fetching-more="activitiesFetchingMore"
+            :on-load-more="loadMoreActivities"
           />
         </template>
       </TaskComments>

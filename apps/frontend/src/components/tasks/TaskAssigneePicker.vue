@@ -27,6 +27,11 @@ const props = withDefaults(
     /** 選択済みのユーザー（表示にも使うので id だけでなく実体で受ける） */
     selected: PickableMember[];
     disabled?: boolean;
+    /**
+     * 候補の取得状態。取得中・失敗を「候補が 0 人」と混ぜると、
+     * 権限や通信で候補が取れていないのに「メンバーがいません」と出てしまう。
+     */
+    membersState?: { loading?: boolean; error?: boolean; onRetry?: () => void };
     /** 重ねて出すアバターの最大数。超過分は +N */
     maxDisplay?: number;
   }>(),
@@ -94,8 +99,24 @@ function isSelected(userId: string) {
           aria-label="メンバーを検索"
         />
       </div>
-      <p v-if="!members.length" class="px-2 py-1.5 text-sm text-muted-foreground">
-        メンバーがいません
+      <p v-if="membersState?.loading" class="px-2 py-1.5 text-sm text-muted-foreground">
+        読み込み中…
+      </p>
+      <div v-else-if="membersState?.error" class="flex items-center gap-2 px-2 py-1.5">
+        <p class="text-sm text-destructive">候補を読み込めませんでした</p>
+        <Button
+          v-if="membersState.onRetry"
+          type="button"
+          variant="outline"
+          size="sm"
+          class="h-7 text-xs"
+          @click="membersState.onRetry()"
+        >
+          再試行
+        </Button>
+      </div>
+      <p v-else-if="!members.length" class="px-2 py-1.5 text-sm text-muted-foreground">
+        担当者に指定できる利用者がいません
       </p>
       <p v-else-if="!visibleMembers.length" class="px-2 py-1.5 text-sm text-muted-foreground">
         一致するメンバーがいません

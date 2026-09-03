@@ -35,6 +35,8 @@ const props = defineProps<{
   groups: TaskGroup[];
   projectLabels: LabelResponse[];
   members: ProjectMember[];
+  /** 担当者候補の取得状態。取得中・失敗を「候補 0 人」と混ぜない */
+  membersState?: { loading?: boolean; error?: boolean; onRetry?: () => void };
   statuses: StatusResponse[];
   pending: Record<string, TaskRowField | undefined>;
   errors: Record<string, string | undefined>;
@@ -226,6 +228,7 @@ async function commitAdding(statusId: string) {
               @update:soft-deadline="(iso) => emit('update:softDeadline', task, iso)"
               @toggle:assignee="(userId, checked) => emit('toggle:assignee', task, userId, checked)"
               @toggle:label="(labelId, checked) => emit('toggle:label', task, labelId, checked)"
+              :members-state="membersState"
               :on-comment="(body: string) => onComment(task, body)"
             />
 
@@ -284,6 +287,7 @@ async function commitAdding(statusId: string) {
                 <TaskAssigneePicker
                   :members="members"
                   :selected="draftAssignees"
+                  :members-state="membersState"
                   @toggle="toggleDraftAssignee"
                 />
                 <!-- 参照はアイコンだけ。日付の入力欄は押したときに出す -->

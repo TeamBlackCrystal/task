@@ -50,7 +50,7 @@ import CreateTaskDialog from '@/components/tasks/CreateTaskDialog.vue';
 import TaskTitleLink from '@/components/tasks/TaskTitleLink.vue';
 import { useResolvedProjectId } from '@/composables/useResolvedProjectId';
 import { useResolvedTenantId } from '@/composables/useResolvedTenantId';
-import { fetchClient, taskSearchQueryOptions } from '@/lib/api-vue-query';
+import { fetchClient, taskSearchQueryOptions, useAssignableUsersQuery } from '@/lib/api-vue-query';
 import { formatDeadline, taskDetailHref, taskSeqKey } from '@/lib/task-display';
 import type { components } from '@/generated/api';
 import {
@@ -74,7 +74,6 @@ import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
-const LIST_MEMBERS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/members' as const;
 /** List 表示でステータスごとに最初に取る件数。「もっと見る」でこの単位ずつ増やす */
 const GROUP_PAGE_SIZE = 20;
 const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' as const;
@@ -380,26 +379,20 @@ const labelsQuery = useQuery({
 const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
 const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
 
-// ---- クエリ④: プロジェクトメンバー（List 表示の担当者候補）----
-const membersQuery = useQuery({
-  queryKey: computed(() => [
-    'get',
-    LIST_MEMBERS_PATH,
-    { params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } } },
-  ]),
-  queryFn: async ({ signal }) => {
-    const { data, error } = await fetchClient.GET(LIST_MEMBERS_PATH, {
-      params: { path: { tenant_id: tenantId.value!, project_id: projectId.value! } },
-      signal,
-    });
-    if (error) throw error;
-    return data;
-  },
+// ---- クエリ④: 担当者候補（List 表示の行から割り当てる）----
+const membersQuery = useAssignableUsersQuery(
   // 担当者の割り当ては List 表示でしか出さないので、Table のときは取りに行かない
-  enabled: computed(() => !!tenantId.value && !!projectId.value && isListView.value),
-});
+  () => (isListView.value ? tenantId.value : null),
+  () => (isListView.value ? projectId.value : null),
+);
 
-const projectMembers = computed(() => (membersQuery.data.value ?? []).map((member) => member.user));
+const projectMembers = computed(() => membersQuery.data.value ?? []);
+// 候補の取得状態はピッカーへ渡す（取得中・失敗を「候補 0 人」と混ぜない）
+const projectMembersState = computed(() => ({
+  loading: membersQuery.isLoading.value,
+  error: membersQuery.isError.value,
+  onRetry: () => void membersQuery.refetch(),
+}));
 
 // ---- List 表示: ステータスごとの取得 ----
 // 1 本の一覧クエリを画面側で仕分けると、グループの件数がページ内の件数になってしまう
@@ -1105,6 +1098,7 @@ const table = useVueTable({
               :statuses="workflowStatuses"
               :project-labels="projectLabels"
               :members="projectMembers"
+              :members-state="projectMembersState"
               :pending="rowMutations.pending.value"
               :errors="rowMutations.errors.value"
               :comment-pending-task-ids="rowMutations.commentPendingTaskIds.value"

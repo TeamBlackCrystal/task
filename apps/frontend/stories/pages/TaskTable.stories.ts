@@ -398,6 +398,10 @@ function createMockFetch(
     if (url.includes('/comments')) {
       return jsonResponse({ comments: overrides.comments ?? [] });
     }
+    // 担当者候補はメンバー一覧とは別の口（管理者でなくても読める）
+    if (url.includes('/assignable-users')) {
+      return jsonResponse(sampleMembers.map((member) => member.user));
+    }
     if (url.includes('/members')) {
       return jsonResponse(sampleMembers);
     }

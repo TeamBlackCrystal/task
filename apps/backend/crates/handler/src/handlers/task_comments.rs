@@ -1,13 +1,13 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use axum_valid::Valid;
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-    TransactionTrait, prelude::Uuid,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, TransactionTrait, prelude::Uuid,
 };
 use std::collections::HashMap;
 
@@ -377,6 +377,7 @@ pub async fn delete_comment(
         ("tenant_id" = Uuid, Path, description = "テナントID"),
         ("project_id" = Uuid, Path, description = "プロジェクトID"),
         ("id" = String, Path, description = "タスクID"),
+        ListActivitiesQuery,
     ),
     responses(
         (status = 200, description = "アクティビティ一覧", body = ActivityListResponse),
@@ -387,15 +388,21 @@ pub async fn list_activities(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id, id)): Path<(Uuid, Uuid, String)>,
+    Query(q): Query<ListActivitiesQuery>,
 ) -> Result<Json<ActivityListResponse>, AppError> {
     auth.require_scope(entity::scopes::Scope::ReadTask)?;
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
-    let rows = task_activities::Entity::find()
-        .filter(task_activities::Column::TaskId.eq(task.id))
+    // 履歴は操作のたびに増えるので、全件返さず範囲を切る
+    let limit = std::cmp::min(q.limit, MAX_ACTIVITIES_LIMIT);
+    let base = task_activities::Entity::find().filter(task_activities::Column::TaskId.eq(task.id));
+    let total = base.clone().count(&state.db).await?;
+    let rows = base
         .order_by_desc(task_activities::Column::CreatedAt)
+        .limit(limit)
+        .offset(q.offset)
         .all(&state.db)
         .await?;
 
@@ -432,5 +439,5 @@ pub async fn list_activities(
         })
         .collect();
 
-    Ok(Json(ActivityListResponse { activities }))
+    Ok(Json(ActivityListResponse { activities, total }))
 }

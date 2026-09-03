@@ -104,9 +104,31 @@ pub struct ActivityItem {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// 履歴の取得範囲。
+///
+/// 履歴は操作のたびに増えるので、既定で先頭だけ返す。全件返すと
+/// 長く使われたタスクほど DB・レスポンス・描画のコストが上限なく伸びる。
+#[derive(Deserialize, ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListActivitiesQuery {
+    #[serde(default = "default_activities_limit")]
+    pub limit: u64,
+    #[serde(default)]
+    pub offset: u64,
+}
+
+fn default_activities_limit() -> u64 {
+    20
+}
+
+/// 上限。これより大きい `limit` は切り詰める。
+pub const MAX_ACTIVITIES_LIMIT: u64 = 100;
+
 #[derive(Serialize, ToSchema)]
 pub struct ActivityListResponse {
     pub activities: Vec<ActivityItem>,
+    /// 絞り込み前の総数。呼び出し側が「まだ残っているか」を判断する
+    pub total: u64,
 }
 
 #[derive(Validate, Deserialize, ToSchema, serde::Serialize)]

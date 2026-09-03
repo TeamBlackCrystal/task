@@ -8376,6 +8376,123 @@
         }
       }
     },
+    "/v1/tenants/{tenant_id}/projects/{project_id}/assignable-users": {
+      "get": {
+        "tags": ["Project Members"],
+        "summary": "担当者に指定できる利用者一覧",
+        "description": "メンバー一覧（`list_members`）とは別に置く。あちらはメンバー管理の口で\nプロジェクト管理者しか読めないが、担当者の割り当ては `WriteTask` があれば\nできるため、候補だけ取れずに 403 になる。返す集合も違う:\nメンバーを 1 人も指定していない共有プロジェクトはテナント全体へ開放されるので、\n`project_members` の行ではなく `assignable_user_ids` の判定で返す。",
+        "operationId": "list_assignable_users",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "プロジェクトID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "担当者候補",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenants/{tenant_id}/projects/{project_id}/custom-fields": {
       "get": {
         "tags": ["Custom Fields"],
@@ -15418,6 +15535,26 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
           }
         ],
         "responses": {
@@ -19629,13 +19766,19 @@
       },
       "ActivityListResponse": {
         "type": "object",
-        "required": ["activities"],
+        "required": ["activities", "total"],
         "properties": {
           "activities": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ActivityItem"
             }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "絞り込み前の総数。呼び出し側が「まだ残っているか」を判断する",
+            "minimum": 0
           }
         }
       },

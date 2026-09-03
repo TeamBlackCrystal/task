@@ -263,6 +263,13 @@ function createMockFetch(overrides: MockOptions = {}) {
     if (url.includes('/labels')) {
       return jsonResponse(sampleLabels);
     }
+    // 担当者候補はメンバー一覧とは別の口（管理者でなくても読める）
+    if (url.includes('/assignable-users')) {
+      return jsonResponse([mockUsers.alpha, mockUsers.beta]);
+    }
+    if (url.includes('/activities')) {
+      return jsonResponse({ activities: [], total: 0 });
+    }
     // /tasks/{id}/comments は /tasks/ の分岐より先に受ける
     if (url.includes('/comments')) {
       if (method === 'GET') {

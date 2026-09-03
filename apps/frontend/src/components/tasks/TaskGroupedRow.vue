@@ -34,6 +34,8 @@ const props = defineProps<{
   statuses: StatusResponse[];
   projectLabels: LabelResponse[];
   members: ProjectMember[];
+  /** 担当者候補の取得状態。取得中・失敗を「候補 0 人」と混ぜない */
+  membersState?: { loading?: boolean; error?: boolean; onRetry?: () => void };
   /** 更新中の項目。飛行中は同じ行の操作を止める */
   pendingField?: TaskRowField;
   error?: string;
@@ -235,6 +237,7 @@ function hasLabel(labelId: string) {
           :members="members"
           :selected="assignees"
           :disabled="isBusy"
+          :members-state="membersState"
           @toggle="(userId, checked) => emit('toggle:assignee', userId, checked)"
         />
       </div>
