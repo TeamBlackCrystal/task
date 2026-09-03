@@ -802,3 +802,4 @@ feat/drive
 | editor 権限 Phase 1 | editor を指定した場合は `422 Unprocessable Entity`。実装は Phase 2 | 2026-05-26 |
 | share_url | バックエンドは `share_token` のみ返す。フロントが `window.location.origin` で URL を組み立てる | 2026-05-26 |
 | 上限引き下げ時の挙動 | 既存テナントの値は変更せず起動時に警告ログ出力。Phase 2 で管理者向け監査エンドポイントを追加 | 2026-05-26 |
+| 階層と `project_id` の整合 | フォルダの `project_id` は階層のルートから継承し、移動時は配下（フォルダ・ファイル）まで揃える。既に食い違っている行は backfill マイグレーション（`m20260904000000_drive_project_id_backfill`）でプロジェクトルートから辿って直す。一般ツリーの配下に残った `project_id` は触らない（階層より厳しい判定になるだけで、NULL へ落とすと非メンバーへ開く） | 2026-09-04 |
