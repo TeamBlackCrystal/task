@@ -16,6 +16,7 @@ vi.mock('@/components/markdown/MarkdownEditor.vue', async () => ({
 }));
 
 import TaskDetailHub from '../TaskDetailHub.vue';
+import { PRIORITY_CONFIG } from '@/lib/task-display';
 
 enableAutoUnmount(afterEach);
 
@@ -56,6 +57,64 @@ const featureLabel: components['schemas']['LabelResponse'] = {
 };
 
 describe('TaskDetailHub', () => {
+  /**
+   * 優先度は表示だけで変更できなかった（作成時にしか決められなかった）。
+   * ステータスと同じく select にして、選び直しを emit する。
+   */
+  it('優先度を選び直すと change:priority を emit する', async () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id },
+    });
+
+    const select = wrapper.get('select[aria-label="優先度"]');
+    expect((select.element as HTMLSelectElement).value).toBe('Medium');
+
+    await select.setValue('High');
+
+    expect(wrapper.emitted('change:priority')).toEqual([['High']]);
+  });
+
+  it('優先度の選択肢は表示できる優先度をすべて出す', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id },
+    });
+
+    const values = wrapper
+      .get('select[aria-label="優先度"]')
+      .findAll('option')
+      .map((option) => option.attributes('value'));
+
+    expect(values).toEqual(Object.keys(PRIORITY_CONFIG));
+  });
+
+  it('更新中は優先度を触れない', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        priorityUpdating: true,
+      },
+    });
+
+    expect(wrapper.get('select[aria-label="優先度"]').attributes('disabled')).toBeDefined();
+  });
+
+  it('優先度の更新に失敗したら理由を出す', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        priorityError: '優先度の更新に失敗しました',
+      },
+    });
+
+    expect(wrapper.text()).toContain('優先度の更新に失敗しました');
+  });
+
   it('emits the selected soft deadline through the SET path', async () => {
     const wrapper = mount(TaskDetailHub, {
       props: {

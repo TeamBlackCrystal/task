@@ -44,6 +44,8 @@ const props = defineProps<{
   statusId: string;
   statusUpdating?: boolean;
   statusError?: string | null;
+  priorityUpdating?: boolean;
+  priorityError?: string | null;
   projectLabels?: LabelOption[];
   projectLabelsLoading?: boolean;
   projectLabelsError?: boolean;
@@ -80,6 +82,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:statusId': [value: string];
+  'change:priority': [value: TaskDetail['priority']];
   'save:title': [value: string];
   'save:description': [value: string | null];
   'save:progress_pct': [value: number];
@@ -92,6 +95,11 @@ const emit = defineEmits<{
 const resolvedStatus = computed(() =>
   props.statuses.find((status) => status.id === props.statusId),
 );
+
+const priorityOptions = Object.entries(PRIORITY_CONFIG) as [
+  TaskDetail['priority'],
+  (typeof PRIORITY_CONFIG)[TaskDetail['priority']],
+][];
 
 // 古い HTML の遮断: 描画元 (descriptionSource) がクライアントの最新 task.description と
 // 厳密一致しない descriptionHtml は捨て、プレーンテキスト表示へ倒す。v-html の直前で
@@ -460,8 +468,26 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
 
           <section class="rounded-lg border p-4">
             <h2 class="mb-3 text-sm font-medium text-muted-foreground">優先度</h2>
+            <select
+              aria-label="優先度"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              :value="task.priority"
+              :disabled="priorityUpdating"
+              @change="
+                emit(
+                  'change:priority',
+                  ($event.target as HTMLSelectElement).value as TaskDetail['priority'],
+                )
+              "
+            >
+              <option v-for="[value, config] in priorityOptions" :key="value" :value="value">
+                {{ config.label }}
+              </option>
+            </select>
+            <p v-if="priorityError" class="mt-2 text-xs text-destructive">{{ priorityError }}</p>
             <div
-              class="inline-flex items-center gap-1.5 text-sm"
+              v-else
+              class="mt-2 inline-flex items-center gap-1.5 text-sm"
               :style="{ color: PRIORITY_CONFIG[task.priority].color }"
             >
               <component :is="PRIORITY_CONFIG[task.priority].icon" class="size-4" />

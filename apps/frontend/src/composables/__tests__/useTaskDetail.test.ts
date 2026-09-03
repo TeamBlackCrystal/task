@@ -22,6 +22,7 @@ const { TENANT_ID, PROJECT_ID, TASK_SEQ_KEY, baseTask, putControl, labelsControl
       title: '元のタイトル',
       description: null,
       status_id: 'status-1',
+      priority: 'Medium',
       progress_pct: 0,
       soft_deadline: null,
       hard_deadline: null,
@@ -348,6 +349,25 @@ describe('useTaskDetail のキャッシュ同期', () => {
     expect(queryClient.getQueryState(labelsQueryKey)!.dataUpdateCount).toBeGreaterThan(
       labelsUpdates,
     );
+  });
+
+  it('優先度の更新が 400 で失敗したら楽観値を巻き戻し、エラーを立てる', async () => {
+    mountHost();
+    await flushPromises();
+
+    detail.onPriorityChange('High');
+    await flushPromises();
+    // 飛行中は楽観値が出ていて、二度目の選択を止めるフラグが立っている
+    expect(detail.displayTask.value?.priority).toBe('High');
+    expect(detail.priorityUpdating.value).toBe(true);
+
+    putControl.fail!(400);
+    await flushPromises();
+
+    // 巻き戻さないと、失敗したのに変わったように見えたまま残る
+    expect(detail.displayTask.value?.priority).toBe('Medium');
+    expect(detail.priorityError.value).toBe('優先度の更新に失敗しました');
+    expect(detail.priorityUpdating.value).toBe(false);
   });
 
   it('削除成功時に検索キャッシュが invalidate され、詳細キャッシュは除去される', async () => {
