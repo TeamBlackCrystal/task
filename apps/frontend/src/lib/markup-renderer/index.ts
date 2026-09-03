@@ -29,7 +29,7 @@
  *   選定理由は同 CSS のコメントを参照)。
  * - コードブロックの枠 (帯・行番号・横スクロール) も同方式: 消費側で
  *   `@/lib/rehype-kfm-code/style.css` を starry-night の style.css と同じ場所で
- *   明示 import する (二枚組)。複写ボタンは client 専用 entry の custom element 登録
+ *   明示 import する (二枚組)。コピーボタンは client 専用 entry の custom element 登録
  *   (_client-registry) が担う。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全

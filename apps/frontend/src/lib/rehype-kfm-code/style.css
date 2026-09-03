@@ -22,7 +22,7 @@
 }
 
 /*
- * 帯 (::before = 言語名 / ::after = ファイル名 ＋ 複写ボタンの席) と pre の二段 grid。
+ * 帯 (::before = 言語名 / ::after = ファイル名 ＋ コピーボタンの席) と pre の二段 grid。
  * 帯は grid の 1 行目に固定され、pre だけが横スクロールする (帯はスクロールしない)。
  */
 kfm-code {
@@ -36,7 +36,7 @@ kfm-code {
   background: var(--card);
 }
 
-/* 帯の左セル: 言語名。data-lang が無ければ空文字のまま帯だけ残る (attr() は空を返す) */
+/* 帯の左セル: 言語名 */
 kfm-code::before {
   content: attr(data-lang);
   grid-row: 1;
@@ -50,13 +50,23 @@ kfm-code::before {
   line-height: 1.25rem;
 }
 
-/* 帯の右セル: ファイル名。右端は client が足す複写ボタンの席を空けておく */
+/*
+ * 言語指定の無いフェンスでも帯の言語欄に「text」を出す (GitHub の plain text 表示相当)。
+ * SSR HTML (data 属性) は変えず CSS だけで描くため、fixture・sanitize に差分は出ない。
+ * 未知言語は data-lang に書かれた名をそのまま出す (このルールの対象外)。
+ */
+kfm-code:not([data-lang])::before {
+  content: 'text';
+}
+
+/* 帯の右セル: ファイル名。右端は client が足すコピーボタンの席を空けておく */
 kfm-code::after {
   content: attr(data-title);
   grid-row: 1;
   grid-column: 2;
   overflow: hidden;
-  padding: 0.375rem 5rem 0.375rem 0.5rem;
+  /* 右はアイコンボタン (1.75rem + 右余白 0.5rem) の席 */
+  padding: 0.375rem 3rem 0.375rem 0.5rem;
   border-bottom: 1px solid var(--border);
   background: var(--muted);
   color: var(--kfm-code-muted-fg);
@@ -93,8 +103,8 @@ kfm-code > pre > code {
 }
 
 /*
- * 行番号は CSS counter で振る (DOM テキストに存在しない = 複写に混じらない上に、
- * user-select: none で選択複写にも混じらない)。横スクロール時は sticky で左に留まり、
+ * 行番号は CSS counter で振る (DOM テキストに存在しない = コピーに混じらない上に、
+ * user-select: none で選択コピーにも混じらない)。横スクロール時は sticky で左に留まり、
  * 地色 (--card) がコードの下敷きになって番号が読める。
  */
 .pl-line::before {
@@ -112,26 +122,38 @@ kfm-code > pre > code {
   -webkit-user-select: none;
 }
 
-/* 複写ボタン (client の custom element が light DOM へ足す。SSR HTML には無い) */
+/*
+ * コピーボタン (client の custom element が light DOM へ足す。SSR HTML には無い)。
+ * GitHub 相当の正方形アイコンボタン (約 28px)。文字は aria-label / title のみ。
+ */
 kfm-code .kfm-code-copy {
   position: absolute;
   top: 0.25rem;
   right: 0.5rem;
-  padding: 0.125rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 0.25rem;
   background: var(--card);
   color: var(--kfm-code-muted-fg);
-  font-size: 0.75rem;
-  line-height: 1.25rem;
   cursor: pointer;
 }
 
 kfm-code .kfm-code-copy:hover {
+  background: var(--muted);
   color: var(--foreground);
 }
 
-/* 複写直後 (「複写した」表示中) は文字を立たせて状態が分かるようにする */
-kfm-code[data-kfm-code-copy] .kfm-code-copy {
-  color: var(--foreground);
+/* 成功 (check 表示中) は穏やかに色付けて状態が分かるようにする */
+kfm-code[data-kfm-code-copy='copied'] .kfm-code-copy {
+  color: var(--primary);
+}
+
+/* 失敗 (x 表示中) は destructive で示す */
+kfm-code[data-kfm-code-copy='failed'] .kfm-code-copy {
+  color: var(--destructive);
 }

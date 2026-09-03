@@ -12,7 +12,7 @@
  * emit の契約 (markup-renderer の規約):
  * - inline style は一切出さない (FORBID_ATTR: ['style'] と一枚岩)。新属性は
  *   data-lang / data-title のみで、schema.ts の SanitizeSchema と同時に増減する。
- * - SSR で焼くのは構造と data 属性のみ。複写ボタンは client の custom element
+ * - SSR で焼くのは構造と data 属性のみ。コピーボタンは client の custom element
  *   (element.ts) が connectedCallback で足す — SSR HTML には入れない (sanitize の
  *   許可集合を button へ広げずに済む)。
  * - options は意図して受け取らない。_renderer.ts の processor fingerprint は plugin の
@@ -90,7 +90,7 @@ function splitIntoLines(nodes: readonly ElementContent[]): ElementContent[][] {
 /**
  * code の子を行ごとに `<span class="pl-line">` で包む。
  * - 各行は行末の改行文字を span の中に持つ (display: block でも白空間 pre の最終改行は
- *   余分な行を作らず、複写 (textContent) には改行がそのまま残る)。
+ *   余分な行を作らず、コピー (textContent) には改行がそのまま残る)。
  * - mdast-util-to-hast の code handler は値の末尾に改行を 1 つ足すため、分割で生じる
  *   末尾の空 chunk は「余分な空行」として捨てる (中間の空行は行番号を振って残す)。
  */

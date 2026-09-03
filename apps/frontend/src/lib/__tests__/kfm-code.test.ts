@@ -15,8 +15,8 @@ import { gfmSanitizeSchema, remarkGfm } from '../remark-gfm';
  * - rehype 層 (SSR): pre>code を <kfm-code data-lang data-title> で包み、行を
  *   <span class="pl-line"> で切る。sanitize (DOMPurify) を通った後の姿 =
  *   renderDescription の実出力で見る。
- * - client 層: custom element が connectedCallback で複写ボタンを足し、
- *   clipboard への複写と表示切替 (data-kfm-code-copy) を担う。
+ * - client 層: custom element が connectedCallback でコピーボタンを足し、
+ *   clipboard へのコピーと表示切替 (data-kfm-code-copy) を担う。
  */
 
 describe('rehype-kfm-code (SSR / rehype 層)', () => {
@@ -41,11 +41,11 @@ describe('rehype-kfm-code (SSR / rehype 層)', () => {
     expect(html).toContain('<code>inline</code>');
   });
 
-  it('SSR HTML に複写ボタンは入らない (button は client の custom element が足す)', async () => {
+  it('SSR HTML にコピーボタンは入らない (button は client の custom element が足す)', async () => {
     const html = await renderDescription('```ts\nconst x = 1;\n```');
     expect(html).not.toContain('button');
     expect(html).not.toContain(KFM_CODE_COPY_CLASS);
-    // 複写状態も client が立てる値。SSR 出力に現れない
+    // コピー状態も client が立てる値。SSR 出力に現れない
     expect(html).not.toContain('data-kfm-code-copy');
   });
 
@@ -111,7 +111,7 @@ describe('rehype-kfm-code (SSR / rehype 層)', () => {
       expect(html).toContain('二行目');
     });
 
-    it('タグを剥いだ本文は改行込みで原文どおり (複写と CR 正規化の土台)', async () => {
+    it('タグを剥いだ本文は改行込みで原文どおり (コピーと CR 正規化の土台)', async () => {
       const html = await renderDescription('```ts\nconst x = 1;\nconst y = 2;\n```');
       const text = html.replace(/<[^>]+>/g, '');
       expect(text).toContain('const x = 1;\nconst y = 2;\n');
@@ -185,7 +185,7 @@ describe('kfmCodeSanitizeSchema (sanitize の許可と拒否)', () => {
   });
 });
 
-describe('KfmCodeElement (client 層・複写ボタン)', () => {
+describe('KfmCodeElement (client 層・コピーボタン)', () => {
   beforeAll(() => {
     if (customElements.get(KFM_CODE_TAG) === undefined) {
       customElements.define(KFM_CODE_TAG, createKfmCodeElement());
@@ -217,20 +217,39 @@ describe('KfmCodeElement (client 層・複写ボタン)', () => {
 
   function buttonOf(element: HTMLElement): HTMLButtonElement {
     const button = element.querySelector<HTMLButtonElement>(`.${KFM_CODE_COPY_CLASS}`);
-    if (button === null) throw new Error('複写ボタンが無い');
+    if (button === null) throw new Error('コピーボタンが無い');
     return button;
   }
 
-  it('接続で複写ボタンが light DOM へ入る (再接続でも二重には入らない)', () => {
+  /**
+   * 表示中アイコンの識別。lucide の実 path (element.ts の ICON_NODES と同値) で見る:
+   * copy だけが rect を持ち、check と x は path の d 値で見分ける。
+   */
+  function iconKindOf(button: HTMLButtonElement): 'copy' | 'check' | 'x' | 'unknown' {
+    const svg = button.querySelector('svg');
+    if (svg === null) return 'unknown';
+    if (svg.querySelector('rect') !== null) return 'copy';
+    if (svg.querySelector('path[d="M20 6 9 17l-5-5"]') !== null) return 'check';
+    if (svg.querySelector('path[d="M18 6 6 18"]') !== null) return 'x';
+    return 'unknown';
+  }
+
+  it('接続でコピーボタン (copy アイコン・aria-label「コピー」) が light DOM へ入り、再接続でも二重には入らない', () => {
     const element = mount(['const x = 1;']);
     expect(element.querySelectorAll(`.${KFM_CODE_COPY_CLASS}`)).toHaveLength(1);
-    expect(buttonOf(element).type).toBe('button');
+    const button = buttonOf(element);
+    expect(button.type).toBe('button');
+    expect(button.getAttribute('aria-label')).toBe('コピー');
+    expect(button.title).toBe('コピー');
+    // 意味は aria-label が担い、図は読み上げから隠す
+    expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(iconKindOf(button)).toBe('copy');
     element.remove();
     document.body.append(element);
     expect(element.querySelectorAll(`.${KFM_CODE_COPY_CLASS}`)).toHaveLength(1);
   });
 
-  it('押すと code の textContent (行番号を含まぬ本文) が clipboard へ写り「複写した」に変わる', async () => {
+  it('押すと code の textContent (行番号を含まぬ本文) が clipboard へ写り、check 表示「コピーしました」に変わる', async () => {
     const writeText = vi.fn(async () => undefined);
     stubClipboard(writeText);
     const element = mount(['const x = 1;', 'const y = 2;']);
@@ -238,34 +257,39 @@ describe('KfmCodeElement (client 層・複写ボタン)', () => {
     await vi.waitFor(() => expect(element.dataset.kfmCodeCopy).toBe('copied'));
     // 行番号は CSS counter (::before) 描画で DOM テキストに無いため、本文だけが写る
     expect(writeText).toHaveBeenCalledWith('const x = 1;\nconst y = 2;\n');
-    expect(buttonOf(element).textContent).toBe('複写した');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピーしました');
+    expect(buttonOf(element).title).toBe('コピーしました');
+    expect(iconKindOf(buttonOf(element))).toBe('check');
   });
 
-  it('約 2 秒で表示が「複写」へ戻り、状態属性も消える', async () => {
+  it('約 2 秒で copy 表示「コピー」へ戻り、状態属性も消える', async () => {
     vi.useFakeTimers();
     stubClipboard(vi.fn(async () => undefined));
     const element = mount(['const x = 1;']);
     buttonOf(element).click();
     await vi.advanceTimersByTimeAsync(0); // click ハンドラ内の await を流す
     expect(element.dataset.kfmCodeCopy).toBe('copied');
+    expect(iconKindOf(buttonOf(element))).toBe('check');
     await vi.advanceTimersByTimeAsync(2000);
     expect(element.dataset.kfmCodeCopy).toBeUndefined();
-    expect(buttonOf(element).textContent).toBe('複写');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピー');
+    expect(iconKindOf(buttonOf(element))).toBe('copy');
   });
 
-  it('clipboard が無い環境では失敗を握り潰さず「複写できず」で示す', async () => {
+  it('clipboard が無い環境では失敗を握り潰さず x 表示「コピーできませんでした」で示す', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     // jsdom は navigator.clipboard を実装している (実測) ため、「不在」は明示 stub で作る
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     const element = mount(['const x = 1;']);
     buttonOf(element).click();
     await vi.waitFor(() => expect(element.dataset.kfmCodeCopy).toBe('failed'));
-    expect(buttonOf(element).textContent).toBe('複写できず');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピーできませんでした');
+    expect(iconKindOf(buttonOf(element))).toBe('x');
     expect(consoleError).toHaveBeenCalledWith('[kfm-code] copy failed', expect.any(Error));
     consoleError.mockRestore();
   });
 
-  it('writeText の reject も「複写できず」へ倒す', async () => {
+  it('writeText の reject も x 表示へ倒す', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     stubClipboard(
       vi.fn(async () => {
@@ -275,6 +299,7 @@ describe('KfmCodeElement (client 層・複写ボタン)', () => {
     const element = mount(['const x = 1;']);
     buttonOf(element).click();
     await vi.waitFor(() => expect(element.dataset.kfmCodeCopy).toBe('failed'));
+    expect(iconKindOf(buttonOf(element))).toBe('x');
     expect(consoleError).toHaveBeenCalledWith(
       '[kfm-code] copy failed',
       expect.objectContaining({ message: 'denied' }),
