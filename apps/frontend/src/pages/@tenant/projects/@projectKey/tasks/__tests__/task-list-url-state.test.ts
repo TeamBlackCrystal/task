@@ -9,6 +9,7 @@ import {
   DEFAULT_TASK_LIST_URL_STATE,
   parseTaskListUrlState,
   useTaskListUrlSync,
+  type TaskListView,
 } from '../task-list-url-state';
 
 const BASE = 'https://app.example.com/acme/projects/ENG/tasks';
@@ -28,6 +29,7 @@ describe('parseTaskListUrlState', () => {
         sort: 'title:asc,priority:desc',
       }),
     ).toEqual({
+      view: 'list',
       page: 3,
       q: 'oauth',
       labelId: 'label-1',
@@ -98,6 +100,17 @@ describe('parseTaskListUrlState', () => {
     ]);
   });
 
+  // 既定を List にしたので、view が無い URL でも List で開く
+  it.each([
+    [undefined, 'list'],
+    ['list', 'list'],
+    ['table', 'table'],
+    ['kanban', 'list'],
+    ['', 'list'],
+  ])('view=%s は %s になる', (raw, expected) => {
+    expect(parseTaskListUrlState({ view: raw }).view).toBe(expected);
+  });
+
   it('空のラベルは「すべて」として扱う', () => {
     expect(parseTaskListUrlState({ label: '' }).labelId).toBeNull();
   });
@@ -111,6 +124,7 @@ describe('applyTaskListUrlState', () => {
 
   it('既定でない値だけを載せる', () => {
     const url = applyTaskListUrlState(new URL(BASE), {
+      view: 'list',
       page: 3,
       q: 'oauth',
       labelId: 'label-1',
@@ -128,6 +142,17 @@ describe('applyTaskListUrlState', () => {
     expect(url.search).toBe('');
   });
 
+  it('既定の List は URL に出さず、Table のときだけ載せる', () => {
+    const list = applyTaskListUrlState(new URL(BASE), DEFAULT_TASK_LIST_URL_STATE);
+    expect(list.searchParams.get('view')).toBeNull();
+
+    const table = applyTaskListUrlState(new URL(BASE), {
+      ...DEFAULT_TASK_LIST_URL_STATE,
+      view: 'table',
+    });
+    expect(table.searchParams.get('view')).toBe('table');
+  });
+
   it('扱わないクエリ（selected）は触らない', () => {
     const url = applyTaskListUrlState(new URL(`${BASE}?selected=ENG-42`), {
       ...DEFAULT_TASK_LIST_URL_STATE,
@@ -139,6 +164,7 @@ describe('applyTaskListUrlState', () => {
 
   it('書いた URL をそのまま読み戻せる', () => {
     const state = {
+      view: 'table' as const,
       page: 4,
       q: 'ログイン',
       labelId: 'label-9',
@@ -171,6 +197,7 @@ describe('clampPage', () => {
 describe('useTaskListUrlSync', () => {
   function setup(initial: {
     href?: string;
+    view?: TaskListView;
     pageIndex?: number;
     q?: string;
     labelId?: string | null;
@@ -182,6 +209,7 @@ describe('useTaskListUrlSync', () => {
     window.history.replaceState({}, '', initial.href ?? '/acme/projects/ENG/tasks');
     const refs = {
       selectedTaskId: ref<string | null>(null),
+      view: ref<TaskListView>(initial.view ?? 'list'),
       pagination: ref({ pageIndex: initial.pageIndex ?? 0, pageSize: 20 }),
       submittedSearchQuery: ref(initial.q ?? ''),
       selectedLabelId: ref<string | null>(initial.labelId ?? null),
@@ -224,6 +252,15 @@ describe('useTaskListUrlSync', () => {
     expect(params.get('label')).toBe('label-1');
     expect(params.get('sort')).toBe('title:desc');
     expect(params.get('selected')).toBe('ENG-42');
+  });
+
+  it('表示形式の切り替えが URL に載る', async () => {
+    const { refs } = setup({});
+
+    refs.view.value = 'table';
+    await nextTick();
+
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('table');
   });
 
   it('履歴を積まない（戻るで一覧より前へ抜けられなくなるのを避ける）', async () => {
