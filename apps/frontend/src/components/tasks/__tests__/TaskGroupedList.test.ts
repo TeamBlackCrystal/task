@@ -44,6 +44,7 @@ const group: TaskGroup = {
   isLoading: false,
   isError: false,
   hasMore: false,
+  retry: () => {},
 };
 
 /** 作成の受け口。成否を返す契約なので、既定は成功にする。 */
@@ -165,6 +166,18 @@ describe('TaskGroupedList のタスク追加', () => {
     expect(
       wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]').element.value,
     ).toBe('失敗するタスク');
+  });
+
+  it('ページの取得に失敗したら再試行を出す', async () => {
+    const retry = vi.fn();
+    const { wrapper } = mountList();
+    await wrapper.setProps({ groups: [{ ...group, isError: true, retry }] });
+    await nextTick();
+
+    const button = wrapper.findAll('button').find((b) => b.text() === '再試行');
+    expect(button).toBeDefined();
+    await button!.trigger('click');
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it('作成の失敗をグループの下に出す', async () => {

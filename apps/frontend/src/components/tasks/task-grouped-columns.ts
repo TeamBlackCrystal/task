@@ -12,6 +12,8 @@ export type TaskGroup = {
   isError: boolean;
   /** まだ取れていない件があるか */
   hasMore: boolean;
+  /** 取得に失敗したページを取り直す。失敗したままだと先へ進めないので導線を出す */
+  retry: () => void;
 };
 
 /**

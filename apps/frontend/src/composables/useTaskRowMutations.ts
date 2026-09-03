@@ -51,10 +51,14 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
   const pending = ref<Record<string, TaskRowField | undefined>>({});
   /** 直近の失敗。行の下に出す。 */
   const errors = ref<Record<string, string | undefined>>({});
+  //
+  // 飛行中の管理は対象単位で持つ。1 件しか持たないと、行 A の送信中に行 B から
+  // 送ったぶんが「押せるのに何も起きない」形で落ちる（無効化は対象単位なので
+  // B のボタンは押せてしまう）。
   /** コメント送信中のタスク ID。行のコメント欄はこれを見て送信を止める。 */
-  const commentPendingTaskId = ref<string | null>(null);
+  const commentPendingTaskIds = ref<Record<string, boolean>>({});
   /** 追加中のグループ。二重送信を止める。 */
-  const creatingStatusId = ref<string | null>(null);
+  const creatingStatusIds = ref<Record<string, boolean>>({});
   /** グループごとの作成失敗。追加行の下に出す。 */
   const createErrors = ref<Record<string, string | undefined>>({});
 
@@ -164,8 +168,8 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
    */
   async function createTask(input: CreateTaskInput): Promise<boolean> {
     if (!tenantId.value || !projectId.value) return false;
-    if (creatingStatusId.value) return false;
-    creatingStatusId.value = input.statusId;
+    if (creatingStatusIds.value[input.statusId]) return false;
+    creatingStatusIds.value = { ...creatingStatusIds.value, [input.statusId]: true };
     createErrors.value = { ...createErrors.value, [input.statusId]: undefined };
     try {
       const { error } = await fetchClient.POST(LIST_TASKS_PATH, {
@@ -193,15 +197,17 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
       };
       return false;
     } finally {
-      creatingStatusId.value = null;
+      const next = { ...creatingStatusIds.value };
+      delete next[input.statusId];
+      creatingStatusIds.value = next;
     }
   }
 
   /** 行からのコメント追加。createTask と同じ理由で成否を返す。 */
   async function addComment(taskId: string, body: string): Promise<boolean> {
     if (!tenantId.value || !projectId.value) return false;
-    if (commentPendingTaskId.value) return false;
-    commentPendingTaskId.value = taskId;
+    if (commentPendingTaskIds.value[taskId]) return false;
+    commentPendingTaskIds.value = { ...commentPendingTaskIds.value, [taskId]: true };
     errors.value = { ...errors.value, [taskId]: undefined };
     try {
       const { error } = await fetchClient.POST(COMMENTS_PATH, {
@@ -215,15 +221,17 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
       errors.value = { ...errors.value, [taskId]: 'コメントを追加できませんでした' };
       return false;
     } finally {
-      commentPendingTaskId.value = null;
+      const next = { ...commentPendingTaskIds.value };
+      delete next[taskId];
+      commentPendingTaskIds.value = next;
     }
   }
 
   return {
     pending,
     errors,
-    commentPendingTaskId,
-    creatingStatusId,
+    commentPendingTaskIds,
+    creatingStatusIds,
     createErrors,
     setStatus,
     setPriority,

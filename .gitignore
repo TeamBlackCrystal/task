@@ -8,6 +8,8 @@ docs/retype.manifest
 .worktrees/
 node_modules
 
-# Claude Code の作業用。レビューメモ・計画・worktree はリポジトリに載せない
-.claude/
-reviews/
+# Claude Code の作業用。レビューメモ・計画・worktree はリポジトリに載せない。
+# 先頭の / でリポジトリ直下に限定する（無アンカーだと
+# apps/frontend/src/components/reviews/ のような実装側まで無視してしまう）
+/.claude/
+/reviews/

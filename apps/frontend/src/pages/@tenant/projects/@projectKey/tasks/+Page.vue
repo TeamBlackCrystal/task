@@ -67,6 +67,7 @@ import {
 } from './task-list-url-state';
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
+import { toTaskGroup } from '@/components/tasks/task-group-pages';
 import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 
@@ -444,35 +445,15 @@ const groupQueries = useQueries({
 });
 
 const taskGroups = computed<TaskGroup[]>(() =>
-  workflowStatuses.value.map((status) => {
-    const queries = groupPageRequests.value
-      .map((request, index) => (request.statusId === status.id ? groupQueries.value[index] : null))
-      .filter((query) => query !== null);
-
-    // ページをまたいでタスクが動くと同じ ID が 2 度出ることがあるので落とす
-    const seen = new Set<string>();
-    const tasks = queries
-      .flatMap((query) => query?.data?.tasks ?? [])
-      .filter((task) => {
-        if (seen.has(task.id)) return false;
-        seen.add(task.id);
-        return true;
-      });
-    // total は後のページほど新しいので、返ってきた最後の値を採る
-    const total = queries.reduce((acc, query) => query?.data?.total ?? acc, 0);
-    const lastPage = queries.at(-1)?.data?.tasks;
-
-    return {
+  workflowStatuses.value.map((status) =>
+    toTaskGroup(
       status,
-      tasks,
-      total,
-      isLoading: queries.some((query) => !!query?.isLoading),
-      isError: queries.some((query) => !!query?.isError),
-      // 最後のページが埋まっていない = 取り切った。total だけで判断すると、件数が
-      // 変動したときに減らない「もっと見る」が残る
-      hasMore: tasks.length < total && (lastPage?.length ?? 0) === GROUP_PAGE_SIZE,
-    };
-  }),
+      groupPageRequests.value.map((request, index) =>
+        request.statusId === status.id ? groupQueries.value[index] : null,
+      ),
+      GROUP_PAGE_SIZE,
+    ),
+  ),
 );
 
 function loadMoreInGroup(statusId: string) {
@@ -1115,7 +1096,7 @@ const table = useVueTable({
               :members="projectMembers"
               :pending="rowMutations.pending.value"
               :errors="rowMutations.errors.value"
-              :comment-pending-task-id="rowMutations.commentPendingTaskId.value"
+              :comment-pending-task-ids="rowMutations.commentPendingTaskIds.value"
               :create-errors="rowMutations.createErrors.value"
               @open="openOverlay"
               @more="loadMoreInGroup"
@@ -1129,7 +1110,7 @@ const table = useVueTable({
                 (task, labelId, checked) => rowMutations.toggleLabel(task, labelId, checked)
               "
               :on-comment="(task, body) => rowMutations.addComment(task.id, body)"
-              :creating-status-id="rowMutations.creatingStatusId.value"
+              :creating-status-ids="rowMutations.creatingStatusIds.value"
               :on-create="rowMutations.createTask"
             />
 

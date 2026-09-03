@@ -38,9 +38,9 @@ const props = defineProps<{
   statuses: StatusResponse[];
   pending: Record<string, TaskRowField | undefined>;
   errors: Record<string, string | undefined>;
-  commentPendingTaskId?: string | null;
+  commentPendingTaskIds?: Record<string, boolean>;
   /** 追加中のグループ。二重送信を止める */
-  creatingStatusId?: string | null;
+  creatingStatusIds?: Record<string, boolean>;
   /** グループごとの作成失敗。追加行の下に出す */
   createErrors?: Record<string, string | undefined>;
   /** 行からのコメント追加。成功したときだけ下書きを捨てるので成否を返してもらう */
@@ -219,7 +219,7 @@ async function commitAdding(statusId: string) {
               :members="members"
               :pending-field="pending[task.id]"
               :error="errors[task.id]"
-              :comment-pending="commentPendingTaskId === task.id"
+              :comment-pending="!!commentPendingTaskIds?.[task.id]"
               @open="emit('open', $event)"
               @update:status="(statusId) => emit('update:status', task, statusId)"
               @update:priority="(priority) => emit('update:priority', task, priority)"
@@ -229,9 +229,20 @@ async function commitAdding(statusId: string) {
               :on-comment="(body: string) => onComment(task, body)"
             />
 
-            <p v-if="group.isError" class="min-w-[42rem] px-3 py-2 text-sm text-destructive">
-              読み込みに失敗しました
-            </p>
+            <!-- 失敗したページは取り直せるようにする。導線が無いと、以降のページへ進めない -->
+            <div v-if="group.isError" class="flex min-w-[42rem] items-center gap-2 px-3 py-2">
+              <p class="text-sm text-destructive">読み込みに失敗しました</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                class="h-7 text-xs"
+                :disabled="group.isLoading"
+                @click="group.retry()"
+              >
+                再試行
+              </Button>
+            </div>
             <p
               v-else-if="group.isLoading && !group.tasks.length"
               class="min-w-[42rem] px-3 py-2 text-sm text-muted-foreground"
@@ -265,7 +276,7 @@ async function commitAdding(statusId: string) {
                   class="h-7 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
                   placeholder="タスク名を入力"
                   :aria-label="`${group.status.name} にタスクを追加`"
-                  :disabled="creatingStatusId === group.status.id"
+                  :disabled="!!creatingStatusIds?.[group.status.id]"
                   @keydown.enter.prevent="commitAdding(group.status.id)"
                   @keydown.esc.prevent="cancelAdding"
                 />
@@ -384,7 +395,7 @@ async function commitAdding(statusId: string) {
                   type="button"
                   size="sm"
                   class="h-7 gap-1 px-2 text-xs"
-                  :disabled="creatingStatusId === group.status.id || !draftTitle.trim()"
+                  :disabled="!!creatingStatusIds?.[group.status.id] || !draftTitle.trim()"
                   @click="commitAdding(group.status.id)"
                 >
                   保存
