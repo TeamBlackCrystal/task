@@ -11,6 +11,7 @@ import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 // (器 .kfm-content のスタイルは GFM サイドカー側 — 他 story と同じ二枚組)
 import '@/lib/remark-gfm/style.css';
 import '@/lib/rehype-starry-night/style.css';
+import '@/lib/rehype-kfm-code/style.css';
 
 /*
  * KFM コードブロック着色 (starry-night) の story 群。cmd_670 の fixture+v-html 方式:
