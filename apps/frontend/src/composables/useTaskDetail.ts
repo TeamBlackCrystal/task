@@ -8,6 +8,7 @@ import { useResolvedTenantId } from '@/composables/useResolvedTenantId';
 import { fetchClient, apiClient, TASK_SEARCH_PATH } from '@/lib/api-vue-query';
 import { clampProgressPct, localDateInputToIso, taskListHref } from '@/lib/task-display';
 import type { components } from '@/generated/api';
+import { ACTIVITIES_PATH } from '@/composables/useTaskActivities';
 
 const GET_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
@@ -198,8 +199,28 @@ export function useTaskDetail(params: UseTaskDetailParams) {
 
   const listHref = computed(() => taskListHref(tenantDisplayId.value, projectKey.value));
 
-  /** 通常一覧と検索結果の両方を古い内容のまま残さないための invalidate。 */
-  function invalidateTaskListCaches() {
+  /**
+   * 更新後に古い内容のまま残るキャッシュを取り直す。
+   *
+   * 通常一覧と検索結果のほか、履歴も落とす。backend は更新のたびに
+   * `task_activities` を積むので、ここで取り直さないとアクティビティ欄だけが
+   * 古いまま残る（画面上は更新できているので気づきにくい）。
+   */
+  function invalidateAfterTaskMutation() {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['get', LIST_TASKS_PATH] }),
+      queryClient.invalidateQueries({ queryKey: ['get', TASK_SEARCH_PATH] }),
+      queryClient.invalidateQueries({ queryKey: ['get', ACTIVITIES_PATH] }),
+    ]);
+  }
+
+  /**
+   * 削除後。履歴はタスクごと消えるので取り直さない。
+   *
+   * `invalidateQueries` は表示中のクエリの再取得を待つため、ここで履歴を混ぜると
+   * 「消したタスクの履歴を取り終わるまで一覧へ戻れない」ことになる（遷移が遅れる）。
+   */
+  function invalidateAfterTaskDelete() {
     return Promise.all([
       queryClient.invalidateQueries({ queryKey: ['get', LIST_TASKS_PATH] }),
       queryClient.invalidateQueries({ queryKey: ['get', TASK_SEARCH_PATH] }),
@@ -210,7 +231,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     onSuccess: async () => {
       deleteError.value = null;
       queryClient.removeQueries({ queryKey: taskQueryKey.value, exact: true });
-      await invalidateTaskListCaches();
+      await invalidateAfterTaskDelete();
       onAfterDelete(listHref.value);
     },
     onError: () => {
@@ -316,7 +337,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       })
       .then((data: TaskDetail) => {
         applyMutationSuccess(field, revision, data, queryKey);
-        void invalidateTaskListCaches();
+        void invalidateAfterTaskMutation();
         params.onAfterFieldSaved?.(field);
       })
       .catch(() => {

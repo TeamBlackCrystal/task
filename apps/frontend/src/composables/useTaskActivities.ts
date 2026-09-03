@@ -4,7 +4,13 @@ import { computed, toValue, type MaybeRefOrGetter } from 'vue';
 import { fetchClient } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
 
-const ACTIVITIES_PATH =
+/**
+ * 履歴の口。更新系から invalidate するため公開する。
+ *
+ * 履歴は backend が操作のたびに積むので、こちら側の mutation が成功したら
+ * 取り直さないと欄だけ古いまま残る。
+ */
+export const ACTIVITIES_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}/activities' as const;
 
 export type ActivityItem = components['schemas']['ActivityItem'];

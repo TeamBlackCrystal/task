@@ -133,6 +133,17 @@ function onToggleAssignee(userId: string, checked: boolean) {
   void rowMutations.toggleAssignee(task, userId, checked);
 }
 
+// 担当者の更新は行と同じ口を使うので、飛行中と失敗をこの画面にも出す
+// （出さないと失敗が無表示、送信中も押せて 2 回目が無言で捨てられる）
+const assigneeUpdating = computed(() => {
+  const id = displayTask.value?.id;
+  return !!id && rowMutations.pending.value[id] === 'assignees';
+});
+const assigneeError = computed(() => {
+  const id = displayTask.value?.id;
+  return id ? (rowMutations.errors.value[id] ?? null) : null;
+});
+
 const { activities, activitiesLoading, activitiesError, refetchActivities } = useTaskActivities({
   tenantId,
   projectId,
@@ -187,6 +198,8 @@ function onDeleteDialogCancel(event: Event) {
     @save:hard_deadline="onSaveHardDeadline"
     @save:label_ids="onSaveLabels"
     :members="members"
+    :assignee-updating="assigneeUpdating"
+    :assignee-error="assigneeError"
     @toggle:assignee="onToggleAssignee"
     :delete-disabled="deletePending"
     @delete-request="openDeleteDialog"

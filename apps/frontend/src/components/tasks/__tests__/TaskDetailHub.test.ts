@@ -503,3 +503,43 @@ describe('TaskDetailHub ステータスの操作', () => {
     expect(wrapper.emitted('update:statusId')).toEqual([['status-done']]);
   });
 });
+
+// 担当者は一覧の行と同じ口を使うが、飛行中と失敗をこの画面へ渡さないと
+// 「失敗しても無表示」「送信中も押せて 2 回目が無言で捨てられる」状態になる
+describe('TaskDetailHub の担当者', () => {
+  const members = [{ id: 'user-1', username: 'yupix', avatar_url: null }];
+
+  function mountWithAssignee(extra: Record<string, unknown>) {
+    return mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        members,
+        ...extra,
+      },
+    });
+  }
+
+  it('更新中はピッカーを押せない', () => {
+    const wrapper = mountWithAssignee({ assigneeUpdating: true });
+
+    const picker = wrapper.findComponent({ name: 'TaskAssigneePicker' });
+    expect(picker.exists()).toBe(true);
+    expect(picker.get('button').attributes('disabled')).toBeDefined();
+  });
+
+  it('更新の失敗をその場に出す', () => {
+    const wrapper = mountWithAssignee({ assigneeError: '更新に失敗しました' });
+
+    expect(wrapper.text()).toContain('更新に失敗しました');
+  });
+
+  it('通常は押せる', () => {
+    const wrapper = mountWithAssignee({});
+
+    const picker = wrapper.findComponent({ name: 'TaskAssigneePicker' });
+    expect(picker.get('button').attributes('disabled')).toBeUndefined();
+  });
+});

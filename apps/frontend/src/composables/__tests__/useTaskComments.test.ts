@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import type { paths } from '@/generated/api';
 import { useTaskComments } from '../useTaskComments';
+import { useTaskActivities } from '../useTaskActivities';
 
 const TASK_SEQ_KEY = 'ENG-1';
 
@@ -36,6 +37,9 @@ const { control, requestLog, fetchMock } = vi.hoisted(() => {
     if (method === 'POST' || method === 'PUT') entry.body = await input.clone().json();
     requestLog.push(entry);
 
+    if (method === 'GET' && url.includes('/activities')) {
+      return jsonResponse({ activities: [] });
+    }
     if (method === 'GET' && url.endsWith(`/tasks/${TASK_SEQ_KEY}/comments`)) {
       if (control.listMode === 'error') return jsonResponse({ message: 'boom' }, 500);
       return jsonResponse({ comments: control.threads });
@@ -137,6 +141,13 @@ describe('useTaskComments', () => {
     const Host = defineComponent({
       setup() {
         comments = useTaskComments({
+          tenantId: 'tenant-1',
+          projectId: 'project-1',
+          taskId: TASK_SEQ_KEY,
+        });
+        // 履歴も一緒に開く。invalidate は表示中のクエリしか取り直さないので、
+        // 「コメントを操作したら履歴も取り直す」の配線はこの形でしか確かめられない
+        useTaskActivities({
           tenantId: 'tenant-1',
           projectId: 'project-1',
           taskId: TASK_SEQ_KEY,
@@ -328,6 +339,22 @@ describe('useTaskComments', () => {
     expect(comments.threads.value).toHaveLength(1);
     expect(comments.threads.value[0].is_deleted).toBe(true);
     expect(comments.threads.value[0].body).toBe(null);
+  });
+
+  // backend はコメントの追加・編集・削除でも task_activities を積む。
+  // 取り直さないとアクティビティ欄だけが古いまま残る
+  it('コメントを投稿したら履歴も取り直す', async () => {
+    mountHost();
+    await flushPromises();
+    const activityRequests = () =>
+      requestLog.filter((r) => r.method === 'GET' && r.url.includes('/activities')).length;
+    const before = activityRequests();
+    expect(before).toBeGreaterThan(0);
+
+    await comments.submitComment('新しいコメント');
+    await flushPromises();
+
+    expect(activityRequests()).toBeGreaterThan(before);
   });
 
   it('削除が API に拒否されたら false を返し、サーバの message を見せる', async () => {

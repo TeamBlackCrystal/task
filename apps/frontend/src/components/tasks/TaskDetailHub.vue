@@ -78,6 +78,9 @@ const props = defineProps<{
   priorityError?: string | null;
   /** 担当者に選べるメンバー（未指定なら担当者は表示のみ） */
   members?: { id: string; username: string; avatar_url?: string | null }[];
+  /** 担当者の更新中。ピッカーを止める（止めないと 2 回目が無言で捨てられる） */
+  assigneeUpdating?: boolean;
+  assigneeError?: string | null;
   projectLabels?: LabelOption[];
   projectLabelsLoading?: boolean;
   projectLabelsError?: boolean;
@@ -763,6 +766,7 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
                     v-if="members"
                     :members="members"
                     :selected="task.assignees.map((assignee) => assignee.user)"
+                    :disabled="assigneeUpdating"
                     @toggle="(userId, checked) => emit('toggle:assignee', userId, checked)"
                   />
                   <AvatarGroup
@@ -770,6 +774,9 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
                     hide-names
                     :users="task.assignees.map((assignee) => assignee.user)"
                   />
+                  <p v-if="assigneeError" class="mt-1 text-xs text-destructive">
+                    {{ assigneeError }}
+                  </p>
                 </TaskPropertyRow>
 
                 <TaskPropertyRow label="優先度" :icon="Flag">

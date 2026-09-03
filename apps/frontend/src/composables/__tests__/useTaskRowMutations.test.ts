@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import type { paths } from '@/generated/api';
 import { useTaskRowMutations } from '../useTaskRowMutations';
+import { useTaskActivities } from '../useTaskActivities';
 
 // vi.mock の factory から参照するため hoisted に置く
 const { control, requestLog, fetchMock } = vi.hoisted(() => {
@@ -31,7 +32,10 @@ const { control, requestLog, fetchMock } = vi.hoisted(() => {
     if (method === 'POST') entry.body = await input.clone().json();
     requestLog.push(entry);
 
-    if (method === 'GET') return jsonResponse({ tasks: [], total: 0 });
+    if (method === 'GET') {
+      if (url.includes('/activities')) return jsonResponse({ activities: [] });
+      return jsonResponse({ tasks: [], total: 0 });
+    }
 
     if (control.holdPost) {
       await new Promise<void>((resolve) => {
@@ -68,14 +72,25 @@ describe('useTaskRowMutations', () => {
   let queryClient: QueryClient;
   let mutations: ReturnType<typeof useTaskRowMutations>;
 
+  /**
+   * 履歴も一緒にマウントする。invalidate は表示中のクエリしか取り直さないので、
+   * 「行から更新したら履歴も取り直す」の配線はこの形でしか確かめられない。
+   */
   function mountHost() {
     const Host = defineComponent({
       setup() {
         mutations = useTaskRowMutations({ tenantId: 'tenant-1', projectId: 'project-1' });
+        useTaskActivities({ tenantId: 'tenant-1', projectId: 'project-1', taskId: 'task-1' });
         return () => null;
       },
     });
     return mount(Host, { global: { plugins: [[VueQueryPlugin, { queryClient }]] } });
+  }
+
+  function activityRequests() {
+    return requestLog.filter(
+      (entry) => entry.method === 'GET' && entry.url.includes('/activities'),
+    );
   }
 
   beforeEach(() => {
@@ -151,6 +166,20 @@ describe('useTaskRowMutations', () => {
     await expect(first).resolves.toBe(true);
     await expect(second).resolves.toBe(true);
     expect(requestLog.filter((entry) => entry.method === 'POST')).toHaveLength(2);
+  });
+
+  // backend は更新のたびに task_activities を積むので、取り直さないと
+  // 詳細のアクティビティ欄だけが古いまま残る（画面上は更新できているので気づけない）
+  it('コメント追加のあとに履歴を取り直す', async () => {
+    mountHost();
+    await flushPromises();
+    const before = activityRequests().length;
+    expect(before).toBeGreaterThan(0);
+
+    await expect(mutations.addComment('task-1', 'コメント')).resolves.toBe(true);
+    await flushPromises();
+
+    expect(activityRequests().length).toBeGreaterThan(before);
   });
 
   it('作成の失敗はグループごとのエラーに入る', async () => {

@@ -435,8 +435,9 @@ export const Default: Story = {
     await expect(
       canvas.findByText('OIDC フローとセッション管理を実装する。'),
     ).resolves.toBeInTheDocument();
-    // 担当者はアバター（頭文字）のみ表示し、名前テキストは出さない（詳細では hideNames）
-    await expect(canvas.findByText('田')).resolves.toBeInTheDocument();
+    // 担当者はアバター（頭文字）のみ表示し、名前テキストは出さない。
+    // 頭文字は avatarInitials の既定どおり 2 文字（田中太郎 → 田中）
+    await expect(canvas.findByText('田中')).resolves.toBeInTheDocument();
     await expect(canvas.queryByText('田中太郎')).not.toBeInTheDocument();
   },
 };
@@ -844,17 +845,19 @@ export const SoftDeadlineClear: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const user = userEvent.setup();
-    await expect(canvas.findByText('ソフト期限')).resolves.toBeInTheDocument();
+    // 参照デザインではソフト期限とハード期限が「日付」行に並ぶので、
+    // 行の見出しではなく操作そのもの（aria-label）を掴む
+    const trigger = await canvas.findByRole('button', { name: 'ソフト期限を編集' });
+    await user.click(trigger);
 
-    const row = canvas.getByText('ソフト期限').parentElement;
-    expect(row).toBeTruthy();
-    const section = within(row!);
-    await user.click(section.getByRole('button'));
-    const input = await section.findByLabelText('ソフト期限');
+    const input = await canvas.findByLabelText('ソフト期限');
     await user.clear(input);
     await user.tab();
 
-    await expect(section.findByText('未設定（クリックして設定）')).resolves.toBeInTheDocument();
+    // 未設定のソフト期限は「期限」のプレースホルダに戻る
+    await expect(
+      canvas.findByRole('button', { name: 'ソフト期限を編集' }),
+    ).resolves.toHaveTextContent('期限');
     const puts = (SoftDeadlineClear as { puts?: unknown[] }).puts ?? [];
     await expect(puts).toContainEqual({ clear_soft_deadline: true });
   },
@@ -1018,10 +1021,16 @@ export const Comments: Story = {
   beforeEach: () => createMockFetch({ comments: sampleComments }),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const user = userEvent.setup();
     // 素テキスト表示: 改行を保ったまま本文が出る（v-html なし）
     await expect(
       canvas.findByText(/最初のコメントです。\s*改行も保たれます。/),
     ).resolves.toBeInTheDocument();
+
+    // 一覧では返信を展開せず件数だけ出す。返信は押してスレッドへ入ってから読む
+    await expect(canvas.queryByText('スレッドへの返信です。')).not.toBeInTheDocument();
+    await user.click(await canvas.findByRole('button', { name: '1件の返信' }));
+
     await expect(canvas.findByText('スレッドへの返信です。')).resolves.toBeInTheDocument();
     await expect(canvas.findByText('佐藤花子')).resolves.toBeInTheDocument();
   },

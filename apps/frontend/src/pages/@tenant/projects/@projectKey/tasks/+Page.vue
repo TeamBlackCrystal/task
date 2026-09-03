@@ -286,6 +286,16 @@ watch(projectKey, () => {
 const { selectedLabelId } = useTaskLabelFilter(pagination, projectKey, initialListState.labelId);
 
 // ---- クエリ②: タスク一覧 ----
+/**
+ * Table 表示の一覧（ページャつき）を使うか。
+ *
+ * List 表示はステータス別の `groupQueries` から作るので、この一覧は使わない。
+ * 使わないまま取りに行くと、余分なリクエストが増えるだけでなく、ローディングと
+ * エラーがこの query に紐付いているために List が出せない・List 全体が
+ * エラー画面になる。検索中も表示に使わないので同じく止める。
+ */
+const usesTaskList = computed(() => !isListView.value && !isSearchActive.value);
+
 const tasksQuery = useQuery({
   queryKey: computed(() => [
     'get',
@@ -311,7 +321,7 @@ const tasksQuery = useQuery({
     if (error) throw error;
     return data;
   },
-  enabled: computed(() => !!tenantId.value && !!projectId.value),
+  enabled: computed(() => !!tenantId.value && !!projectId.value && usesTaskList.value),
   placeholderData: (previousData, previousQuery) => {
     // ラベルフィルタが変わったときは旧条件のデータを見せない（ページング時のみ維持）
     return taskListPlaceholderData(
@@ -551,16 +561,17 @@ const isInitialLoading = computed(
   () =>
     isTenantResolving.value ||
     isProjectResolving.value ||
-    tasksQuery.isLoading.value ||
-    statusesQuery.isLoading.value,
+    statusesQuery.isLoading.value ||
+    // Table 用一覧を使わない表示（List・検索）では、この query で画面を止めない
+    (usesTaskList.value && tasksQuery.isLoading.value),
 );
 
 const isError = computed(
   () =>
     isTenantResolveError.value ||
     isProjectResolveError.value ||
-    tasksQuery.isError.value ||
-    statusesQuery.isError.value,
+    statusesQuery.isError.value ||
+    (usesTaskList.value && tasksQuery.isError.value),
 );
 
 // ---- ヘルパー ----
@@ -787,7 +798,7 @@ useTaskListUrlSync({
   selectedLabelId,
   sorting,
   taskTotal: fetchedTaskTotal,
-  isSearchActive,
+  isPagerActive: usesTaskList,
 });
 
 const table = useVueTable({

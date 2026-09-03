@@ -791,6 +791,8 @@ export const ListViewDetailOverlay: Story = {
     await expect(
       within(dialog).findByText('ここは PKCE の検証を先に入れたほうがよさそうです。'),
     ).resolves.toBeInTheDocument();
+    // 返信は一覧では展開せず、件数を押してスレッドへ入ってから読む
+    await user.click(await within(dialog).findByRole('button', { name: '1件の返信' }));
     await expect(
       within(dialog).findByText('対応しました。レビューお願いします。'),
     ).resolves.toBeInTheDocument();

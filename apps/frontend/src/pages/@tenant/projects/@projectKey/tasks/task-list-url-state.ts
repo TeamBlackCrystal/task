@@ -145,7 +145,13 @@ export function useTaskListUrlSync(params: {
    * `?page=9` が 1 ページ目へ戻らず、空のページを出したままになる。
    */
   taskTotal: Readonly<Ref<number | null>>;
-  isSearchActive: Readonly<Ref<boolean>>;
+  /**
+   * ページャが一覧を駆動しているか（Table 表示かつ検索していない）。
+   *
+   * List 表示と検索中は Table 用の一覧を取らない = 件数を持たないので、丸めを
+   * 走らせると URL の `page` を 1 に潰してしまう（Table へ戻したときに失われる）。
+   */
+  isPagerActive: Readonly<Ref<boolean>>;
 }) {
   const { selectedTaskId, view, pagination, submittedSearchQuery, selectedLabelId, sorting } =
     params;
@@ -168,12 +174,12 @@ export function useTaskListUrlSync(params: {
     window.history.replaceState(window.history.state, '', url);
   });
 
-  // 検索中はページャを使わない（常に先頭から一定件数）ので丸めの対象外。
+  // ページャを使っていない表示（List・検索）は丸めの対象外。
   // immediate にするのは、キャッシュ由来の件数や 0 件の一覧でも初回に検査するため
   watch(
-    [params.taskTotal, params.isSearchActive],
-    ([total, searching]) => {
-      if (searching) return;
+    [params.taskTotal, params.isPagerActive],
+    ([total, pagerActive]) => {
+      if (!pagerActive) return;
       // 未取得のあいだは待つ（0 件と区別する）
       if (total === null) return;
       const clamped = clampPage(pagination.value.pageIndex + 1, total, pagination.value.pageSize);

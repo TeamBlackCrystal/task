@@ -204,7 +204,8 @@ describe('useTaskListUrlSync', () => {
     sorting?: SortingState;
     /** 取得済みの総件数。省略は「未取得」（null） */
     total?: number | null;
-    searching?: boolean;
+    /** ページャが一覧を駆動しているか。既定は駆動している（Table 表示） */
+    pagerActive?: boolean;
   }) {
     window.history.replaceState({}, '', initial.href ?? '/acme/projects/ENG/tasks');
     const refs = {
@@ -215,7 +216,7 @@ describe('useTaskListUrlSync', () => {
       selectedLabelId: ref<string | null>(initial.labelId ?? null),
       sorting: ref<SortingState>(initial.sorting ?? []),
       taskTotal: ref<number | null>(initial.total ?? null),
-      isSearchActive: ref(initial.searching ?? false),
+      isPagerActive: ref(initial.pagerActive ?? true),
     };
     // watch を動かすためにコンポーネント文脈で呼ぶ
     const wrapper = mount(
@@ -327,13 +328,27 @@ describe('useTaskListUrlSync', () => {
     expect(refs.pagination.value.pageIndex).toBe(1);
   });
 
-  it('検索中は丸めない（ページャを使わないため）', async () => {
-    const { refs } = setup({ pageIndex: 8, searching: true });
+  // List 表示と検索中は Table 用の一覧を取らない = 件数を持たない。ここで丸めると
+  // URL の page が 1 に潰れ、Table へ戻したときにページが失われる
+  it('ページャを使っていない表示では丸めない', async () => {
+    const { refs } = setup({ pageIndex: 8, total: 0, pagerActive: false });
 
     refs.taskTotal.value = 3;
     await nextTick();
 
     expect(refs.pagination.value.pageIndex).toBe(8);
+  });
+
+  it('ページャを使う表示へ戻ったら丸める', async () => {
+    const { refs } = setup({ pageIndex: 8, total: 0, pagerActive: false });
+
+    refs.taskTotal.value = 40; // 20 件/頁 → 最終 2 頁
+    await nextTick();
+    expect(refs.pagination.value.pageIndex).toBe(8);
+
+    refs.isPagerActive.value = true;
+    await nextTick();
+    expect(refs.pagination.value.pageIndex).toBe(1);
   });
 
   it('扱わないクエリは残す', async () => {
