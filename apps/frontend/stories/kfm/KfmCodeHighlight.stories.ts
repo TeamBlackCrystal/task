@@ -36,9 +36,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** 着色経路が生きていることの共通 assert (pl- クラスの span が存在する) */
+/**
+ * 着色経路が生きていることの共通 assert。
+ * rehype-kfm-code の行 span (pl-line) は着色トークンではないのに [class^="pl-"] に
+ * 当たるため、:not(.pl-line) で除いて「着色トークンの存在」だけを主張する
+ * (unit 側 kfm-code-highlight.test.ts と同じ言い方)。
+ */
 async function expectHighlighted(canvasElement: HTMLElement) {
-  await expect(canvasElement.querySelector('[class^="pl-"]')).not.toBeNull();
+  await expect(canvasElement.querySelector('[class^="pl-"]:not(.pl-line)')).not.toBeNull();
 }
 
 export const TypeScript: Story = {
@@ -104,7 +109,10 @@ export const NoLanguage: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelector('[class^="pl-"]')).toBeNull();
+    // 着色トークンが無い (pl-line は行分割の器であって着色ではないので除く)
+    await expect(canvasElement.querySelector('[class^="pl-"]:not(.pl-line)')).toBeNull();
+    // 行分割 (rehype-kfm-code) は言語なしでも効いている陽性対照
+    await expect(canvasElement.querySelector('.pl-line')).not.toBeNull();
     await expect(canvasElement.querySelector('code')?.getAttribute('class')).toBeNull();
     // コードテキスト内のタグ表記はテキストのまま (b 要素は生まれない)
     await expect(canvasElement.querySelector('code b')).toBeNull();
@@ -124,7 +132,10 @@ export const UnknownLanguage: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelector('[class^="pl-"]')).toBeNull();
+    // 着色トークンが無い (pl-line は行分割の器であって着色ではないので除く)
+    await expect(canvasElement.querySelector('[class^="pl-"]:not(.pl-line)')).toBeNull();
+    // 行分割は未知言語でも効いている陽性対照
+    await expect(canvasElement.querySelector('.pl-line')).not.toBeNull();
     await expect(canvasElement.querySelector('code.language-definitelynotalang')).not.toBeNull();
     await expect(canvasElement.querySelector('code b')).toBeNull();
     await expect(canvasElement.querySelector('code')?.textContent).toContain('<b>');
