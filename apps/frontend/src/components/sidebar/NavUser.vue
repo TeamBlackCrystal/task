@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/sidebar';
 import { computed } from 'vue';
 import { avatarInitials } from '@/lib/initials';
+import { shouldCloseSidebarOnNavigate } from '@/components/sidebar/sidebar-navigation';
 
 const props = defineProps<{
   user: {
@@ -36,8 +37,21 @@ const props = defineProps<{
   onLogout?: () => void | Promise<void>;
 }>();
 
-const { isMobile } = useSidebar();
+const { isMobile, setOpenMobile } = useSidebar();
 const initials = computed(() => avatarInitials(props.user.name));
+
+/**
+ * Account はナビのリンクと同じ普通の `<a>` で、vike のクライアントルーティングが
+ * 処理する。モバイルではサイドバーがページに重なるので、閉じないと遷移先の
+ * /settings/profile が覆われたままになる。
+ *
+ * AppSidebar が SidebarContent に置いたイベント委譲では拾えない。このメニューは
+ * DropdownMenuPortal でサイドバーの外へ出るため、クリックがサイドバーへ伝播しない。
+ * 判定だけ委譲と同じ関数を使い、閉じる処理をここで持つ。
+ */
+function closeOnNavigate(event: MouseEvent) {
+  if (shouldCloseSidebarOnNavigate(event, isMobile.value)) setOpenMobile(false);
+}
 </script>
 
 <template>
@@ -88,7 +102,7 @@ const initials = computed(() => avatarInitials(props.user.name));
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuItem as-child>
-              <a href="/settings/profile">
+              <a href="/settings/profile" @click="closeOnNavigate">
                 <PhSealCheck />
                 Account
               </a>
