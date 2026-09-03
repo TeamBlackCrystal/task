@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/vue-query';
+import { useQueryClient } from '@tanstack/vue-query';
 import { computed, ref, toValue, type MaybeRefOrGetter } from 'vue';
 
 import { fetchClient } from '@/lib/api-vue-query';
@@ -51,6 +51,12 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
   const pending = ref<Record<string, TaskRowField | undefined>>({});
   /** 直近の失敗。行の下に出す。 */
   const errors = ref<Record<string, string | undefined>>({});
+  /** コメント送信中のタスク ID。行のコメント欄はこれを見て送信を止める。 */
+  const commentPendingTaskId = ref<string | null>(null);
+  /** 追加中のグループ。二重送信を止める。 */
+  const creatingStatusId = ref<string | null>(null);
+  /** グループごとの作成失敗。追加行の下に出す。 */
+  const createErrors = ref<Record<string, string | undefined>>({});
 
   function pathParams(taskId: string) {
     return { tenant_id: tenantId.value, project_id: projectId.value, id: taskId };
@@ -150,9 +156,18 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
     });
   }
 
-  /** グループ（ステータス）の末尾からタスクを足す。 */
-  const createTask = useMutation({
-    mutationFn: async (input: CreateTaskInput) => {
+  /**
+   * グループ（ステータス）の末尾からタスクを足す。
+   *
+   * 成否を返すのは、呼び出し側が「成功したときだけ下書きを捨てる」ためのもの。
+   * 失敗を握り潰すと、入力だけ消えて何も起きていないように見える。
+   */
+  async function createTask(input: CreateTaskInput): Promise<boolean> {
+    if (!tenantId.value || !projectId.value) return false;
+    if (creatingStatusId.value) return false;
+    creatingStatusId.value = input.statusId;
+    createErrors.value = { ...createErrors.value, [input.statusId]: undefined };
+    try {
       const { error } = await fetchClient.POST(LIST_TASKS_PATH, {
         params: { path: { tenant_id: tenantId.value, project_id: projectId.value } },
         body: {
@@ -169,24 +184,47 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
         },
       });
       if (error) throw error;
-    },
-    onSuccess: () => invalidateLists(),
-  });
+      await invalidateLists();
+      return true;
+    } catch {
+      createErrors.value = {
+        ...createErrors.value,
+        [input.statusId]: 'タスクを作成できませんでした',
+      };
+      return false;
+    } finally {
+      creatingStatusId.value = null;
+    }
+  }
 
-  const addComment = useMutation({
-    mutationFn: async (input: { taskId: string; body: string }) => {
+  /** 行からのコメント追加。createTask と同じ理由で成否を返す。 */
+  async function addComment(taskId: string, body: string): Promise<boolean> {
+    if (!tenantId.value || !projectId.value) return false;
+    if (commentPendingTaskId.value) return false;
+    commentPendingTaskId.value = taskId;
+    errors.value = { ...errors.value, [taskId]: undefined };
+    try {
       const { error } = await fetchClient.POST(COMMENTS_PATH, {
-        params: { path: pathParams(input.taskId) },
-        body: { body: input.body },
+        params: { path: pathParams(taskId) },
+        body: { body },
       });
       if (error) throw error;
-    },
-    onSuccess: () => invalidateLists(),
-  });
+      await invalidateLists();
+      return true;
+    } catch {
+      errors.value = { ...errors.value, [taskId]: 'コメントを追加できませんでした' };
+      return false;
+    } finally {
+      commentPendingTaskId.value = null;
+    }
+  }
 
   return {
     pending,
     errors,
+    commentPendingTaskId,
+    creatingStatusId,
+    createErrors,
     setStatus,
     setPriority,
     setSoftDeadline,

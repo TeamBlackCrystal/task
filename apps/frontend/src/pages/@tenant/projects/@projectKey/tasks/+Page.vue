@@ -68,7 +68,7 @@ import {
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
 import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
-import { useTaskRowMutations, type CreateTaskInput } from '@/composables/useTaskRowMutations';
+import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -128,7 +128,8 @@ const selectedTaskId = ref<string | null>(null);
 
 // 広い画面でのみ inline 分割を出す。狭い画面は従来どおり詳細ページへ遷移させる。
 const canInline = useMediaQuery('(min-width: 1024px)');
-const showDetail = computed(() => canInline.value && !!selectedTaskId.value);
+// Table 表示だけが右ペインを出す。List 表示の詳細はオーバーレイ（overlayTaskSeqKey）。
+const showDetail = computed(() => canInline.value && !!selectedTaskId.value && !isListView.value);
 
 // 一覧の状態（選択・ページ・検索語・ラベル・並び替え）を URL クエリから読む
 // （クライアントのみ）。復元先の ref はこの後で定義するので、値だけ先に取る。
@@ -393,27 +394,39 @@ const projectMembers = computed(() => (membersQuery.data.value ?? []).map((membe
 // 1 本の一覧クエリを画面側で仕分けると、グループの件数がページ内の件数になってしまう
 // （「Todo 3」なのに実際は 40 件、など）。ステータスで絞った問い合わせを並べ、
 // 件数はサーバの total を使う。
-const groupLimits = ref<Record<string, number>>({});
+//
+// 「もっと見る」は limit を伸ばすのではなくページを足す。limit を伸ばす方式だと
+// サーバ側の上限（tasks.rs の `min(q.limit, 200)`）に当たった時点で 201 件目以降へ
+// 進めなくなり、押すたびに同じ 200 件を取り直すだけになる。ページ単位なら取得済みの
+// ページがキャッシュに残るので、押した瞬間に行が消える問題も起きない。
+const groupPageCounts = ref<Record<string, number>>({});
 
-// プロジェクトやラベル絞り込みを変えたら取得済み件数を戻す（前の条件の分だけ残さない）
+// プロジェクトやラベル絞り込みを変えたら取得済みページを戻す（前の条件の分だけ残さない）
 watch([projectKey, selectedLabelId], () => {
-  groupLimits.value = {};
+  groupPageCounts.value = {};
 });
 
 const workflowStatuses = computed(() => statusesQuery.data.value ?? []);
 
+/** (ステータス, ページ) の組。useQueries は平らな配列しか取れないので、後で畳み直す。 */
+const groupPageRequests = computed(() =>
+  workflowStatuses.value.flatMap((status) => {
+    const pages = groupPageCounts.value[status.id] ?? 1;
+    return Array.from({ length: pages }, (_, page) => ({ statusId: status.id, page }));
+  }),
+);
+
 const groupQueries = useQueries({
   queries: computed(() =>
-    workflowStatuses.value.map((status) => {
-      const limit = groupLimits.value[status.id] ?? GROUP_PAGE_SIZE;
+    groupPageRequests.value.map(({ statusId, page }) => {
       const params = {
         params: {
           path: { tenant_id: tenantId.value!, project_id: projectId.value! },
           query: {
-            status_id: status.id,
+            status_id: statusId,
             label_id: selectedLabelId.value ?? undefined,
-            limit,
-            offset: 0,
+            limit: GROUP_PAGE_SIZE,
+            offset: page * GROUP_PAGE_SIZE,
           },
         },
       };
@@ -431,24 +444,40 @@ const groupQueries = useQueries({
 });
 
 const taskGroups = computed<TaskGroup[]>(() =>
-  workflowStatuses.value.map((status, index) => {
-    const query = groupQueries.value[index];
-    const tasks = query?.data?.tasks ?? [];
-    const total = query?.data?.total ?? 0;
+  workflowStatuses.value.map((status) => {
+    const queries = groupPageRequests.value
+      .map((request, index) => (request.statusId === status.id ? groupQueries.value[index] : null))
+      .filter((query) => query !== null);
+
+    // ページをまたいでタスクが動くと同じ ID が 2 度出ることがあるので落とす
+    const seen = new Set<string>();
+    const tasks = queries
+      .flatMap((query) => query?.data?.tasks ?? [])
+      .filter((task) => {
+        if (seen.has(task.id)) return false;
+        seen.add(task.id);
+        return true;
+      });
+    // total は後のページほど新しいので、返ってきた最後の値を採る
+    const total = queries.reduce((acc, query) => query?.data?.total ?? acc, 0);
+    const lastPage = queries.at(-1)?.data?.tasks;
+
     return {
       status,
       tasks,
       total,
-      isLoading: !!query?.isLoading,
-      isError: !!query?.isError,
-      hasMore: tasks.length < total,
+      isLoading: queries.some((query) => !!query?.isLoading),
+      isError: queries.some((query) => !!query?.isError),
+      // 最後のページが埋まっていない = 取り切った。total だけで判断すると、件数が
+      // 変動したときに減らない「もっと見る」が残る
+      hasMore: tasks.length < total && (lastPage?.length ?? 0) === GROUP_PAGE_SIZE,
     };
   }),
 );
 
 function loadMoreInGroup(statusId: string) {
-  const current = groupLimits.value[statusId] ?? GROUP_PAGE_SIZE;
-  groupLimits.value = { ...groupLimits.value, [statusId]: current + GROUP_PAGE_SIZE };
+  const current = groupPageCounts.value[statusId] ?? 1;
+  groupPageCounts.value = { ...groupPageCounts.value, [statusId]: current + 1 };
 }
 
 // ---- List 表示: 行からの更新 ----
@@ -456,30 +485,14 @@ const rowMutations = useTaskRowMutations({
   tenantId: () => tenantId.value,
   projectId: () => projectId.value,
 });
-const commentPendingTaskId = ref<string | null>(null);
-
-async function onRowComment(task: { id: string }, body: string) {
-  commentPendingTaskId.value = task.id;
-  try {
-    await rowMutations.addComment.mutateAsync({ taskId: task.id, body });
-  } finally {
-    commentPendingTaskId.value = null;
-  }
-}
-
-const creatingStatusId = ref<string | null>(null);
-
-async function onCreateInGroup(input: CreateTaskInput) {
-  creatingStatusId.value = input.statusId;
-  try {
-    await rowMutations.createTask.mutateAsync(input);
-  } finally {
-    creatingStatusId.value = null;
-  }
-}
-
 // ---- List 表示: 詳細のオーバーレイ ----
-const overlayTaskSeqKey = ref<string | null>(null);
+//
+// 選択は表示形式によらず selectedTaskId に一本化し、List 表示のときだけ
+// オーバーレイとして読み替える。ここを別の ref に分けると、検索結果のクリックや
+// タスク作成のように selectedTaskId しか触らない経路が List 表示で無反応になる。
+const overlayTaskSeqKey = computed(() =>
+  isListView.value && canInline.value ? selectedTaskId.value : null,
+);
 
 /**
  * 閉じるアニメーションの間だけ、直前に開いていたタスクを保持する。
@@ -490,17 +503,22 @@ const overlayTaskSeqKey = ref<string | null>(null);
 const overlayRenderedTaskSeqKey = ref<string | null>(null);
 let overlayCleanupTimer: ReturnType<typeof setTimeout> | undefined;
 
-watch(overlayTaskSeqKey, (seqKey) => {
-  if (overlayCleanupTimer) clearTimeout(overlayCleanupTimer);
-  if (seqKey) {
-    overlayRenderedTaskSeqKey.value = seqKey;
-    return;
-  }
-  // Dialog の duration-200 に合わせて、閉じ切ってから外す
-  overlayCleanupTimer = setTimeout(() => {
-    overlayRenderedTaskSeqKey.value = null;
-  }, 250);
-});
+watch(
+  overlayTaskSeqKey,
+  (seqKey) => {
+    if (overlayCleanupTimer) clearTimeout(overlayCleanupTimer);
+    if (seqKey) {
+      overlayRenderedTaskSeqKey.value = seqKey;
+      return;
+    }
+    // Dialog の duration-200 に合わせて、閉じ切ってから外す
+    overlayCleanupTimer = setTimeout(() => {
+      overlayRenderedTaskSeqKey.value = null;
+    }, 250);
+  },
+  // URL の ?selected= から復元した選択も拾う（初回は watch が走らないため）
+  { immediate: true },
+);
 
 onUnmounted(() => {
   if (overlayCleanupTimer) clearTimeout(overlayCleanupTimer);
@@ -509,7 +527,7 @@ onUnmounted(() => {
 function openOverlay(taskId: string) {
   const task = taskGroups.value.flatMap((group) => group.tasks).find((t) => t.id === taskId);
   if (!task) return;
-  overlayTaskSeqKey.value = taskSeqKey(projectKey.value, task.seq_id);
+  onSelectRow(task.seq_id);
 }
 watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
 const selectedLabelName = computed(
@@ -1097,7 +1115,8 @@ const table = useVueTable({
               :members="projectMembers"
               :pending="rowMutations.pending.value"
               :errors="rowMutations.errors.value"
-              :comment-pending-task-id="commentPendingTaskId"
+              :comment-pending-task-id="rowMutations.commentPendingTaskId.value"
+              :create-errors="rowMutations.createErrors.value"
               @open="openOverlay"
               @more="loadMoreInGroup"
               @update:status="(task, statusId) => rowMutations.setStatus(task, statusId)"
@@ -1109,9 +1128,9 @@ const table = useVueTable({
               @toggle:label="
                 (task, labelId, checked) => rowMutations.toggleLabel(task, labelId, checked)
               "
-              @comment="onRowComment"
-              :creating-status-id="creatingStatusId"
-              @create="onCreateInGroup"
+              :on-comment="(task, body) => rowMutations.addComment(task.id, body)"
+              :creating-status-id="rowMutations.creatingStatusId.value"
+              :on-create="rowMutations.createTask"
             />
 
             <!-- 通常一覧テーブル -->
@@ -1207,7 +1226,7 @@ const table = useVueTable({
         </div>
       </ResizablePanel>
 
-      <template v-if="showDetail && !isListView">
+      <template v-if="showDetail">
         <ResizableHandle with-handle />
         <ResizablePanel :order="2" :default-size="40" :min-size="26" class="min-w-0">
           <TaskDetailPane
@@ -1231,7 +1250,7 @@ const table = useVueTable({
       :task-id="overlayRenderedTaskSeqKey"
       @update:open="
         (value) => {
-          if (!value) overlayTaskSeqKey = null;
+          if (!value) selectedTaskId = null;
         }
       "
     />

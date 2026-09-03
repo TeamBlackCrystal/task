@@ -1,15 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
-import {
-  PhCalendarBlank,
-  PhCalendarPlus,
-  PhChat,
-  PhFlag,
-  PhTag,
-  PhUserPlus,
-} from '@phosphor-icons/vue';
+import { PhCalendarBlank, PhCalendarPlus, PhChat, PhFlag, PhTag } from '@phosphor-icons/vue';
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -21,7 +13,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { avatarInitials } from '@/lib/initials';
 import {
   formatDeadline,
   isoToLocalDateInput,
@@ -47,6 +38,8 @@ const props = defineProps<{
   pendingField?: TaskRowField;
   error?: string;
   commentPending?: boolean;
+  /** コメントの追加。成功したときだけ下書きを捨てるので、成否を返してもらう */
+  onComment: (body: string) => Promise<boolean>;
 }>();
 
 const emit = defineEmits<{
@@ -56,7 +49,6 @@ const emit = defineEmits<{
   'update:softDeadline': [iso: string | null];
   'toggle:assignee': [userId: string, checked: boolean];
   'toggle:label': [labelId: string, checked: boolean];
-  comment: [body: string];
 }>();
 
 // 表示（並び・ラベル・色・アイコン）はテーブル表示と同じ定義を使う。
@@ -108,10 +100,12 @@ async function toggleComment() {
   (commentInputRef.value?.$el as HTMLTextAreaElement | undefined)?.focus();
 }
 
-function submitComment() {
+async function submitComment() {
   const body = commentDraft.value.trim();
   if (!body || props.commentPending) return;
-  emit('comment', body);
+  // 失敗したら下書きを残したまま欄を開けておく。閉じてから失敗を知らせても
+  // 本文が戻らず、投稿できたと誤解させる
+  if (!(await props.onComment(body))) return;
   commentDraft.value = '';
   commentOpen.value = false;
 }

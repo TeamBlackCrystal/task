@@ -86,10 +86,11 @@ export function useProjectMembersQuery(
 ) {
   return useQuery(
     computed(() => {
-      const tenant = toValue(tenantId);
-      const project = toValue(projectId);
+      const tenantUuid = toValue(tenantId);
+      const projectUuid = toValue(projectId);
+      // 非 null は enabled で担保する（未解決のうちは問い合わせない）
       const params = {
-        params: { path: { tenant_id: tenant as TenantUuid, project_id: project as ProjectUuid } },
+        params: { path: { tenant_id: tenantUuid!, project_id: projectUuid! } },
       };
       return {
         queryKey: ['get', PROJECT_MEMBERS_PATH, params],
@@ -101,7 +102,7 @@ export function useProjectMembersQuery(
           if (error) throw error;
           return data;
         },
-        enabled: !!tenant && !!project,
+        enabled: !!tenantUuid && !!projectUuid,
       };
     }),
   );

@@ -7,3 +7,7 @@ docs/retype.manifest
 
 .worktrees/
 node_modules
+
+# Claude Code の作業用。レビューメモ・計画・worktree はリポジトリに載せない
+.claude/
+reviews/

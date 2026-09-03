@@ -243,9 +243,13 @@ async function deleteThread(threadId: string) {
                 />
               </div>
 
-              <!-- 削除済みスレッドには返信できない（backend の create_comment が 400 で弾く） -->
+              <!--
+                削除済みスレッドには返信できない（backend の create_comment が 400 で弾く）が、
+                既にある返信は残るので、返信があるときは開く導線を残す。ここを隠すと
+                返信がデータ上は生きているのに読むことも消すこともできなくなる。
+              -->
               <div
-                v-if="!thread.is_deleted"
+                v-if="!thread.is_deleted || thread.replies.length"
                 class="flex items-center justify-end border-t px-3 py-1.5"
               >
                 <Button
@@ -267,7 +271,14 @@ async function deleteThread(threadId: string) {
         入力欄（参照）。下端に貼り付けた薄い背景の帯の中に、白い入力枠を置く。
         枠の中は本文 → 操作行（追加・種別・添付・メンション・送信）の順。
       -->
+      <p
+        v-if="openThread?.is_deleted"
+        class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3 text-sm text-muted-foreground"
+      >
+        削除されたコメントには返信できません
+      </p>
       <form
+        v-else
         class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3"
         @submit.prevent="submitDraft"
       >

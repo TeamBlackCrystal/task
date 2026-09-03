@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
 import type { components } from '@/generated/api';
+import type { CreateTaskInput } from '@/composables/useTaskRowMutations';
 
 enableAutoUnmount(afterEach);
 
@@ -45,8 +46,9 @@ const group: TaskGroup = {
   hasMore: false,
 };
 
-function mountList() {
-  return mount(TaskGroupedList, {
+/** 作成の受け口。成否を返す契約なので、既定は成功にする。 */
+function mountList(onCreate = vi.fn(async (_input: CreateTaskInput) => true)) {
+  const wrapper = mount(TaskGroupedList, {
     props: {
       groups: [group],
       statuses: [status],
@@ -54,11 +56,15 @@ function mountList() {
       members,
       pending: {},
       errors: {},
+      onComment: vi.fn(async () => true),
+      onCreate,
     },
+    attachTo: document.body,
   });
+  return { wrapper, onCreate };
 }
 
-async function openAddRow(wrapper: ReturnType<typeof mountList>) {
+async function openAddRow(wrapper: ReturnType<typeof mountList>['wrapper']) {
   const addButton = wrapper.findAll('button').find((b) => b.text() === 'タスクを追加');
   expect(addButton).toBeDefined();
   await addButton!.trigger('click');
@@ -67,14 +73,14 @@ async function openAddRow(wrapper: ReturnType<typeof mountList>) {
 
 describe('TaskGroupedList のタスク追加', () => {
   it('タイトルだけでも作れる（未指定の項目は送らない）', async () => {
-    const wrapper = mountList();
+    const { wrapper, onCreate } = mountList();
     await openAddRow(wrapper);
 
     await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('最小のタスク');
     const save = wrapper.findAll('button').find((b) => b.text().includes('保存'));
     await save!.trigger('click');
 
-    expect(wrapper.emitted('create')).toEqual([
+    expect(onCreate.mock.calls).toEqual([
       [
         {
           title: '最小のタスク',
@@ -89,7 +95,7 @@ describe('TaskGroupedList のタスク追加', () => {
   });
 
   it('その場で決めた担当者・期限・ラベルを一緒に送る', async () => {
-    const wrapper = mountList();
+    const { wrapper, onCreate } = mountList();
     await openAddRow(wrapper);
 
     await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('設定つきタスク');
@@ -106,9 +112,8 @@ describe('TaskGroupedList のタスク追加', () => {
     const save = wrapper.findAll('button').find((b) => b.text().includes('保存'));
     await save!.trigger('click');
 
-    const emitted = wrapper.emitted('create');
-    expect(emitted).toHaveLength(1);
-    expect(emitted![0][0]).toMatchObject({
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate.mock.calls[0][0]).toMatchObject({
       title: '設定つきタスク',
       statusId: 'status-todo',
       assigneeIds: ['user-2'],
@@ -118,7 +123,7 @@ describe('TaskGroupedList のタスク追加', () => {
   });
 
   it('空のタイトルでは作らず、行を閉じる', async () => {
-    const wrapper = mountList();
+    const { wrapper, onCreate } = mountList();
     await openAddRow(wrapper);
 
     const save = wrapper.findAll('button').find((b) => b.text().includes('保存'));
@@ -129,12 +134,12 @@ describe('TaskGroupedList のタスク追加', () => {
     await cancel!.trigger('click');
     await nextTick();
 
-    expect(wrapper.emitted('create')).toBeUndefined();
+    expect(onCreate).not.toHaveBeenCalled();
     expect(wrapper.find('input[aria-label="Todo にタスクを追加"]').exists()).toBe(false);
   });
 
   it('作成後も入力欄は開いたまま、下書きは消える（続けて足せる）', async () => {
-    const wrapper = mountList();
+    const { wrapper } = mountList();
     await openAddRow(wrapper);
 
     const input = wrapper.get('input[aria-label="Todo にタスクを追加"]');
@@ -146,5 +151,37 @@ describe('TaskGroupedList のタスク追加', () => {
     expect(
       wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]').element.value,
     ).toBe('');
+  });
+
+  it('作成に失敗したら下書きを残す（消すと打ち直しになる）', async () => {
+    const { wrapper } = mountList(vi.fn(async () => false));
+    await openAddRow(wrapper);
+
+    await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('失敗するタスク');
+    const save = wrapper.findAll('button').find((b) => b.text().includes('保存'));
+    await save!.trigger('click');
+    await nextTick();
+
+    expect(
+      wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]').element.value,
+    ).toBe('失敗するタスク');
+  });
+
+  it('作成の失敗をグループの下に出す', async () => {
+    const { wrapper } = mountList();
+    await wrapper.setProps({ createErrors: { 'status-todo': 'タスクを作成できませんでした' } });
+    await nextTick();
+
+    expect(wrapper.text()).toContain('タスクを作成できませんでした');
+  });
+
+  // 追加行は v-for の内側にあるので、template ref が配列で入る。素の `.$el` を読むと
+  // 常に undefined になり、型検査も既存テストも通ったままフォーカスだけが効かなくなる
+  it('追加行を開くとタイトル欄にフォーカスが当たる', async () => {
+    const { wrapper } = mountList();
+    await openAddRow(wrapper);
+
+    const input = wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]');
+    expect(document.activeElement).toBe(input.element);
   });
 });

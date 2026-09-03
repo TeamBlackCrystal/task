@@ -41,6 +41,12 @@ const props = defineProps<{
   commentPendingTaskId?: string | null;
   /** 追加中のグループ。二重送信を止める */
   creatingStatusId?: string | null;
+  /** グループごとの作成失敗。追加行の下に出す */
+  createErrors?: Record<string, string | undefined>;
+  /** 行からのコメント追加。成功したときだけ下書きを捨てるので成否を返してもらう */
+  onComment: (task: TaskResponse, body: string) => Promise<boolean>;
+  /** タスクの作成。同上 */
+  onCreate: (input: CreateTaskInput) => Promise<boolean>;
 }>();
 
 const emit = defineEmits<{
@@ -51,8 +57,6 @@ const emit = defineEmits<{
   'update:softDeadline': [task: TaskResponse, iso: string | null];
   'toggle:assignee': [task: TaskResponse, userId: string, checked: boolean];
   'toggle:label': [task: TaskResponse, labelId: string, checked: boolean];
-  comment: [task: TaskResponse, body: string];
-  create: [input: CreateTaskInput];
 }>();
 
 // 折りたたみは画面内の一時状態。URL には載せない（共有したい情報ではない）
@@ -66,7 +70,18 @@ function toggle(statusId: string) {
 // タイトルだけで作る。他の項目は作った行からそのまま触れる
 const addingStatusId = ref<string | null>(null);
 const draftTitle = ref('');
-const draftInputRef = ref<InstanceType<typeof Input> | null>(null);
+type InputRef = InstanceType<typeof Input>;
+/**
+ * v-for の内側に置いた ref は、対象が 1 つでも Vue が配列で入れる
+ * （コンパイラが `ref_for` を付けるため）。追加行は同時に 1 つしか開かないので
+ * 先頭を取る。素の `.$el` を読むと常に undefined でフォーカスが当たらない。
+ */
+function focusDraft(target: InputRef | InputRef[] | null) {
+  const instance = Array.isArray(target) ? target[0] : target;
+  (instance?.$el as HTMLInputElement | undefined)?.focus();
+}
+
+const draftInputRef = ref<InputRef | InputRef[] | null>(null);
 /** 作成時にその場で決める項目。行と同じピッカーを使う */
 const draftAssigneeIds = ref<string[]>([]);
 const draftDeadline = ref('');
@@ -93,12 +108,12 @@ function toggleDraftLabel(labelId: string, checked: boolean) {
 }
 
 const showDraftDeadline = ref(false);
-const draftDeadlineRef = ref<InstanceType<typeof Input> | null>(null);
+const draftDeadlineRef = ref<InputRef | InputRef[] | null>(null);
 
 async function openDraftDeadline() {
   showDraftDeadline.value = true;
   await nextTick();
-  (draftDeadlineRef.value?.$el as HTMLInputElement | undefined)?.focus();
+  focusDraft(draftDeadlineRef.value);
 }
 
 function resetDraft() {
@@ -114,7 +129,7 @@ async function startAdding(statusId: string) {
   addingStatusId.value = statusId;
   resetDraft();
   await nextTick();
-  (draftInputRef.value?.$el as HTMLInputElement | undefined)?.focus();
+  focusDraft(draftInputRef.value);
 }
 
 function cancelAdding() {
@@ -122,13 +137,13 @@ function cancelAdding() {
   resetDraft();
 }
 
-function commitAdding(statusId: string) {
+async function commitAdding(statusId: string) {
   const title = draftTitle.value.trim();
   if (!title) {
     cancelAdding();
     return;
   }
-  emit('create', {
+  const created = await props.onCreate({
     title,
     statusId,
     assigneeIds: draftAssigneeIds.value,
@@ -136,6 +151,8 @@ function commitAdding(statusId: string) {
     priority: draftPriority.value,
     labelIds: draftLabelIds.value,
   });
+  // 失敗したら入力を残す（消すと、何が失われたのか分からないまま打ち直しになる）
+  if (!created) return;
   // 続けて足せるように入力欄は開いたままにし、中身だけ空にする
   resetDraft();
 }
@@ -209,7 +226,7 @@ function commitAdding(statusId: string) {
               @update:soft-deadline="(iso) => emit('update:softDeadline', task, iso)"
               @toggle:assignee="(userId, checked) => emit('toggle:assignee', task, userId, checked)"
               @toggle:label="(labelId, checked) => emit('toggle:label', task, labelId, checked)"
-              @comment="(body) => emit('comment', task, body)"
+              :on-comment="(body: string) => onComment(task, body)"
             />
 
             <p v-if="group.isError" class="min-w-[42rem] px-3 py-2 text-sm text-destructive">
@@ -385,6 +402,12 @@ function commitAdding(statusId: string) {
                 <PhPlus class="size-3.5" />
                 タスクを追加
               </Button>
+              <p
+                v-if="createErrors?.[group.status.id]"
+                class="px-2 pb-1.5 text-xs text-destructive"
+              >
+                {{ createErrors[group.status.id] }}
+              </p>
             </div>
 
             <div v-if="group.hasMore" class="px-2 py-1">

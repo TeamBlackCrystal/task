@@ -17,6 +17,7 @@ import {
   Percent,
   Plus,
   Search,
+  Settings,
   ListChecks,
   Paperclip,
   SquarePen,
@@ -317,9 +318,16 @@ function clearDeadline(field: 'soft_deadline' | 'hard_deadline') {
         参照どおり、最上部から左右に割る。上部バーを全幅にすると
         真ん中の縦線が上部バーの下からしか引けず、列が途中から始まって見える。
       -->
+      <!--
+        スクロールする器はこの div。左右 2 列に割るのは lg 以上だけで、そこでは
+        本文と履歴がそれぞれ内側でスクロールする（親は lg:overflow-hidden で止める）。
+        ペイン表示と lg 未満は 1 列に積むので、ここが唯一のスクロール容器になる。
+        親（SplitterPanel / DialogContent）は overflow-hidden で高さを固定するため、
+        ここに overflow を持たせないと、はみ出した分に到達できなくなる。
+      -->
       <div
-        class="flex min-h-0 flex-1 flex-col"
-        :class="layout === 'pane' ? 'gap-6 px-4 py-4' : 'lg:flex-row'"
+        class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        :class="layout === 'pane' ? 'gap-6 px-4 py-4' : 'lg:flex-row lg:overflow-hidden'"
       >
         <div class="flex min-w-0 flex-col" :class="layout === 'pane' ? '' : 'lg:min-h-0 lg:flex-1'">
           <!--
