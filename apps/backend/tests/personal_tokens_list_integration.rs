@@ -145,3 +145,63 @@ async fn rejects_bearer_token_auth() {
 
     app.cleanup_user(user.id).await;
 }
+
+/// scopes を空配列で送ると 400 になり、トークンは発行されない（#633）。
+#[tokio::test]
+async fn create_returns_400_for_empty_scopes() {
+    let mut app = TestApp::new().await;
+
+    let user = app.insert_user_default().await;
+    let tenant_id = insert_tenant(&app.state.db, user.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&user.email, &user.password)
+        .await;
+
+    let res = app
+        .post_json_with_session(
+            "/v1/personal_tokens",
+            serde_json::json!({
+                "name": "no-scope",
+                "tenant_id": tenant_id,
+                "scopes": [],
+            }),
+        )
+        .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::BAD_REQUEST,
+        "scopes が空のリクエストは 400 で拒む"
+    );
+
+    let tokens = list_tokens(&app).await;
+    assert!(
+        tokens.is_empty(),
+        "拒まれたリクエストでトークンは発行されない"
+    );
+
+    app.cleanup_user(user.id).await;
+}
+
+/// scopes が一件あれば従来どおり 201 で発行できる（空拒否の対照）。
+#[tokio::test]
+async fn create_returns_201_for_single_scope() {
+    let mut app = TestApp::new().await;
+
+    let user = app.insert_user_default().await;
+    let tenant_id = insert_tenant(&app.state.db, user.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&user.email, &user.password)
+        .await;
+
+    // create_token は 201 を検証してから ID を返す。
+    let id = create_token(&app, tenant_id, "one-scope").await;
+
+    let tokens = list_tokens(&app).await;
+    assert_eq!(tokens.len(), 1, "一件だけ発行されている");
+    assert_eq!(tokens[0]["id"], id.to_string());
+    assert_eq!(tokens[0]["scopes"], serde_json::json!(["read:task"]));
+
+    app.cleanup_user(user.id).await;
+}

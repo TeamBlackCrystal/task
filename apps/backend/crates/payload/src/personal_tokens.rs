@@ -14,6 +14,8 @@ pub struct CreatePersonalTokenRequest {
     pub tenant_id: Uuid,
     #[schema(value_type = Vec<String>, format = "uuid", nullable)]
     pub project_ids: Option<Vec<Uuid>>,
+    #[validate(length(min = 1))]
+    #[schema(min_items = 1)]
     pub scopes: Vec<Scope>,
     #[schema(value_type = String, format = "date-time", nullable)]
     pub expires_at: Option<DateTime<Utc>>,
