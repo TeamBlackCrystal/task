@@ -28,6 +28,22 @@ export const DEFAULT_TASK_LIST_URL_STATE: TaskListUrlState = {
   sorting: [],
 };
 
+/**
+ * 並び替えを受け付ける列 id。`+Page.vue` の `columns` のうち
+ * `enableSorting: false` でないもの（`select` と `labels` は対象外）。
+ *
+ * **拒否リストではなく許可リストにする。** TanStack の `getColumn` は
+ * `flatColumns.reduce((acc, c) => { acc[c.id] = c }, {})` という素のオブジェクトを引くため、
+ * `Object.prototype` のメンバー名（`__proto__` / `constructor` / `toString` /
+ * `valueOf` / `hasOwnProperty` …）を渡すと prototype 側の値が返り、
+ * 「存在しない列」として弾かれない。`getSortedRowModel` は
+ * `table.getColumn(sort.id)?.getCanSort()` を呼ぶので `?.` をすり抜けて
+ * `getCanSort is not a function` で throw し、一覧の描画が止まる。
+ * 一覧は `getSortedRowModel()` を渡し `manualSorting` を付けていないので、
+ * URL の値がそのままクライアント側のソートに入る。
+ */
+const SORTABLE_COLUMN_IDS = new Set(['key', 'title', 'status', 'priority', 'assignee', 'due_date']);
+
 /** `title:asc,priority:desc` 形式。TanStack の SortingState と 1:1。 */
 function parseSorting(raw: string | undefined): SortingState {
   if (!raw) return [];
@@ -35,9 +51,10 @@ function parseSorting(raw: string | undefined): SortingState {
     .split(',')
     .map((entry) => {
       const [id, direction] = entry.split(':');
-      // 列 id が無い・向きが asc/desc 以外は捨てる。細工されたクエリで
+      // 並び替えできない列・向きが asc/desc 以外は捨てる。細工されたクエリで
       // TanStack へ不正な state を渡さない
-      if (!id || (direction !== 'asc' && direction !== 'desc')) return null;
+      if (!id || !SORTABLE_COLUMN_IDS.has(id)) return null;
+      if (direction !== 'asc' && direction !== 'desc') return null;
       return { id, desc: direction === 'desc' };
     })
     .filter((entry): entry is { id: string; desc: boolean } => entry !== null);

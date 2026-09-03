@@ -67,6 +67,37 @@ describe('parseTaskListUrlState', () => {
     ]);
   });
 
+  // TanStack の getColumn は素のオブジェクトを引くため、Object.prototype のメンバー名を
+  // 渡すと prototype 側の値が返り「存在しない列」として弾かれない。getSortedRowModel が
+  // getCanSort() を呼んで throw し、一覧の描画が止まる（@tanstack/vue-table 8.21.3 で再現）。
+  // 拒否リストでは足りないので許可リストで絞る
+  it.each([
+    '__proto__',
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'nonexistent',
+    // 並び替えを持たない列（enableSorting: false）も入れない
+    'select',
+    'labels',
+  ])('sort=%s:asc は捨てる', (id) => {
+    expect(parseTaskListUrlState({ sort: `${id}:asc` }).sorting).toEqual([]);
+  });
+
+  it.each(['key', 'title', 'status', 'priority', 'assignee', 'due_date'])(
+    'sort=%s:desc は受け付ける（並び替えできる列を落としていない）',
+    (id) => {
+      expect(parseTaskListUrlState({ sort: `${id}:desc` }).sorting).toEqual([{ id, desc: true }]);
+    },
+  );
+
+  it('不正な列が混ざっても、並び替えできる列だけ残す', () => {
+    expect(parseTaskListUrlState({ sort: '__proto__:asc,title:desc' }).sorting).toEqual([
+      { id: 'title', desc: true },
+    ]);
+  });
+
   it('空のラベルは「すべて」として扱う', () => {
     expect(parseTaskListUrlState({ label: '' }).labelId).toBeNull();
   });
