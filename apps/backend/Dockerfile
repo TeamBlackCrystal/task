@@ -22,7 +22,7 @@
 # 含まれず、ここでの指定が唯一の版指定になる（rust-toolchain.toml を上げても自動追従しない）。
 
 ########## builder 共通 ##########
-FROM rust:1.95-bookworm AS builder-base
+FROM rust:1.98-bookworm AS builder-base
 # .cargo/config.toml が Linux ビルドで mold リンカ（-fuse-ld=mold）を要求する
 RUN apt-get update \
     && apt-get install -y --no-install-recommends mold \
