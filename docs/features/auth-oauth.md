@@ -148,6 +148,42 @@ GitLab.com と異なり、OAuth エンドポイントがインスタンスごと
 
 ---
 
+### §4b. 本番（Dokploy）の設定
+
+`list_providers` は `is_provider_configured` で client id と secret が**両方**入っている
+プロバイダーだけ返し、`OAuthButtons.vue` は `providers.length > 0` のときだけ描画する。
+つまり未設定だとボタンも「または」の区切り線も出ない（エラーにはならない）。
+
+**Dokploy の Environment に入れただけでは効かない。** compose の `backend.environment`
+に列挙したキーしかコンテナへ渡らないので、`docker-compose.prod.yml` 側にも書く。
+
+**Redirect URI には `/api` を含める。**
+
+```
+{APP_ORIGIN}/api/v1/auth/oauth/{provider}/callback
+```
+
+backend は frontend の SSR サーバ（`/api/*` を転送し、`redirect: 'manual'` で
+バックエンドの 302 をそのまま返す）越しにしか公開されていない。プロバイダーへ渡す
+`redirect_uri` は `APP_BASE_URL` から組むので、compose は `APP_BASE_URL` に
+`${APP_ORIGIN}/api` を渡す。ここを `${APP_ORIGIN}` にすると、認可画面から
+`/v1/auth/...` へ戻されて frontend のルーティングに落ち、コールバックが届かない。
+
+コールバック後にユーザーを戻す先は別で、`EMAIL_VERIFICATION_APP_URL`（= `APP_ORIGIN`）
+から組む（`build_frontend_redirect`）。`/api` は付かない。
+
+`OAUTH_ENCRYPTION_KEY` は 32 文字以上。実際の鍵は `auth_core::crypto` の HKDF が
+導出するので、文字列であればよい（`openssl rand -base64 48`）。**一度決めたら変えない。**
+変えると保存済みのリフレッシュトークンが復号できず、連携済みのユーザーは
+OAuth をやり直すことになる。
+
+設定できているかは discovery を叩くのが早い。
+
+```bash
+curl -s https://<domain>/api/v1/auth/oauth/providers
+# {"providers":[]} なら backend に渡っていない
+```
+
 ## 5. OAuth フロー（Authorization Code + PKCE）
 
 ```text

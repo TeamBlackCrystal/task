@@ -79,6 +79,28 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
       GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-}
+      # ログイン用の OAuth（任意）。1 つでも有効にするなら OAUTH_ENCRYPTION_KEY が必須。
+      # 未設定なら list_providers が空を返し、サインイン画面にボタンが出ないだけで起動はする。
+      #
+      # APP_BASE_URL は **ブラウザから見た backend の入口**。backend は frontend の
+      # SSR サーバ（/api/* を転送）越しにしか公開されていないので、/api を含める。
+      # ここを間違えると provider へ渡す redirect_uri が届かない先になり、
+      # 認可画面から戻れなくなる（コールバック後の遷移先は APP_ORIGIN 側で別に決まる）。
+      APP_BASE_URL: ${APP_ORIGIN}/api
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:-}
+      OAUTH_GITHUB_CLIENT_ID: ${OAUTH_GITHUB_CLIENT_ID:-}
+      OAUTH_GITHUB_CLIENT_SECRET: ${OAUTH_GITHUB_CLIENT_SECRET:-}
+      OAUTH_GITLAB_CLIENT_ID: ${OAUTH_GITLAB_CLIENT_ID:-}
+      OAUTH_GITLAB_CLIENT_SECRET: ${OAUTH_GITLAB_CLIENT_SECRET:-}
+      OAUTH_GITLAB_SELFHOSTED_CLIENT_ID: ${OAUTH_GITLAB_SELFHOSTED_CLIENT_ID:-}
+      OAUTH_GITLAB_SELFHOSTED_CLIENT_SECRET: ${OAUTH_GITLAB_SELFHOSTED_CLIENT_SECRET:-}
+      OAUTH_GOOGLE_CLIENT_ID: ${OAUTH_GOOGLE_CLIENT_ID:-}
+      OAUTH_GOOGLE_CLIENT_SECRET: ${OAUTH_GOOGLE_CLIENT_SECRET:-}
+      OAUTH_OIDC_ISSUER_URL: ${OAUTH_OIDC_ISSUER_URL:-}
+      OAUTH_OIDC_CLIENT_ID: ${OAUTH_OIDC_CLIENT_ID:-}
+      OAUTH_OIDC_CLIENT_SECRET: ${OAUTH_OIDC_CLIENT_SECRET:-}
+      # ログイン後の既定の遷移先（redirect_after を渡さなかったとき）
+      OAUTH_DEFAULT_REDIRECT_PATH: ${OAUTH_DEFAULT_REDIRECT_PATH:-/dashboard}
       # Drive のアップロード先。オブジェクトストレージに載せ替えるときは
       # STORAGE_BACKEND=s3 と S3_* を足す（apps/backend/.env.example 参照）
       STORAGE_BACKEND: local
