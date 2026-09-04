@@ -6,7 +6,8 @@ use payload::projects::ProjectResponse;
 use payload::task_comments::{CreateCommentRequest, TaskCommentResponse};
 use payload::task_extensions::SearchTasksResponse;
 use payload::tasks::{
-    AssigneeInput, CreateTaskRequest, TaskDetailResponse, TaskListResponse, UpdateTaskRequest,
+    AddAssigneeRequest, AssigneeInput, CreateTaskRequest, TaskAssigneeResponse,
+    TaskAssigneeSummary, TaskDetailResponse, TaskListResponse, UpdateTaskRequest,
 };
 use sea_orm::ActiveEnum;
 use serde_json::json;
@@ -219,19 +220,25 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
                 None => None,
             };
             let resolved = resolve_fields(api, &project, &fields).await?;
-            // ラベルの差分更新は「今付いているもの」が要る。置き換え（--label）の
-            // ときは要らないので、そのときは詳細を引かない
-            let label_ids = if fields.add_labels.is_empty() && fields.remove_labels.is_empty() {
-                resolved.set_label_ids.clone()
-            } else {
-                let current: TaskDetailResponse = api
-                    .get(&borrow(&task_path(api, project.id, &task_id)), &[])
-                    .await?;
-                Some(merge_labels(
+            // ラベルの差分更新（--add-label / --remove-label）と担当者の置き換えは
+            // 「今付いているもの」が要る。どちらも指定が無いなら詳細は引かない
+            let merges_labels = !fields.add_labels.is_empty() || !fields.remove_labels.is_empty();
+            let current: Option<TaskDetailResponse> =
+                if merges_labels || resolved.assignees.is_some() {
+                    Some(
+                        api.get(&borrow(&task_path(api, project.id, &task_id)), &[])
+                            .await?,
+                    )
+                } else {
+                    None
+                };
+            let label_ids = match current.as_ref().filter(|_| merges_labels) {
+                Some(current) => Some(merge_labels(
                     current.task.labels.iter().map(|label| label.id),
                     &resolved.add_label_ids,
                     &resolved.remove_label_ids,
-                ))
+                )),
+                None => resolved.set_label_ids.clone(),
             };
             let body = update_request(UpdateFields {
                 title,
@@ -244,6 +251,11 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
                 is_archived: archive.then_some(true).or(unarchive.then_some(false)),
             });
             check_deadline_order(body.soft_deadline, body.hard_deadline)?;
+            // 担当者は更新の本文では動かせない。専用の endpoint を先に当てて、
+            // 続く更新の応答に新しい顔ぶれが載るようにする
+            if let (Some(current), Some(desired)) = (&current, &resolved.assignees) {
+                sync_assignees(api, project.id, &task_id, &current.task.assignees, desired).await?;
+            }
             let updated: TaskDetailResponse = api
                 .put(&borrow(&task_path(api, project.id, &task_id)), &body)
                 .await?;
@@ -467,6 +479,67 @@ async fn resolve_fields(
     Ok(resolved)
 }
 
+/// 更新で `--assignee` に渡された顔ぶれへ寄せる。付け外しは専用の endpoint しかないので、
+/// 今の担当者との差分を当てる。既にいる利用者の役割はそのまま残す。
+async fn sync_assignees(
+    api: &ApiClient,
+    project_id: Uuid,
+    task_id: &str,
+    current: &[TaskAssigneeSummary],
+    desired: &[AssigneeInput],
+) -> Result<()> {
+    let (added, removed) = assignee_changes(
+        current.iter().map(|assignee| assignee.user.id),
+        desired.iter().map(|assignee| assignee.user_id),
+    );
+    for user_id in added {
+        // 役割は作成のときと同じ綴りを使う（`--assignee` は役割を受けない）
+        let role = desired
+            .iter()
+            .find(|assignee| assignee.user_id == user_id)
+            .map_or(ASSIGNEE_ROLE, |assignee| assignee.role.as_str());
+        let mut segments = task_path(api, project_id, task_id);
+        segments.push("assignees".into());
+        let _: TaskAssigneeResponse = api
+            .post(
+                &borrow(&segments),
+                &AddAssigneeRequest {
+                    user_id,
+                    role: role.to_string(),
+                },
+            )
+            .await?;
+    }
+    for user_id in removed {
+        let mut segments = task_path(api, project_id, task_id);
+        segments.push("assignees".into());
+        segments.push(user_id.to_string());
+        api.delete(&borrow(&segments)).await?;
+    }
+    Ok(())
+}
+
+/// 今の担当者を頼まれた顔ぶれに合わせるための「足す・外す」。
+/// 既にいる利用者は触らない（外して付け直すと通知と履歴が余計に出る）。
+fn assignee_changes(
+    current: impl IntoIterator<Item = Uuid>,
+    desired: impl IntoIterator<Item = Uuid>,
+) -> (Vec<Uuid>, Vec<Uuid>) {
+    let current: Vec<Uuid> = current.into_iter().collect();
+    let desired: Vec<Uuid> = desired.into_iter().collect();
+    let mut added: Vec<Uuid> = Vec::new();
+    for user_id in &desired {
+        if !current.contains(user_id) && !added.contains(user_id) {
+            added.push(*user_id);
+        }
+    }
+    let removed = current
+        .into_iter()
+        .filter(|user_id| !desired.contains(user_id))
+        .collect();
+    (added, removed)
+}
+
 async fn resolve_labels(api: &ApiClient, project_id: Uuid, names: &[String]) -> Result<Vec<Uuid>> {
     let mut ids = Vec::with_capacity(names.len());
     for name in names {
@@ -529,10 +602,10 @@ fn parse_deadline(flag: &str, raw: &str) -> Result<DateTime<Utc>> {
 /// API も同じ関係を弾くが、往復する前に理由を出す。
 fn check_deadline_order(soft: Option<DateTime<Utc>>, hard: Option<DateTime<Utc>>) -> Result<()> {
     if let (Some(soft), Some(hard)) = (soft, hard)
-        && soft > hard
+        && soft >= hard
     {
         return Err(CliError::validation(
-            "--soft-deadline must not be later than --hard-deadline",
+            "--soft-deadline must be earlier than --hard-deadline",
         ));
     }
     Ok(())
@@ -585,14 +658,48 @@ fn print_listing(tasks: &TaskListResponse, output: OutputOptions, page: u64, lim
 fn print_hits(project: &ProjectResponse, hits: &SearchTasksResponse, page: u64, limit: u64) {
     for hit in &hits.tasks {
         println!("{}-{}	{}", project.key, hit.seq_id, hit.title);
-        if !hit.highlight.trim().is_empty() {
-            println!("	{}", hit.highlight.trim());
+        let snippet = plain_snippet(&hit.highlight);
+        if !snippet.trim().is_empty() {
+            println!("	{}", snippet.trim());
         }
     }
     println!(
         "{}",
         page_summary(hits.tasks.len(), hits.total, page, limit)
     );
+}
+
+/// 検索の抜粋は画面用の HTML（一致箇所が `<em>`、本文は実体参照）で返る。
+/// 端末にはタグを外し、実体参照を元の文字へ戻して出す。`--json` は API の値のまま。
+fn plain_snippet(highlight: &str) -> String {
+    const ENTITIES: [(&str, char); 5] = [
+        ("&amp;", '&'),
+        ("&lt;", '<'),
+        ("&gt;", '>'),
+        ("&quot;", '"'),
+        ("&#39;", '\''),
+    ];
+    // 元テキストの `<em>` は `&lt;em&gt;` になっているので、タグを先に外して取り違えない
+    let without_tags = highlight.replace("<em>", "").replace("</em>", "");
+    let mut out = String::with_capacity(without_tags.len());
+    let mut rest = without_tags.as_str();
+    // `&amp;lt;` のような二重の escape を戻しすぎないよう、左から一度だけ読む
+    while let Some(index) = rest.find('&') {
+        out.push_str(&rest[..index]);
+        rest = &rest[index..];
+        match ENTITIES.iter().find(|(entity, _)| rest.starts_with(entity)) {
+            Some((entity, character)) => {
+                out.push(*character);
+                rest = &rest[entity.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn page_summary(shown: usize, total: u64, page: u64, limit: u64) -> String {
@@ -839,14 +946,16 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_soft_deadline_later_than_the_hard_one() {
+    fn refuses_a_soft_deadline_that_is_not_earlier_than_the_hard_one() {
         let soft = parse_deadline("--soft-deadline", "2026-10-02").unwrap();
         let hard = parse_deadline("--hard-deadline", "2026-10-01").unwrap();
 
         assert!(check_deadline_order(Some(soft), Some(hard)).is_err());
         assert!(check_deadline_order(Some(hard), Some(soft)).is_ok());
-        // 同時刻は許す（API も等号では落とさない）
-        assert!(check_deadline_order(Some(soft), Some(soft)).is_ok());
+        // API は同時刻も 400 にする。手前で同じ関係を弾く
+        let err = check_deadline_order(Some(soft), Some(soft)).unwrap_err();
+        assert!(err.message.contains("earlier than"), "{}", err.message);
+        assert_eq!(err.exit_code, 2);
         assert!(check_deadline_order(Some(soft), None).is_ok());
         assert!(check_deadline_order(None, None).is_ok());
     }
@@ -944,6 +1053,48 @@ mod tests {
         ] {
             assert_eq!(json[key], false, "{key}");
         }
+    }
+
+    /// `--assignee` は顔ぶれの置き換え。更新の本文には担当者が無いので、差分を別に当てる。
+    #[test]
+    fn turns_the_requested_assignees_into_what_to_add_and_remove() {
+        let (kept, added, removed) = (uuid(1), uuid(2), uuid(3));
+
+        let (add, remove) = assignee_changes([kept, removed], [kept, added]);
+        assert_eq!(add, vec![added]);
+        assert_eq!(remove, vec![removed]);
+
+        // 既にいる利用者は触らない（外して付け直すと通知と履歴が余計に出る）
+        let (add, remove) = assignee_changes([kept], [kept]);
+        assert!(add.is_empty(), "{add:?}");
+        assert!(remove.is_empty(), "{remove:?}");
+
+        // 同じ利用者を 2 回渡しても足すのは 1 度
+        let (add, _) = assignee_changes([], [added, added]);
+        assert_eq!(add, vec![added]);
+
+        // 誰も指定していない状態は「全員外す」
+        let (add, remove) = assignee_changes([kept, removed], []);
+        assert!(add.is_empty(), "{add:?}");
+        assert_eq!(remove, vec![kept, removed]);
+    }
+
+    /// 抜粋は画面用の HTML。端末にタグや実体参照が出ると読めない。
+    #[test]
+    fn shows_a_search_snippet_as_plain_text() {
+        assert_eq!(
+            plain_snippet("…直す<em>ページ</em>ング&amp;検索…"),
+            "…直すページング&検索…"
+        );
+        assert_eq!(
+            plain_snippet("&lt;em&gt;タグ&lt;/em&gt; と &quot;引用&quot; と &#39;単引用&#39;"),
+            "<em>タグ</em> と \"引用\" と '単引用'"
+        );
+        // 元テキストの `&lt;` は二重に escape されて届く。戻すのは 1 段だけ
+        assert_eq!(plain_snippet("&amp;lt;"), "&lt;");
+        // 実体参照でない `&` はそのまま残す
+        assert_eq!(plain_snippet("A & B &notanentity;"), "A & B &notanentity;");
+        assert_eq!(plain_snippet(""), "");
     }
 
     fn uuid(n: u128) -> Uuid {

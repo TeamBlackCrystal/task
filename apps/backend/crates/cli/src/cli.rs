@@ -293,7 +293,7 @@ pub struct TaskFieldArgs {
 #[derive(Debug, clap::Args)]
 pub struct TaskClearArgs {
     /// Remove the description
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
     pub clear_description: bool,
     /// Remove the soft deadline
     #[arg(long, conflicts_with = "soft_deadline")]
@@ -518,6 +518,33 @@ mod tests {
     fn requires_the_project_and_pr_options_the_read_commands_are_documented_with() {
         assert!(Cli::try_parse_from(["task", "review", "list", "--pr", "1"]).is_err());
         assert!(Cli::try_parse_from(["task", "review", "list", "--project", "APP"]).is_err());
+    }
+
+    /// 本文の指定と解除を同時に受けると、API が解除を優先して渡した本文が黙って消える。
+    #[test]
+    fn refuses_a_new_description_together_with_clearing_it() {
+        let base = ["task", "tasks", "update", "APP-1"];
+        for value in [
+            vec!["--description", "new"],
+            vec!["--description-file", "body.md"],
+        ] {
+            let argv: Vec<&str> = base
+                .iter()
+                .copied()
+                .chain(value)
+                .chain(["--clear-description"])
+                .collect();
+            assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?}");
+        }
+        // 解除だけ、本文だけならそれぞれ通る
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--clear-description"])
+                .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--description", "new"])
+                .is_ok()
+        );
     }
 
     #[test]

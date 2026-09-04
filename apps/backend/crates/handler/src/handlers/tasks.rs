@@ -350,6 +350,8 @@ pub async fn list_tasks(
         "deadline_asc" => query.order_by_asc(tasks::Column::SoftDeadline),
         _ => query.order_by_desc(tasks::Column::CreatedAt),
     };
+    // 優先度も期限も同値が並ぶ。並びが一意でないと offset のページ境界で行が重複・欠落する
+    query = query.order_by_asc(tasks::Column::Id);
 
     let limit = std::cmp::min(q.limit, 200);
     let total = query.clone().count(&state.db).await?;
