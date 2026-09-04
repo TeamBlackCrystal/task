@@ -54,6 +54,85 @@ fn assert_user_summary(value: &serde_json::Value, expected_id: Uuid) {
     assert!(value.get("email").is_none(), "email must not be embedded");
 }
 
+/// 同時刻のタスクがページ境界をまたいでも、重複も欠落もしない。
+///
+/// List 表示はステータスごとに `offset` を 20 件ずつ増やしてページを継ぐ。既定の
+/// 並びは `created_at DESC` だけだったので、同じ `created_at` を持つタスクが境界に
+/// 来ると、静的なデータへの連続リクエストでも同じタスクが複数ページに出たり、
+/// 別のタスクがどのページにも出なかったりする。frontend の `toTaskGroup()` は重複 ID を
+/// 落とすので重複は隠れるが、欠落は戻らない。
+#[tokio::test]
+async fn task_list_paging_is_stable_when_created_at_ties() {
+    let mut app = TestApp::new().await;
+    let (_user, tp) = setup_project(&mut app).await;
+    let status_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+
+    // ページサイズ（20）を越える件数を、すべて同じ created_at で作る。
+    // 作成 API は now() を入れるので、作ってから DB 側で揃える
+    let count = 47;
+    let mut created = Vec::new();
+    for i in 0..count {
+        let response = app
+            .post_json_with_session(
+                &base,
+                serde_json::json!({ "title": format!("同時刻 {i}"), "status_id": status_id }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: serde_json::Value = response.json().await.expect("task json");
+        created.push(body["id"].as_str().expect("id").to_string());
+    }
+    common::execute_sql(
+        &app.state.db,
+        "UPDATE tasks SET created_at = now() WHERE project_id = $1",
+        vec![tp.project_id.into()],
+    )
+    .await;
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = app
+            .get_with_session(&format!("{base}?limit=20&offset={offset}"))
+            .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let body: serde_json::Value = page.json().await.expect("list json");
+        let ids: Vec<String> = body["tasks"]
+            .as_array()
+            .expect("tasks array")
+            .iter()
+            .map(|t| t["id"].as_str().expect("id").to_string())
+            .collect();
+        if ids.is_empty() {
+            break;
+        }
+        seen.extend(ids);
+        offset += 20;
+    }
+
+    assert_eq!(
+        seen.len(),
+        count,
+        "ページを跨いで欠落・重複している: {} 件しか取れていない",
+        seen.len()
+    );
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(unique.len(), count, "同じタスクが複数ページに出ている");
+
+    // **並びが全順序になっていることを直接見る。**
+    // 「ページを継いで欠落しない」だけでは、たまたま安定した実行計画のときに
+    // タイブレーカーが無くても通ってしまう（seq scan の物理順で返るため）。
+    // created_at が全件同じなので、id の降順になっていれば
+    // `created_at DESC, id DESC` が効いている。
+    let mut expected = seen.clone();
+    expected.sort_by(|a, b| b.cmp(a));
+    assert_eq!(
+        seen, expected,
+        "created_at が同じ行が id 降順に並んでいない（タイブレーカーが効いていない）"
+    );
+}
+
 #[tokio::test]
 async fn task_responses_include_user_info() {
     let mut app = TestApp::new().await;

@@ -443,6 +443,47 @@ describe('TaskComments', () => {
     });
   });
 
+  // 入力欄は一覧とスレッドで共有なので、新規投稿の失敗をそのまま出すと
+  // スレッドを開いた瞬間「まだ送っていない返信が失敗した」ように見える
+  it('新規投稿の失敗を返信の入力欄へ持ち越さない', async () => {
+    const threads = [thread('c-1', '親1')];
+    const wrapper = mountComments({
+      threads,
+      submitError: 'コメントを投稿できませんでした（403）',
+    });
+
+    expect(wrapper.text()).toContain('コメントを投稿できませんでした（403）');
+
+    // スレッドを開くと、その失敗は出さない
+    const reply = wrapper.findAll('button').find((b) => b.text() === '返信');
+    await reply!.trigger('click');
+    expect(wrapper.text()).not.toContain('コメントを投稿できませんでした（403）');
+
+    // 一覧へ戻ると、下書きと同じでまた読める（消してはいない）
+    await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+    expect(wrapper.text()).toContain('コメントを投稿できませんでした（403）');
+  });
+
+  it('返信の失敗はそのスレッドの中だけに出す', async () => {
+    const threads = [thread('c-1', '親1'), thread('c-2', '親2')];
+    const wrapper = mountComments({
+      threads,
+      replyError: '返信を投稿できませんでした',
+      replyErrorThreadId: 'c-1',
+    });
+
+    // 一覧では出さない
+    expect(wrapper.text()).not.toContain('返信を投稿できませんでした');
+
+    const replies = wrapper.findAll('button').filter((b) => b.text() === '返信');
+    await replies[1].trigger('click');
+    expect(wrapper.text()).not.toContain('返信を投稿できませんでした');
+
+    await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+    await replies[0].trigger('click');
+    expect(wrapper.text()).toContain('返信を投稿できませんでした');
+  });
+
   it('更新・削除の失敗は対象コメントの中に出す', async () => {
     const other = { id: 'user-2', name: '佐藤花子' };
     const wrapper = mountComments({

@@ -32,7 +32,12 @@ const props = defineProps<{
   submitPending?: boolean;
   /** 新規投稿の失敗。新規投稿フォームの直下に出す */
   submitError?: string | null;
-  /** 返信の失敗。replyErrorThreadId のスレッドの返信フォーム直下に出す */
+  /**
+   * 返信の失敗。`replyErrorThreadId` のスレッドの中にだけ出す。
+   *
+   * 新規投稿の `submitError` と表示の文脈を分ける（片方の失敗がもう片方の
+   * 入力欄の下に出ると、どちらが失敗したのか分からない）。
+   */
   replyError?: string | null;
   replyErrorThreadId?: string | null;
   /** 更新リクエスト進行中のコメント ID */
@@ -355,7 +360,14 @@ async function deleteThread(threadId: string) {
           </Button>
         </div>
       </div>
-      <p v-if="submitError" class="mt-1 text-xs text-destructive">{{ submitError }}</p>
+      <!--
+        新規投稿の失敗は一覧の文脈でだけ出す。入力欄は一覧とスレッドで共有なので、
+        そのまま出すとスレッドを開いた瞬間「まだ送っていない返信が失敗した」ように見える。
+        消さずに隠すのは、下書きと同じで一覧へ戻れば理由がまた読めるようにするため。
+      -->
+      <p v-if="submitError && !openThread" class="mt-1 text-xs text-destructive">
+        {{ submitError }}
+      </p>
     </form>
   </section>
 </template>

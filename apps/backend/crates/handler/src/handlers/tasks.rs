@@ -350,6 +350,11 @@ pub async fn list_tasks(
         "deadline_asc" => query.order_by_asc(tasks::Column::SoftDeadline),
         _ => query.order_by_desc(tasks::Column::CreatedAt),
     };
+    // 同じ値を持つ行の順序は Postgres 上で未定義。タイブレーカーが無いと、
+    // offset でページを継ぐ List 表示（+Page.vue の groupPageRequests）で
+    // 同時刻のタスクが境界をまたいだ瞬間に重複・欠落が出る。frontend は重複 ID を
+    // 落とすので重複は隠れるが、欠落は戻らない（priority / deadline は同値がもっと多い）
+    query = query.order_by_desc(tasks::Column::Id);
 
     let limit = std::cmp::min(q.limit, 200);
     let total = query.clone().count(&state.db).await?;
