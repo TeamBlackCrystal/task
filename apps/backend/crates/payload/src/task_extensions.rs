@@ -57,7 +57,7 @@ fn default_search_limit() -> u64 {
     20
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct SearchTaskHit {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -67,7 +67,7 @@ pub struct SearchTaskHit {
     pub score: f32,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct SearchTasksResponse {
     pub tasks: Vec<SearchTaskHit>,
     pub total: u64,

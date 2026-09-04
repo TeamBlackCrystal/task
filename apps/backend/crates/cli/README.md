@@ -110,6 +110,33 @@ cargo build --release -p task-cli   # apps/backend/target/release/task
 
 版を差し替えたいときだけ `TASK_CLI_VERSION` を渡す（`build.rs` が読む）。
 
+## タスクを扱う
+
+一覧・検索は既定で 50 件（検索は 20 件）ずつ返る。総件数と続きの有無は出力の最後に出る。
+
+```bash
+task tasks list --project TASK --page 2 --limit 100
+task tasks list --project TASK --status Todo --label bug --sort deadline_asc
+task tasks list --project TASK --archived
+task tasks search --project TASK ページング
+```
+
+`--status` / `--label` / `--assignee` / `--milestone` / `--sprint` は名前で指せる。
+綴りを外すと、そのプロジェクトで使える名前が並ぶ。
+
+作成と更新は同じ綴りの項目を受ける。
+
+```bash
+task tasks create --project TASK --title 直す \
+  --soft-deadline 2026-09-30 --estimate 90 --label bug --assignee yupix
+task tasks update TASK-181 --progress 40 --sprint week-40 --add-label bug
+task tasks update TASK-181 --clear-sprint --archive
+```
+
+- 期限は RFC 3339（`2026-09-30T12:00:00Z`）か日付だけ（`2026-09-30` = その日の終わり、UTC）
+- `--label` は今のラベルを**置き換える**。残したまま増減するなら `--add-label` / `--remove-label`
+- 渡さなかった項目は送らないので、既存の値は消えない。消すときは `--clear-*` を使う
+
 ## 設定
 
 `~/.config/task/config.yaml`（トークンを含むので `0600` で保存する）。環境変数が優先される。

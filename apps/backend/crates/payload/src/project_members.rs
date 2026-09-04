@@ -6,7 +6,7 @@ use validator::Validate;
 use crate::users::UserSummary;
 use entity::project_members::{self, ProjectRole};
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct ProjectMemberResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
