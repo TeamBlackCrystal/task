@@ -175,7 +175,8 @@ describe('useTaskListUrlSync', () => {
     q?: string;
     labelId?: string | null;
     sorting?: SortingState;
-    total?: number;
+    /** 取得済みの総件数。省略は「未取得」（null） */
+    total?: number | null;
     searching?: boolean;
   }) {
     window.history.replaceState({}, '', initial.href ?? '/acme/projects/ENG/tasks');
@@ -185,7 +186,7 @@ describe('useTaskListUrlSync', () => {
       submittedSearchQuery: ref(initial.q ?? ''),
       selectedLabelId: ref<string | null>(initial.labelId ?? null),
       sorting: ref<SortingState>(initial.sorting ?? []),
-      taskTotal: ref(initial.total ?? 0),
+      taskTotal: ref<number | null>(initial.total ?? null),
       isSearchActive: ref(initial.searching ?? false),
     };
     // watch を動かすためにコンポーネント文脈で呼ぶ
@@ -237,7 +238,7 @@ describe('useTaskListUrlSync', () => {
   });
 
   it('件数が減って範囲外になったページは最終ページへ丸める', async () => {
-    const { refs } = setup({ pageIndex: 8, total: 0 });
+    const { refs } = setup({ pageIndex: 8 });
 
     refs.taskTotal.value = 100; // 20 件/頁 → 最終 5 頁
     await nextTick();
@@ -247,7 +248,7 @@ describe('useTaskListUrlSync', () => {
   });
 
   it('範囲内のページは丸めない', async () => {
-    const { refs } = setup({ pageIndex: 2, total: 0 });
+    const { refs } = setup({ pageIndex: 2 });
 
     refs.taskTotal.value = 100;
     await nextTick();
@@ -255,8 +256,42 @@ describe('useTaskListUrlSync', () => {
     expect(refs.pagination.value.pageIndex).toBe(2);
   });
 
+  // 未取得と「0 件だった」を同じ 0 で表すと、空の一覧では watcher が
+  // 0 → 0 で発火せず ?page=9 が残る
+  it('0 件の一覧でも範囲外のページを丸める', async () => {
+    const { refs } = setup({ pageIndex: 8 });
+
+    refs.taskTotal.value = 0;
+    await nextTick();
+
+    expect(refs.pagination.value.pageIndex).toBe(0);
+  });
+
+  it('未取得のあいだは丸めない（0 件と区別する）', async () => {
+    const { refs } = setup({ pageIndex: 8 });
+    await nextTick();
+
+    expect(refs.pagination.value.pageIndex).toBe(8);
+  });
+
+  // キャッシュから同期的に得られると、初期値のまま watcher が発火しない
+  it('件数が最初から分かっていても丸める（キャッシュ由来）', async () => {
+    const { refs } = setup({ pageIndex: 8, total: 40 });
+    await nextTick();
+
+    // 20 件/頁 → 最終 2 頁
+    expect(refs.pagination.value.pageIndex).toBe(1);
+  });
+
+  it('最初から範囲内なら丸めない', async () => {
+    const { refs } = setup({ pageIndex: 1, total: 100 });
+    await nextTick();
+
+    expect(refs.pagination.value.pageIndex).toBe(1);
+  });
+
   it('検索中は丸めない（ページャを使わないため）', async () => {
-    const { refs } = setup({ pageIndex: 8, total: 0, searching: true });
+    const { refs } = setup({ pageIndex: 8, searching: true });
 
     refs.taskTotal.value = 3;
     await nextTick();

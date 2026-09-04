@@ -127,7 +127,15 @@ export function useTaskListUrlSync(params: {
   submittedSearchQuery: Ref<string>;
   selectedLabelId: Ref<string | null>;
   sorting: Ref<SortingState>;
-  taskTotal: Readonly<Ref<number>>;
+  /**
+   * 取得済みの総件数。**未取得は `null`**。
+   *
+   * 未取得と「0 件だった」を同じ 0 で表すと、丸めが走らない経路ができる。
+   * watcher は即時実行されないので、空の一覧を取得しても 0 → 0 で発火せず、
+   * キャッシュから同期的に得られたときも初期値のまま検査されない。
+   * `?page=9` が 1 ページ目へ戻らず、空のページを出したままになる。
+   */
+  taskTotal: Readonly<Ref<number | null>>;
   isSearchActive: Readonly<Ref<boolean>>;
 }) {
   const { selectedTaskId, pagination, submittedSearchQuery, selectedLabelId, sorting } = params;
@@ -149,14 +157,21 @@ export function useTaskListUrlSync(params: {
     window.history.replaceState(window.history.state, '', url);
   });
 
-  // 検索中はページャを使わない（常に先頭から一定件数）ので丸めの対象外
-  watch([params.taskTotal, params.isSearchActive], ([total, searching]) => {
-    if (searching) return;
-    const clamped = clampPage(pagination.value.pageIndex + 1, total, pagination.value.pageSize);
-    if (clamped - 1 !== pagination.value.pageIndex) {
-      pagination.value = { ...pagination.value, pageIndex: clamped - 1 };
-    }
-  });
+  // 検索中はページャを使わない（常に先頭から一定件数）ので丸めの対象外。
+  // immediate にするのは、キャッシュ由来の件数や 0 件の一覧でも初回に検査するため
+  watch(
+    [params.taskTotal, params.isSearchActive],
+    ([total, searching]) => {
+      if (searching) return;
+      // 未取得のあいだは待つ（0 件と区別する）
+      if (total === null) return;
+      const clamped = clampPage(pagination.value.pageIndex + 1, total, pagination.value.pageSize);
+      if (clamped - 1 !== pagination.value.pageIndex) {
+        pagination.value = { ...pagination.value, pageIndex: clamped - 1 };
+      }
+    },
+    { immediate: true },
+  );
 
   return { listState };
 }

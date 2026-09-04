@@ -302,7 +302,11 @@ const tasksQuery = useQuery({
   },
 });
 
-const taskTotal = computed(() => tasksQuery.data.value?.total ?? 0);
+// 取得済みの総件数。未取得は null にして「0 件だった」と区別する
+// （同じ 0 だと範囲外ページの丸めが走らない経路ができる）
+const fetchedTaskTotal = computed(() => tasksQuery.data.value?.total ?? null);
+/** 表示用。未取得は 0 件として出す */
+const taskTotal = computed(() => fetchedTaskTotal.value ?? 0);
 const isCreateDialogOpen = ref(false);
 
 // ---- クエリ③: ステータス一覧 ----
@@ -341,8 +345,10 @@ const labelsQuery = useQuery({
   enabled: computed(() => !!tenantId.value && !!projectId.value),
 });
 
-const projectLabels = computed(() => labelsQuery.data.value ?? []);
-watchAvailableTaskLabels(selectedLabelId, projectLabels);
+// ラベルも未取得を null で区別する（同上）
+const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
+const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
+watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
 const selectedLabelName = computed(
   () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
 );
@@ -617,7 +623,7 @@ useTaskListUrlSync({
   submittedSearchQuery,
   selectedLabelId,
   sorting,
-  taskTotal,
+  taskTotal: fetchedTaskTotal,
   isSearchActive,
 });
 

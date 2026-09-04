@@ -70,13 +70,28 @@ export function useTaskLabelFilter(
   return { selectedLabelId };
 }
 
+/**
+ * 一覧に無いラベルの選択を解除する。
+ *
+ * `projectLabels` は **未取得を `null`** で受ける。未取得と「取得できて 0 件」を
+ * 同じ空配列で表すと、キャッシュから同期的に得られたときに非即時の watcher が
+ * 初期値を検査せず、URL に残った削除済み・不正な `?label=` がそのまま効いて
+ * 空の一覧を出し続ける。
+ */
 export function watchAvailableTaskLabels(
   selectedLabelId: Ref<string | null>,
-  projectLabels: Readonly<Ref<readonly LabelOption[]>>,
+  projectLabels: Readonly<Ref<readonly LabelOption[] | null>>,
 ) {
-  return watch(projectLabels, (labels) => {
-    if (selectedLabelId.value && !labels.some((label) => label.id === selectedLabelId.value)) {
-      selectedLabelId.value = null;
-    }
-  });
+  return watch(
+    projectLabels,
+    (labels) => {
+      // 未取得のあいだは待つ（0 件と区別する）
+      if (labels === null) return;
+      if (selectedLabelId.value && !labels.some((label) => label.id === selectedLabelId.value)) {
+        selectedLabelId.value = null;
+      }
+    },
+    // キャッシュ由来のラベル一覧でも初回に検査する
+    { immediate: true },
+  );
 }
