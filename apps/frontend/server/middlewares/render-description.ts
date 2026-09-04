@@ -94,8 +94,20 @@ export const renderDescriptionPlugin = new Elysia()
     // onRequest は全リクエストを通るので、URL を組む前に安く外す（ページ表示は GET）
     if (request.method !== 'POST') return;
     if (new URL(request.url).pathname !== PATH) return;
-    const contentLength = Number(request.headers.get('content-length'));
-    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+
+    // ヘッダの有無を先に見る。`Number(null)` は 0 なので、まとめて数値にすると
+    // 「宣言が無い」が「0 バイト」に化けて門を素通りする。宣言しないリクエスト
+    // （Transfer-Encoding: chunked）は本文を Bun の既定（128 MB）まで読まれてから
+    // 認証確認へ進むので、読まずに落とす前提が外れる。
+    // api-proxy にはストリーム側の上限（limitReadableStream）が二枚目にあるが、
+    // この口には無いので宣言を必須にする。呼び出し側（useRenderedDescription）は
+    // 文字列本文なので fetch が必ず Content-Length を付ける
+    const raw = request.headers.get('content-length');
+    if (raw === null) {
+      return new Response('Length Required', { status: 411 });
+    }
+    const contentLength = Number(raw);
+    if (!Number.isFinite(contentLength) || contentLength > MAX_REQUEST_BODY_BYTES) {
       return new Response('Payload Too Large', { status: 413 });
     }
   })

@@ -54,14 +54,18 @@ async function post(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const cookie = options.cookie === undefined ? freshCookie() : options.cookie;
   if (cookie) headers.cookie = cookie;
-  if (options.contentLength !== undefined) {
-    headers['content-length'] = String(options.contentLength);
-  }
+  const payload = JSON.stringify(body);
+  // `new Request` は文字列本文でも content-length を付けない（付けるのは送信時の
+  // fetch / HTTP サーバ側）。実際のリクエストに寄せるためここで宣言する
+  headers['content-length'] =
+    options.contentLength === undefined
+      ? String(new TextEncoder().encode(payload).byteLength)
+      : String(options.contentLength);
   return app.handle(
     new Request('http://localhost/internal/render-description', {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: payload,
     }),
   );
 }
@@ -206,6 +210,40 @@ describe('POST /internal/render-description の入口', () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  // content-length が無いと Number(null) = 0 で門を素通りする。Transfer-Encoding:
+  // chunked で宣言しなければ、本文は Bun の既定（128 MB）まで読まれてから
+  // 認証確認へ進むことになり、「読まずに落とす」前提が外れる
+  it('本文長を宣言しないリクエストは 411 で落とす', async () => {
+    const response = await app.handle(
+      new Request('http://localhost/internal/render-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie: freshCookie() },
+        // ReadableStream の本文は Content-Length が付かない
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"taskId":"x","description":"y"}'));
+            controller.close();
+          },
+        }),
+        duplex: 'half',
+      } as RequestInit & { duplex: 'half' }),
+    );
+
+    expect(response.status).toBe(411);
+    // 本文も認証確認も走らせない
+    expect(authCalls).toEqual([]);
+  });
+
+  it('content-length が数値でなければ 413', async () => {
+    const response = await post(
+      { taskId: TASK_UUID, description: '本文' },
+      { contentLength: Number.NaN },
+    );
+
+    expect(response.status).toBe(413);
+    expect(authCalls).toEqual([]);
   });
 
   it('上限を超える本文は描画に到達しない', async () => {
