@@ -83,7 +83,7 @@
     "@storybook/vue3-vite": "10.6.0",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/devtools-vite": "0.8.3",
-    "@tanstack/vue-devtools": "0.2.24",
+    "@tanstack/vue-devtools": "0.2.26",
     "@tanstack/vue-query-devtools": "6.1.38",
     "@types/hast": "3.0.5",
     "@types/mdast": "4.0.4",
