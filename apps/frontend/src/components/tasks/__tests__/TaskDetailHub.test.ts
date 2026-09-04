@@ -95,46 +95,60 @@ const featureLabel: components['schemas']['LabelResponse'] = {
 describe('TaskDetailHub', () => {
   /**
    * 優先度は表示だけで変更できなかった（作成時にしか決められなかった）。
-   * ステータスと同じく select にして、選び直しを emit する。
+   * 選び直しを emit する。ステータスと同じピル + メニュー（参照デザイン）なので、
+   * native select ではなくメニュー項目を押して確かめる。
    */
-  it('優先度を選び直すと change:priority を emit する', async () => {
-    const wrapper = mount(TaskDetailHub, {
-      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id },
+  function mountWithPriorityMenu(extra: Record<string, unknown> = {}) {
+    return mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id, ...extra },
+      global: {
+        stubs: {
+          DropdownMenu: { template: '<div><slot /></div>' },
+          DropdownMenuTrigger: { template: '<div><slot /></div>' },
+          DropdownMenuContent: { template: '<div><slot /></div>' },
+          DropdownMenuItem: { template: '<button type="button"><slot /></button>' },
+          DropdownMenuCheckboxItem: {
+            props: ['modelValue', 'disabled'],
+            emits: ['update:modelValue'],
+            template:
+              '<button type="button" data-menu-item :disabled="disabled" @click="$emit(\'update:modelValue\', true)"><slot /></button>',
+          },
+        },
+      },
     });
+  }
 
-    const select = wrapper.get('select[aria-label="優先度"]');
-    expect((select.element as HTMLSelectElement).value).toBe('Medium');
+  it('優先度を選び直すと change:priority を emit する', async () => {
+    const wrapper = mountWithPriorityMenu();
 
-    await select.setValue('High');
+    expect(wrapper.get('button[aria-label="優先度"]').text()).toContain(
+      PRIORITY_CONFIG.Medium.label,
+    );
+
+    const items = wrapper.findAll('[data-menu-item]');
+    const high = items.find((item) => item.text().includes(PRIORITY_CONFIG.High.label));
+    expect(high).toBeDefined();
+    await high!.trigger('click');
 
     expect(wrapper.emitted('change:priority')).toEqual([['High']]);
   });
 
   it('優先度の選択肢は表示できる優先度をすべて出す', () => {
-    const wrapper = mount(TaskDetailHub, {
-      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id },
-    });
+    const wrapper = mountWithPriorityMenu();
 
-    const values = wrapper
-      .get('select[aria-label="優先度"]')
-      .findAll('option')
-      .map((option) => option.attributes('value'));
-
-    expect(values).toEqual(Object.keys(PRIORITY_CONFIG));
+    const labels = wrapper.findAll('[data-menu-item]').map((item) => item.text());
+    expect(labels).toEqual(Object.values(PRIORITY_CONFIG).map((config) => config.label));
   });
 
   it('更新中は優先度を触れない', () => {
-    const wrapper = mount(TaskDetailHub, {
-      props: {
-        task,
-        projectKey: 'TEST',
-        statuses: [],
-        statusId: task.status_id,
-        priorityUpdating: true,
-      },
-    });
+    const wrapper = mountWithPriorityMenu({ priorityUpdating: true });
 
-    expect(wrapper.get('select[aria-label="優先度"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('button[aria-label="優先度"]').attributes('disabled')).toBeDefined();
+    expect(
+      wrapper
+        .findAll('[data-menu-item]')
+        .every((item) => item.attributes('disabled') !== undefined),
+    ).toBe(true);
   });
 
   it('優先度の更新に失敗したら理由を出す', () => {
