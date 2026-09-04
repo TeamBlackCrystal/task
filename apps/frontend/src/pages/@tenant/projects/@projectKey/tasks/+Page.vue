@@ -60,6 +60,7 @@ import {
   watchAvailableTaskLabels,
 } from './task-list-label-filter';
 import { shouldActivateRow, shouldOpenRowInNewTab } from './task-list-row-activate';
+import { parseTaskListUrlState, useTaskListUrlSync } from './task-list-url-state';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -118,23 +119,17 @@ const selectedTaskId = ref<string | null>(null);
 const canInline = useMediaQuery('(min-width: 1024px)');
 const showDetail = computed(() => canInline.value && !!selectedTaskId.value);
 
-// 初期選択を URL クエリ（?selected=KEY）から読む（クライアントのみ）。
+// 一覧の状態（選択・ページ・検索語・ラベル・並び替え）を URL クエリから読む
+// （クライアントのみ）。復元先の ref はこの後で定義するので、値だけ先に取る。
+const initialUrlSearch = import.meta.env.SSR
+  ? undefined
+  : (pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined)?.urlParsed
+      ?.search;
+const initialListState = parseTaskListUrlState(initialUrlSearch);
 if (!import.meta.env.SSR) {
-  const initialSelected = (
-    pageContext as { urlParsed?: { search?: Record<string, string> } } | undefined
-  )?.urlParsed?.search?.selected;
+  const initialSelected = initialUrlSearch?.selected;
   if (initialSelected) selectedTaskId.value = initialSelected;
 }
-
-// 選択の変更を URL に浅く同期する（history を汚さないよう replaceState）。
-function syncSelectionToUrl(seqKey: string | null) {
-  if (import.meta.env.SSR || typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (seqKey) url.searchParams.set('selected', seqKey);
-  else url.searchParams.delete('selected');
-  window.history.replaceState(window.history.state, '', url);
-}
-watch(selectedTaskId, (seqKey) => syncSelectionToUrl(seqKey));
 
 // プロジェクト切替時は選択を解除する（別プロジェクトのタスクを指したままにしない）。
 watch(projectKey, () => {
@@ -195,8 +190,8 @@ function isRowActive(seqId: number) {
 }
 
 // ---- サーバー側検索 ----
-const searchInput = ref('');
-const submittedSearchQuery = ref('');
+const searchInput = ref(initialListState.q);
+const submittedSearchQuery = ref(initialListState.q);
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 function updateSubmittedSearchQuery() {
@@ -255,7 +250,8 @@ const isSearchActive = computed(() => !!submittedSearchQuery.value);
 
 // ---- サーバーサイドページネーション ----
 const pagination = ref<PaginationState>({
-  pageIndex: 0,
+  // URL は 1 始まり（人が読む値）、TanStack は 0 始まり
+  pageIndex: initialListState.page - 1,
   pageSize: TASKS_PAGE_SIZE,
 });
 
@@ -266,7 +262,7 @@ watch(projectKey, () => {
 
 // ---- ラベルフィルタ ----
 // null は「すべて」。切り替え時は先頭ページへ戻す
-const { selectedLabelId } = useTaskLabelFilter(pagination, projectKey);
+const { selectedLabelId } = useTaskLabelFilter(pagination, projectKey, initialListState.labelId);
 
 // ---- クエリ②: タスク一覧 ----
 const tasksQuery = useQuery({
@@ -306,7 +302,11 @@ const tasksQuery = useQuery({
   },
 });
 
-const taskTotal = computed(() => tasksQuery.data.value?.total ?? 0);
+// 取得済みの総件数。未取得は null にして「0 件だった」と区別する
+// （同じ 0 だと範囲外ページの丸めが走らない経路ができる）
+const fetchedTaskTotal = computed(() => tasksQuery.data.value?.total ?? null);
+/** 表示用。未取得は 0 件として出す */
+const taskTotal = computed(() => fetchedTaskTotal.value ?? 0);
 const isCreateDialogOpen = ref(false);
 
 // ---- クエリ③: ステータス一覧 ----
@@ -345,8 +345,10 @@ const labelsQuery = useQuery({
   enabled: computed(() => !!tenantId.value && !!projectId.value),
 });
 
-const projectLabels = computed(() => labelsQuery.data.value ?? []);
-watchAvailableTaskLabels(selectedLabelId, projectLabels);
+// ラベルも未取得を null で区別する（同上）
+const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
+const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
+watchAvailableTaskLabels(selectedLabelId, fetchedProjectLabels);
 const selectedLabelName = computed(
   () => projectLabels.value.find((label) => label.id === selectedLabelId.value)?.name ?? null,
 );
@@ -607,10 +609,23 @@ const columns: ColumnDef<TaskRow>[] = [
 ];
 
 // ---- テーブル状態 ----
-const sorting = ref<SortingState>([]);
+const sorting = ref<SortingState>(initialListState.sorting);
 const columnFilters = ref<ColumnFiltersState>([]);
 const columnVisibility = ref<VisibilityState>({});
 const rowSelection = ref({});
+
+// ---- URL 同期 ----
+// 選択・ページ・検索語・ラベル・並び替えを URL へ書き戻し、件数が分かったら
+// 範囲外のページを丸める（配線ごと task-list-url-state に寄せてテストしている）。
+useTaskListUrlSync({
+  selectedTaskId,
+  pagination,
+  submittedSearchQuery,
+  selectedLabelId,
+  sorting,
+  taskTotal: fetchedTaskTotal,
+  isSearchActive,
+});
 
 const table = useVueTable({
   get data() {

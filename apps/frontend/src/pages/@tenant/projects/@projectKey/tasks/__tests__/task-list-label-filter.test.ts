@@ -133,4 +133,88 @@ describe('タスク一覧のラベルフィルタ', () => {
     expect(pagination.value.pageIndex).toBe(0);
     scope.stop();
   });
+
+  // URL から復元した絞り込みを初期値として受ける（リロード・戻りでの保持）
+  it('初期値を渡すとその絞り込みから始まる', () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 2, pageSize: 20 });
+    const projectKey = ref('ENG');
+    let selectedLabelId: ReturnType<typeof useTaskLabelFilter>['selectedLabelId'] | undefined;
+    scope.run(() => {
+      selectedLabelId = useTaskLabelFilter(pagination, projectKey, 'label-bug').selectedLabelId;
+    });
+
+    expect(selectedLabelId!.value).toBe('label-bug');
+    // 初期値を据えただけでページを先頭へ戻さない（復元したページが消える）
+    expect(pagination.value.pageIndex).toBe(2);
+    scope.stop();
+  });
+
+  // ラベル一覧がキャッシュから同期的に得られると、非即時の watcher は初期値を検査しない。
+  // 削除済み・不正な ?label= が残り、存在しないラベルで空の一覧を出し続ける
+  it('最初から分かっているラベル一覧に無い初期値は解除する（キャッシュ由来）', async () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    const projectLabels = ref<readonly { id: string }[] | null>([{ id: 'label-bug' }]);
+    const selectedLabelId = scope.run(() => {
+      const state = useTaskLabelFilter(pagination, projectKey, 'label-deleted');
+      watchAvailableTaskLabels(state.selectedLabelId, projectLabels);
+      return state.selectedLabelId;
+    })!;
+    await nextTick();
+
+    expect(selectedLabelId.value).toBeNull();
+    scope.stop();
+  });
+
+  it('取得できて 0 件でも初期値を解除する', async () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    const projectLabels = ref<readonly { id: string }[] | null>([]);
+    const selectedLabelId = scope.run(() => {
+      const state = useTaskLabelFilter(pagination, projectKey, 'label-deleted');
+      watchAvailableTaskLabels(state.selectedLabelId, projectLabels);
+      return state.selectedLabelId;
+    })!;
+    await nextTick();
+
+    expect(selectedLabelId.value).toBeNull();
+    scope.stop();
+  });
+
+  it('未取得のあいだは初期値を解除しない（0 件と区別する）', async () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    const projectLabels = ref<readonly { id: string }[] | null>(null);
+    const selectedLabelId = scope.run(() => {
+      const state = useTaskLabelFilter(pagination, projectKey, 'label-bug');
+      watchAvailableTaskLabels(state.selectedLabelId, projectLabels);
+      return state.selectedLabelId;
+    })!;
+    await nextTick();
+
+    expect(selectedLabelId.value).toBe('label-bug');
+
+    // 取得できたら、一覧にあるので残る
+    projectLabels.value = [{ id: 'label-bug' }];
+    await nextTick();
+    expect(selectedLabelId.value).toBe('label-bug');
+    scope.stop();
+  });
+
+  it('初期値を渡さなければ「すべて」から始まる', () => {
+    const scope = effectScope();
+    const pagination = ref({ pageIndex: 0, pageSize: 20 });
+    const projectKey = ref('ENG');
+    let selectedLabelId: ReturnType<typeof useTaskLabelFilter>['selectedLabelId'] | undefined;
+    scope.run(() => {
+      selectedLabelId = useTaskLabelFilter(pagination, projectKey).selectedLabelId;
+    });
+
+    expect(selectedLabelId!.value).toBeNull();
+    scope.stop();
+  });
 });
