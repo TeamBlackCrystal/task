@@ -97,7 +97,7 @@
     "http-server": "14.1.1",
     "openapi-typescript": "7.13.0",
     "playwright": "1.61.1",
-    "rolldown": "1.2.4",
+    "rolldown": "1.2.7",
     "rollup-plugin-visualizer": "7.0.1",
     "storybook": "10.6.0",
     "tailwindcss": "4.3.3",
