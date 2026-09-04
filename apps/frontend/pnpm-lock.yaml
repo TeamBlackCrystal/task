@@ -184,8 +184,8 @@ importers:
         specifier: 6.6.1
         version: 6.6.1(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/playwright':
-        specifier: 7.4.6
-        version: 7.4.6(@types/node@24.13.3)(supports-color@10.2.2)
+        specifier: 7.4.7
+        version: 7.4.7(@types/node@24.13.3)(supports-color@10.2.2)
       '@chromatic-com/storybook':
         specifier: 5.3.0
         version: 5.3.0(storybook@10.6.0(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite-plus@0.2.5(@types/node@24.13.3)(@vitejs/devtools@0.4.12)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.5)(esbuild@0.28.1)(happy-dom@20.11.2)(jiti@2.7.0)(jsdom@30.0.1)(publint@0.3.21)(typescript@6.0.3)))
@@ -327,12 +327,12 @@ packages:
     resolution: {integrity: sha512-/hKfytEru+xebSt4OctjuIHwOPWFwchsDGR/Odcaszbf6sUcxMzu3IrSj/PDC0FD/hYiUCDTPDsYPfxf564sMg==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/core@6.8.1':
-    resolution: {integrity: sha512-SY5dU/Rtxux0Biy0gd4zY36fClz3xekrgdaBCZv0+Pnvbuy9STNPaV8JjWfA5fu+vEORCOghcYvQwqwhRWbOSQ==}
+  '@argos-ci/core@6.8.2':
+    resolution: {integrity: sha512-EX0m1QsXqRk0+FyJlw0YBfjIbbSCaxAqvGxYrHH0NoBjUouLsMODnjO8jAbkCPZRPIqVu390vOLyK/W+USkNWA==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/playwright@7.4.6':
-    resolution: {integrity: sha512-ocFVdFl/o+M3c/3SuZJ1ChlmVfIKoK0EX6iJbYLqM3wxrHiltB/c9aFRuepjawwvjnMGgwXMaMONhMF2Op+/Sw==}
+  '@argos-ci/playwright@7.4.7':
+    resolution: {integrity: sha512-wmWv2D8Tb9sEdn3i29/67TwBCdo7M5am71HriX+cXx8ZByLxyMqKJKGp34ZTAXv+uzNHpUanyGm9P3UKkturYQ==}
     engines: {node: '>=22.0.0'}
 
   '@argos-ci/util@4.1.0':
@@ -2766,12 +2766,6 @@ packages:
   '@testing-library/jest-dom@6.9.1':
     resolution: {integrity: sha512-zIcONa+hVtVSSep9UT3jZ5rizo2BsxgyDYU7WFD5eICBE7no3881HGeb/QkGfsJs6JTkY1aQhT7rIPC7e+0nnA==}
     engines: {node: '>=14', npm: '>=6', yarn: '>=1'}
-
-  '@testing-library/user-event@14.6.1':
-    resolution: {integrity: sha512-vq7fv0rnt+QTXgPxr5Hjc210p6YKq2kmdziLgnsZGgLJ9e6VAShx1pACLuRjd/AS/sr7phAR58OIIpf0LlmQNw==}
-    engines: {node: '>=12', npm: '>=6'}
-    peerDependencies:
-      '@testing-library/dom': '>=7.21.4'
 
   '@testing-library/user-event@14.6.7':
     resolution: {integrity: sha512-MPCpX8bxe8zS+JmmTwLp8jd0dy1rAm60Te/SL8JrQM3qvQJcBOs1d7IefJMyZzqM3EWBrDn/LWDt1BCGu4ASfg==}
@@ -7454,7 +7448,7 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/core@6.8.1(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/core@6.8.2(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
       '@argos-ci/api-client': 0.31.0(supports-color@10.2.2)
       '@argos-ci/util': 4.1.0
@@ -7469,10 +7463,10 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/playwright@7.4.6(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/playwright@7.4.7(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
       '@argos-ci/browser': 6.4.5
-      '@argos-ci/core': 6.8.1(@types/node@24.13.3)(supports-color@10.2.2)
+      '@argos-ci/core': 6.8.2(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/util': 4.1.0
       chalk: 6.0.0
       debug: 4.4.3(supports-color@10.2.2)
@@ -9644,10 +9638,6 @@ snapshots:
       picocolors: 1.1.1
       redent: 3.0.0
 
-  '@testing-library/user-event@14.6.1(@testing-library/dom@10.4.1)':
-    dependencies:
-      '@testing-library/dom': 10.4.1
-
   '@testing-library/user-event@14.6.7(@testing-library/dom@10.4.1)':
     dependencies:
       '@testing-library/dom': 10.4.1
@@ -10186,7 +10176,7 @@ snapshots:
   '@vitest/browser-preview@4.1.10(@voidzero-dev/vite-plus-core@0.2.5)(vitest@4.1.10)':
     dependencies:
       '@testing-library/dom': 10.4.1
-      '@testing-library/user-event': 14.6.1(@testing-library/dom@10.4.1)
+      '@testing-library/user-event': 14.6.7(@testing-library/dom@10.4.1)
       '@vitest/browser': 4.1.10(@voidzero-dev/vite-plus-core@0.2.5)(vitest@4.1.10)
       vitest: 4.1.10(@types/node@24.13.3)(@vitest/browser-playwright@4.1.10)(@vitest/browser-preview@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.5)(happy-dom@20.11.2)(jsdom@30.0.1)
     transitivePeerDependencies:
