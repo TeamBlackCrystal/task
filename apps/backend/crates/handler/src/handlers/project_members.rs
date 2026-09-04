@@ -49,12 +49,19 @@ use service::access::assignable_user_ids;
 /// できるため、候補だけ取れずに 403 になる。返す集合も違う:
 /// メンバーを 1 人も指定していない共有プロジェクトはテナント全体へ開放されるので、
 /// `project_members` の行ではなく `assignable_user_ids` の判定で返す。
+///
+/// **スコープは割り当て API（`add_assignee` / `remove_assignee`）と同じ `WriteTask`。**
+/// これは担当者を編集するための候補一覧で、読むだけの主体に見せる情報ではない。
+/// `ReadTask` で通すと、read-only の PAT でも「そのプロジェクトで担当者にできる
+/// 利用者全員」の名前とアイコン URL を列挙できてしまう。メンバー未指定の共有
+/// プロジェクトではテナント全体が返るので、既存タスクを読むだけでは分からない
+/// 利用者まで公開範囲が広がる。
 pub async fn list_assignable_users(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Vec<UserSummary>>, AppError> {
-    auth.require_scope(Scope::ReadTask)?;
+    auth.require_scope(Scope::WriteTask)?;
     // プロジェクト単位のアクセス可否はここで見る（担当者を触れる人が読める）
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;

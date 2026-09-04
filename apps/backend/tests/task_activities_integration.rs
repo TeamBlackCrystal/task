@@ -67,6 +67,96 @@ async fn seed_activities(app: &TestApp, task_id: Uuid, user_id: Uuid, count: usi
         .expect("seed activities");
 }
 
+/// 履歴を `count` 件、**すべて同じ `created_at`** で積む。
+///
+/// 実際の履歴は同一トランザクションの連続操作で同時刻になりうる。並び順に
+/// タイブレーカーが無いと、同時刻の行がページ境界に来た時点で重複・欠落が出る。
+async fn seed_activities_at_same_instant(
+    app: &TestApp,
+    task_id: Uuid,
+    user_id: Uuid,
+    count: usize,
+) {
+    let at = Utc::now();
+    let rows: Vec<task_activities::ActiveModel> = (0..count)
+        .map(|i| task_activities::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            task_id: Set(task_id),
+            user_id: Set(Some(user_id)),
+            event_type: Set("status_changed".into()),
+            payload: Set(serde_json::json!({ "to": format!("同時刻 {i}") })),
+            created_at: Set(at.into()),
+        })
+        .collect();
+    task_activities::Entity::insert_many(rows)
+        .exec(&app.state.db)
+        .await
+        .expect("seed activities");
+}
+
+/// 同時刻の履歴がページ境界をまたいでも、重複も欠落もしない。
+#[tokio::test]
+async fn activities_paging_is_stable_when_timestamps_tie() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tasks_path = format!(
+        "/v1/tenants/{}/projects/{}/tasks",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+
+    let status_id = create_default_status(&app, tp.tenant_id, tp.project_id).await;
+    let created = app
+        .post_json_with_session(
+            &tasks_path,
+            serde_json::json!({ "title": "同時刻の履歴", "status_id": status_id }),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let task_id = json_body(created).await["id"]
+        .as_str()
+        .expect("task id")
+        .to_string();
+    let task_uuid = Uuid::parse_str(&task_id).expect("uuid");
+
+    // 既定の 1 ページ（20 件）を越える件数を同一時刻で積み、境界に同時刻を必ず置く
+    let seeded = 47;
+    seed_activities_at_same_instant(&app, task_uuid, owner.id, seeded).await;
+
+    let activities_path = format!("{tasks_path}/{task_id}/activities");
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = app
+            .get_with_session(&format!("{activities_path}?limit=20&offset={offset}"))
+            .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let body = json_body(page).await;
+        let ids = ids(&body);
+        if ids.is_empty() {
+            break;
+        }
+        seen.extend(ids);
+        offset += 20;
+    }
+
+    // タスク作成の 1 件を含む総数と一致し、同じ行を 2 回返していない
+    let expected_total = seeded + 1;
+    assert_eq!(
+        seen.len(),
+        expected_total,
+        "ページを跨いで欠落・重複している: {} 件しか取れていない",
+        seen.len()
+    );
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(unique.len(), expected_total, "同じ行が複数ページに出ている");
+}
+
 #[tokio::test]
 async fn activities_are_paged_and_capped() {
     let mut app = TestApp::new().await;

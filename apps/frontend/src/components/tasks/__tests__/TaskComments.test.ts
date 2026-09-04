@@ -340,6 +340,109 @@ describe('TaskComments', () => {
     expect(onClearReplyError).toHaveBeenCalledTimes(2);
   });
 
+  // 消費側はコメントと履歴を別の query で取っていて「片方が落ちてももう片方は読める」形。
+  // 表示側で入れ子にすると、コメントの GET が失敗しただけで取れている履歴まで消える
+  it('コメント一覧が失敗しても履歴は出し続ける', async () => {
+    const wrapper = mountComments({
+      listError: true,
+      onRetry: vi.fn(),
+    });
+
+    expect(wrapper.text()).toContain('コメントを読み込めませんでした');
+    expect(wrapper.find('[data-activity]').exists()).toBe(false);
+
+    const withSlot = mount(TaskComments, {
+      props: {
+        threads: [],
+        listError: true,
+        onRetry: vi.fn(),
+        onSubmit: vi.fn(async () => true),
+        onUpdate: vi.fn(async () => true),
+        onDelete: vi.fn(async () => true),
+      },
+      slots: { 'before-list': '<p data-activity>ステータスを変更しました</p>' },
+    });
+
+    expect(withSlot.text()).toContain('ステータスを変更しました');
+    expect(withSlot.text()).toContain('コメントを読み込めませんでした');
+  });
+
+  it('コメント一覧の読み込み中でも履歴は出す', () => {
+    const wrapper = mount(TaskComments, {
+      props: {
+        threads: [],
+        loading: true,
+        onSubmit: vi.fn(async () => true),
+        onUpdate: vi.fn(async () => true),
+        onDelete: vi.fn(async () => true),
+      },
+      slots: { 'before-list': '<p data-activity>タスクを作成しました</p>' },
+    });
+
+    expect(wrapper.text()).toContain('タスクを作成しました');
+  });
+
+  // 入力欄は一覧とスレッドで 1 つを共有するので、単一の下書きだと
+  // 覗くだけ・戻るだけで書きかけが消える
+  describe('下書きは文脈ごとに持つ', () => {
+    const threads = [thread('c-1', '親1', { replies: [] }), thread('c-2', '親2', { replies: [] })];
+
+    async function openThread(wrapper: ReturnType<typeof mountComments>, index: number) {
+      const buttons = wrapper.findAll('button').filter((b) => b.text() === '返信');
+      await buttons[index].trigger('click');
+    }
+
+    it('スレッドを覗いて戻っても一覧の下書きが残る', async () => {
+      const wrapper = mountComments({ threads });
+      const input = () => wrapper.get<HTMLTextAreaElement>('textarea[aria-label="コメントを入力"]');
+
+      await input().setValue('書きかけの新規コメント');
+      await openThread(wrapper, 0);
+      expect(
+        wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]').element.value,
+      ).toBe('');
+
+      await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+      expect(input().element.value).toBe('書きかけの新規コメント');
+    });
+
+    it('返信の下書きはスレッドごとに分かれる', async () => {
+      const wrapper = mountComments({ threads });
+      const reply = () => wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]');
+
+      await openThread(wrapper, 0);
+      await reply().setValue('c-1 への返信');
+      await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+
+      await openThread(wrapper, 1);
+      // 別スレッドの下書きを引き継がない
+      expect(reply().element.value).toBe('');
+      await reply().setValue('c-2 への返信');
+      await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+
+      await openThread(wrapper, 0);
+      expect(reply().element.value).toBe('c-1 への返信');
+    });
+
+    it('投稿に成功したら、その文脈の下書きだけ消える', async () => {
+      const wrapper = mountComments({ threads, onSubmit: vi.fn(async () => true) });
+
+      await wrapper.get('textarea[aria-label="コメントを入力"]').setValue('一覧の下書き');
+      await openThread(wrapper, 0);
+      await wrapper.get('textarea[aria-label="返信を入力"]').setValue('返信の下書き');
+      await wrapper.get('form').trigger('submit');
+      await flushPromises();
+
+      expect(
+        wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]').element.value,
+      ).toBe('');
+      await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+      expect(
+        wrapper.get<HTMLTextAreaElement>('textarea[aria-label="コメントを入力"]').element.value,
+      ).toBe('一覧の下書き');
+    });
+  });
+
   it('更新・削除の失敗は対象コメントの中に出す', async () => {
     const other = { id: 'user-2', name: '佐藤花子' };
     const wrapper = mountComments({

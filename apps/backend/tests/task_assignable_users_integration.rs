@@ -2,6 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
+use uuid::Uuid;
 
 // 担当者候補（`GET /projects/{id}/assignable-users`）の統合テスト。
 //
@@ -13,6 +14,21 @@ use common::TestApp;
 
 async fn json_body(res: reqwest::Response) -> serde_json::Value {
     res.json::<serde_json::Value>().await.expect("json body")
+}
+
+/// 発行 API で PAT を作り、平文トークンを返す（スコープの検査を実経路で通す）。
+async fn issue_token(app: &TestApp, tenant_id: Uuid, name: &str, scopes: &[&str]) -> String {
+    let res = app
+        .post_json_with_session(
+            "/v1/personal_tokens",
+            serde_json::json!({ "name": name, "tenant_id": tenant_id, "scopes": scopes }),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED, "トークン発行は成功する");
+    json_body(res).await["token"]
+        .as_str()
+        .expect("token")
+        .to_string()
 }
 
 fn user_ids(body: &serde_json::Value) -> Vec<String> {
@@ -148,6 +164,48 @@ async fn assignable_users_is_limited_to_named_members() {
         !ids.contains(&other.id.to_string()),
         "メンバー指定があるプロジェクトでは指定外を候補にしない"
     );
+}
+
+/// スコープは割り当て API と揃える。
+///
+/// 候補一覧は担当者を編集するためのもので、読むだけの主体に見せる情報ではない。
+/// `read:task` だけの PAT で通ると、そのプロジェクトで担当者にできる利用者全員の
+/// 名前とアイコン URL を列挙できてしまう（メンバー未指定の共有プロジェクトでは
+/// テナント全体が返る）。
+#[tokio::test]
+async fn assignable_users_requires_the_same_scope_as_assigning() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let assignable_path = format!(
+        "/v1/tenants/{}/projects/{}/assignable-users",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+
+    // 読み取り専用の PAT
+    let read_only = issue_token(&app, tp.tenant_id, "read-only", &["read:task"]).await;
+    let denied = app.get_with_bearer(&assignable_path, &read_only).await;
+    assert_eq!(
+        denied.status(),
+        StatusCode::FORBIDDEN,
+        "read:task だけの PAT には候補を見せない"
+    );
+
+    // 対照: 書き込みできる PAT なら読める（過剰拒否になっていないこと）
+    let writable = issue_token(&app, tp.tenant_id, "writable", &["write:task"]).await;
+    let allowed = app.get_with_bearer(&assignable_path, &writable).await;
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let ids = user_ids(&json_body(allowed).await);
+    assert!(ids.contains(&owner.id.to_string()));
+
+    // 対照: セッションはスコープ検査を通る（UI は影響を受けない）
+    let session = app.get_with_session(&assignable_path).await;
+    assert_eq!(session.status(), StatusCode::OK);
 }
 
 /// テナントに入れない利用者は候補を読めない。

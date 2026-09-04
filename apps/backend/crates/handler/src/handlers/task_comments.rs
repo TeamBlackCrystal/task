@@ -401,6 +401,9 @@ pub async fn list_activities(
     let total = base.clone().count(&state.db).await?;
     let rows = base
         .order_by_desc(task_activities::Column::CreatedAt)
+        // 同時刻の行の順序は Postgres 上で未定義。タイブレーカーが無いと、同じデータでも
+        // ページ境界に同時刻の履歴があるだけで 1 ページ目と 2 ページ目に重複・欠落が出る
+        .order_by_desc(task_activities::Column::Id)
         .limit(limit)
         .offset(q.offset)
         .all(&state.db)

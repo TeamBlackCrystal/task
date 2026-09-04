@@ -62,8 +62,6 @@ const props = defineProps<{
   onClearDeleteError?: () => void;
 }>();
 
-const newDraft = ref('');
-
 /**
  * 開いているスレッドの ID。
  *
@@ -72,6 +70,23 @@ const newDraft = ref('');
  */
 const openThreadId = ref<string | null>(null);
 const openThread = computed(() => props.threads.find((thread) => thread.id === openThreadId.value));
+
+/**
+ * 下書きは「一覧」と「スレッドごと」に分けて持つ。
+ *
+ * 入力欄は一覧とスレッドで 1 つを共有するので、単一の ref だと行き来した時点で
+ * 書きかけが警告なしに消える。既存スレッドを覗くだけ・返信をやめて一覧へ戻るだけの
+ * 操作で起きるので、破棄の確認を出すより持ち分けるほうが素直。
+ */
+const DRAFT_LIST_KEY = '';
+const drafts = ref<Record<string, string>>({});
+const draftKey = computed(() => openThreadId.value ?? DRAFT_LIST_KEY);
+const newDraft = computed({
+  get: () => drafts.value[draftKey.value] ?? '',
+  set: (value: string) => {
+    drafts.value = { ...drafts.value, [draftKey.value]: value };
+  },
+});
 
 // 開いていたスレッドが消えた（削除・再取得で不在）ら一覧へ戻す
 watch(
@@ -99,13 +114,11 @@ async function submitDraft() {
 function showThread(threadId: string) {
   props.onClearReplyError?.();
   openThreadId.value = threadId;
-  newDraft.value = '';
 }
 
 function backToList() {
   props.onClearReplyError?.();
   openThreadId.value = null;
-  newDraft.value = '';
 }
 
 async function deleteThread(threadId: string) {
@@ -122,14 +135,43 @@ async function deleteThread(threadId: string) {
     一覧は伸びる領域として上に、入力欄は列の下端に貼り付ける。
   -->
   <section class="flex min-h-0 flex-1 flex-col" data-task-comments>
-    <div v-if="loading" class="flex justify-center py-6">
-      <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+    <!-- スレッドを開いているときは、列の頭に戻る導線を出す（参照） -->
+    <div v-if="openThread" class="-mx-4 flex items-center gap-2 border-b px-4 pb-2">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        class="size-7"
+        aria-label="コメント一覧へ戻る"
+        @click="backToList"
+      >
+        <ArrowLeft class="size-4" aria-hidden="true" />
+      </Button>
+      <p class="min-w-0 truncate text-sm font-medium">{{ openThread.user.name }} のスレッド</p>
     </div>
 
-    <template v-else>
-      <!-- 一覧の失敗はリストの位置で倒し、投稿フォームは残す — 読めないことと
-           書けないことを連動させない（GET と POST は backend でも独立） -->
-      <div v-if="listError" class="flex items-center gap-2">
+    <!--
+      履歴とコメントを同じスクロール領域に入れ、少ないときは下端へ寄せる（参照）。
+      帯は薄いグレーにして、コメントだけ白いカードで浮かせる。
+    -->
+    <div
+      class="-mx-4 flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto bg-muted/30 px-4 py-3"
+    >
+      <!--
+        履歴（before-list）はコメントの取得状態の外に置く。消費側はコメントと履歴を
+        別の query で取っていて「片方が落ちてももう片方は読める」形なのに、ここで
+        入れ子にすると表示側で連動し、コメントの GET が失敗しただけで取れている履歴と
+        その再試行導線まで消える。
+      -->
+      <slot v-if="!openThread" name="before-list" />
+
+      <!-- 以下はコメント側の状態。読めないことと書けないことは連動させない
+           （GET と POST は backend でも独立で、投稿フォームは下に残す） -->
+      <div v-if="loading" class="flex justify-center py-6">
+        <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+      </div>
+
+      <div v-else-if="listError" class="flex items-center gap-2">
         <p class="text-sm text-destructive">コメントを読み込めませんでした</p>
         <Button
           v-if="onRetry"
@@ -143,204 +185,177 @@ async function deleteThread(threadId: string) {
         </Button>
       </div>
 
-      <template v-else>
-        <!-- スレッドを開いているときは、列の頭に戻る導線を出す（参照） -->
-        <div v-if="openThread" class="-mx-4 flex items-center gap-2 border-b px-4 pb-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            class="size-7"
-            aria-label="コメント一覧へ戻る"
-            @click="backToList"
+      <p v-else-if="!threads.length" class="text-sm text-muted-foreground">
+        コメントはまだありません
+      </p>
+
+      <!-- スレッド表示。参照どおり列ごと切り替える -->
+      <template v-else-if="openThread">
+        <div class="flex flex-col gap-3">
+          <div class="rounded-lg border bg-background p-3">
+            <TaskCommentItem
+              :comment="openThread"
+              :current-user-id="currentUserId"
+              :updating="updatingCommentId === openThread.id"
+              :deleting="deletingCommentId === openThread.id"
+              :update-error="updateErrorCommentId === openThread.id ? updateError : null"
+              :delete-error="deleteErrorCommentId === openThread.id ? deleteError : null"
+              :on-update="(body) => onUpdate(openThread!.id, body)"
+              :on-delete="() => deleteThread(openThread!.id)"
+              :on-clear-update-error="onClearUpdateError"
+              :on-clear-delete-error="onClearDeleteError"
+            />
+          </div>
+
+          <div v-if="openThread.replies.length" class="flex items-center gap-3">
+            <span class="shrink-0 text-xs text-muted-foreground">
+              {{ openThread.replies.length }}件の返信
+            </span>
+            <span class="h-px flex-1 bg-border" aria-hidden="true" />
+          </div>
+
+          <div
+            v-for="reply in openThread.replies"
+            :key="reply.id"
+            class="rounded-lg border bg-background p-3"
           >
-            <ArrowLeft class="size-4" aria-hidden="true" />
-          </Button>
-          <p class="min-w-0 truncate text-sm font-medium">{{ openThread.user.name }} のスレッド</p>
-        </div>
+            <TaskCommentItem
+              :comment="reply"
+              :current-user-id="currentUserId"
+              :updating="updatingCommentId === reply.id"
+              :deleting="deletingCommentId === reply.id"
+              :update-error="updateErrorCommentId === reply.id ? updateError : null"
+              :delete-error="deleteErrorCommentId === reply.id ? deleteError : null"
+              :on-update="(body) => onUpdate(reply.id, body)"
+              :on-delete="() => onDelete(reply.id)"
+              :on-clear-update-error="onClearUpdateError"
+              :on-clear-delete-error="onClearDeleteError"
+            />
+          </div>
 
-        <!--
-          履歴とコメントを同じスクロール領域に入れ、少ないときは下端へ寄せる（参照）。
-          帯は薄いグレーにして、コメントだけ白いカードで浮かせる。
-        -->
-        <div
-          class="-mx-4 flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto bg-muted/30 px-4 py-3"
-        >
-          <slot v-if="!openThread" name="before-list" />
-
-          <p v-if="!threads.length" class="text-sm text-muted-foreground">
-            コメントはまだありません
+          <p
+            v-if="replyError && replyErrorThreadId === openThread.id"
+            class="text-xs text-destructive"
+          >
+            {{ replyError }}
           </p>
+        </div>
+      </template>
 
-          <!-- スレッド表示。参照どおり列ごと切り替える -->
-          <template v-else-if="openThread">
-            <div class="flex flex-col gap-3">
-              <div class="rounded-lg border bg-background p-3">
-                <TaskCommentItem
-                  :comment="openThread"
-                  :current-user-id="currentUserId"
-                  :updating="updatingCommentId === openThread.id"
-                  :deleting="deletingCommentId === openThread.id"
-                  :update-error="updateErrorCommentId === openThread.id ? updateError : null"
-                  :delete-error="deleteErrorCommentId === openThread.id ? deleteError : null"
-                  :on-update="(body) => onUpdate(openThread!.id, body)"
-                  :on-delete="() => deleteThread(openThread!.id)"
-                  :on-clear-update-error="onClearUpdateError"
-                  :on-clear-delete-error="onClearDeleteError"
-                />
-              </div>
+      <!-- 一覧。返信は展開せず「N件の返信」だけ出す -->
+      <ul v-else class="flex flex-col gap-3">
+        <li v-for="thread in threads" :key="thread.id" class="rounded-lg border bg-background">
+          <div class="p-3">
+            <TaskCommentItem
+              :comment="thread"
+              :current-user-id="currentUserId"
+              :updating="updatingCommentId === thread.id"
+              :deleting="deletingCommentId === thread.id"
+              :update-error="updateErrorCommentId === thread.id ? updateError : null"
+              :delete-error="deleteErrorCommentId === thread.id ? deleteError : null"
+              :on-update="(body) => onUpdate(thread.id, body)"
+              :on-delete="() => deleteThread(thread.id)"
+              :on-clear-update-error="onClearUpdateError"
+              :on-clear-delete-error="onClearDeleteError"
+            />
+          </div>
 
-              <div v-if="openThread.replies.length" class="flex items-center gap-3">
-                <span class="shrink-0 text-xs text-muted-foreground">
-                  {{ openThread.replies.length }}件の返信
-                </span>
-                <span class="h-px flex-1 bg-border" aria-hidden="true" />
-              </div>
-
-              <div
-                v-for="reply in openThread.replies"
-                :key="reply.id"
-                class="rounded-lg border bg-background p-3"
-              >
-                <TaskCommentItem
-                  :comment="reply"
-                  :current-user-id="currentUserId"
-                  :updating="updatingCommentId === reply.id"
-                  :deleting="deletingCommentId === reply.id"
-                  :update-error="updateErrorCommentId === reply.id ? updateError : null"
-                  :delete-error="deleteErrorCommentId === reply.id ? deleteError : null"
-                  :on-update="(body) => onUpdate(reply.id, body)"
-                  :on-delete="() => onDelete(reply.id)"
-                  :on-clear-update-error="onClearUpdateError"
-                  :on-clear-delete-error="onClearDeleteError"
-                />
-              </div>
-
-              <p
-                v-if="replyError && replyErrorThreadId === openThread.id"
-                class="text-xs text-destructive"
-              >
-                {{ replyError }}
-              </p>
-            </div>
-          </template>
-
-          <!-- 一覧。返信は展開せず「N件の返信」だけ出す -->
-          <ul v-else class="flex flex-col gap-3">
-            <li v-for="thread in threads" :key="thread.id" class="rounded-lg border bg-background">
-              <div class="p-3">
-                <TaskCommentItem
-                  :comment="thread"
-                  :current-user-id="currentUserId"
-                  :updating="updatingCommentId === thread.id"
-                  :deleting="deletingCommentId === thread.id"
-                  :update-error="updateErrorCommentId === thread.id ? updateError : null"
-                  :delete-error="deleteErrorCommentId === thread.id ? deleteError : null"
-                  :on-update="(body) => onUpdate(thread.id, body)"
-                  :on-delete="() => deleteThread(thread.id)"
-                  :on-clear-update-error="onClearUpdateError"
-                  :on-clear-delete-error="onClearDeleteError"
-                />
-              </div>
-
-              <!--
+          <!--
                 削除済みスレッドには返信できない（backend の create_comment が 400 で弾く）が、
                 既にある返信は残るので、返信があるときは開く導線を残す。ここを隠すと
                 返信がデータ上は生きているのに読むことも消すこともできなくなる。
               -->
-              <div
-                v-if="!thread.is_deleted || thread.replies.length"
-                class="flex items-center justify-end border-t px-3 py-1.5"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-xs text-muted-foreground"
-                  @click="showThread(thread.id)"
-                >
-                  {{ thread.replies.length ? `${thread.replies.length}件の返信` : '返信' }}
-                </Button>
-              </div>
-            </li>
-          </ul>
-        </div>
-      </template>
-
-      <!--
-        入力欄（参照）。下端に貼り付けた薄い背景の帯の中に、白い入力枠を置く。
-        枠の中は本文 → 操作行（追加・種別・添付・メンション・送信）の順。
-      -->
-      <p
-        v-if="openThread?.is_deleted"
-        class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3 text-sm text-muted-foreground"
-      >
-        削除されたコメントには返信できません
-      </p>
-      <form
-        v-else
-        class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3"
-        @submit.prevent="submitDraft"
-      >
-        <div class="rounded-lg border bg-background focus-within:ring-1 focus-within:ring-ring">
-          <Textarea
-            v-model="newDraft"
-            class="min-h-14 resize-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
-            :disabled="submitPending"
-            :aria-label="openThread ? '返信を入力' : 'コメントを入力'"
-            :placeholder="openThread ? '返信を入力…' : 'コメントを入力…'"
-          />
-          <div class="flex items-center gap-1 px-2 pb-2">
+          <div
+            v-if="!thread.is_deleted || thread.replies.length"
+            class="flex items-center justify-end border-t px-3 py-1.5"
+          >
             <Button
               type="button"
               variant="ghost"
-              size="icon"
-              class="size-7 text-muted-foreground"
-              aria-label="追加"
-              disabled
+              size="sm"
+              class="h-7 px-2 text-xs text-muted-foreground"
+              @click="showThread(thread.id)"
             >
-              <Plus class="size-4" aria-hidden="true" />
-            </Button>
-            <span
-              class="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs text-muted-foreground"
-            >
-              コメント
-              <ChevronDown class="size-3" aria-hidden="true" />
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              class="size-7 text-muted-foreground"
-              aria-label="ファイルを添付"
-              disabled
-            >
-              <Paperclip class="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              class="size-7 text-muted-foreground"
-              aria-label="メンション"
-              disabled
-            >
-              <AtSign class="size-4" aria-hidden="true" />
-            </Button>
-            <Button
-              type="submit"
-              size="icon"
-              class="ml-auto size-7"
-              :aria-label="submitPending ? '送信中' : openThread ? '返信する' : 'コメントする'"
-              :disabled="submitPending || !newDraft.trim()"
-            >
-              <Loader2 v-if="submitPending" class="size-4 animate-spin" aria-hidden="true" />
-              <SendHorizontal v-else class="size-4" aria-hidden="true" />
+              {{ thread.replies.length ? `${thread.replies.length}件の返信` : '返信' }}
             </Button>
           </div>
+        </li>
+      </ul>
+    </div>
+
+    <!--
+      入力欄（参照）。下端に貼り付けた薄い背景の帯の中に、白い入力枠を置く。
+      枠の中は本文 → 操作行（追加・種別・添付・メンション・送信）の順。
+    -->
+    <p
+      v-if="openThread?.is_deleted"
+      class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3 text-sm text-muted-foreground"
+    >
+      削除されたコメントには返信できません
+    </p>
+    <form
+      v-else
+      class="-mx-4 mt-auto shrink-0 border-t bg-background px-4 py-3"
+      @submit.prevent="submitDraft"
+    >
+      <div class="rounded-lg border bg-background focus-within:ring-1 focus-within:ring-ring">
+        <Textarea
+          v-model="newDraft"
+          class="min-h-14 resize-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
+          :disabled="submitPending"
+          :aria-label="openThread ? '返信を入力' : 'コメントを入力'"
+          :placeholder="openThread ? '返信を入力…' : 'コメントを入力…'"
+        />
+        <div class="flex items-center gap-1 px-2 pb-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            class="size-7 text-muted-foreground"
+            aria-label="追加"
+            disabled
+          >
+            <Plus class="size-4" aria-hidden="true" />
+          </Button>
+          <span
+            class="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs text-muted-foreground"
+          >
+            コメント
+            <ChevronDown class="size-3" aria-hidden="true" />
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            class="size-7 text-muted-foreground"
+            aria-label="ファイルを添付"
+            disabled
+          >
+            <Paperclip class="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            class="size-7 text-muted-foreground"
+            aria-label="メンション"
+            disabled
+          >
+            <AtSign class="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            type="submit"
+            size="icon"
+            class="ml-auto size-7"
+            :aria-label="submitPending ? '送信中' : openThread ? '返信する' : 'コメントする'"
+            :disabled="submitPending || !newDraft.trim()"
+          >
+            <Loader2 v-if="submitPending" class="size-4 animate-spin" aria-hidden="true" />
+            <SendHorizontal v-else class="size-4" aria-hidden="true" />
+          </Button>
         </div>
-        <p v-if="submitError" class="mt-1 text-xs text-destructive">{{ submitError }}</p>
-      </form>
-    </template>
+      </div>
+      <p v-if="submitError" class="mt-1 text-xs text-destructive">{{ submitError }}</p>
+    </form>
   </section>
 </template>
