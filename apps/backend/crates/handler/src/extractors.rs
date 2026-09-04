@@ -203,9 +203,16 @@ async fn has_tenant_access(
         return Ok(());
     }
 
-    // テナントに入れるのはメンバーだけ。プロジェクト単位の絞り込みはその内側で行う
+    // テナントに入れるのはメンバーだけ。プロジェクト単位の絞り込みはその内側で行う。
+    // この 403 だけ理由を名指しする: オーナーでなくメンバー行も無い状態は、データ側の
+    // 不整合 (owner_id の付け替え・tenant_members の欠落) でも起きるため、一般の 403
+    // (プロジェクト非公開・スコープ不足) と見分けられないと「PAT が全 API で 403」の
+    // 原因へ利用者が辿り着けない。権限は一切広げない — status は 403 のまま、body の
+    // message だけを tenant-membership-missing にする
     if !is_tenant_member(&state.db, tenant_id, user_id).await? {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ForbiddenDetail(
+            "tenant-membership-missing".into(),
+        ));
     }
 
     let Some(pid) = project_id else {
