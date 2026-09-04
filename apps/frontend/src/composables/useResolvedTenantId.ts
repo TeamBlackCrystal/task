@@ -53,6 +53,8 @@ export function useResolvedTenantId(tenantDisplayId: MaybeRefOrGetter<string>) {
   return {
     tenantDisplayId: displayId,
     tenantId,
+    /** 解決したテナントそのもの。設定画面は id 以外（名前・説明・アイコン）も要る。 */
+    resolvedTenant,
     tenantOwnerId,
     isTenantNotFound,
     isResolving,
