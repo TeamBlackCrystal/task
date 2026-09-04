@@ -3,7 +3,7 @@ mod common;
 use axum::http::StatusCode;
 use common::TestApp;
 use entity::{drive_files, drive_folders, project_members, projects};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, TransactionTrait};
 use uuid::Uuid;
 
 /// プロジェクトフォルダ配下の境界を守れているかを見る。
@@ -220,6 +220,68 @@ async fn creating_a_child_under_a_foreign_project_folder_is_forbidden() {
         .await
         .expect("create folder");
     assert_eq!(created.status(), StatusCode::CREATED);
+}
+
+/// フォルダの作成と移動はテナント単位で直列化する。
+///
+/// 移動をトランザクションへ入れるだけでは足りない。ACL と親の `project_id` を読んでから
+/// 書くまでの間に別のリクエストが割り込めるので、一般フォルダをプロジェクト配下へ
+/// 移動している最中にそのフォルダへ子を作ると、子は移動前の `project_id = NULL` を
+/// 継承したまま残り、直したはずの ACL 漏れが再発する。
+///
+/// ここではテスト側が同じ鍵でロックを握り、握っているあいだ作成が進まないこと・
+/// 離した後に親の値を継承して完了することを見る。
+#[tokio::test]
+async fn creating_a_folder_waits_for_the_tenant_drive_lock() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let root = insert_project_root_folder(&app, tp.tenant_id, tp.project_id, owner.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    // 同じ鍵をテスト側のトランザクションで握る
+    let blocker = app.state.db.begin().await.expect("begin blocker");
+    common::execute_advisory_lock(
+        &blocker,
+        service::drive::tenant_drive_lock_key(tp.tenant_id),
+    )
+    .await;
+
+    let url = folders_url(&app, tp.tenant_id);
+    let client = app.client().clone();
+    let pending = tokio::spawn(async move {
+        client
+            .post(url)
+            .json(&serde_json::json!({ "name": "child", "parent_id": root }))
+            .send()
+            .await
+            .expect("create folder")
+    });
+
+    // 握っているあいだは進まない（ロックが無いと即座に 201 が返る）
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "テナントの Drive ロックを待たずに作成が通っている"
+    );
+
+    blocker.rollback().await.expect("release blocker");
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+        .await
+        .expect("ロック解放後に完了する")
+        .expect("join");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body: serde_json::Value = response.json().await.expect("json");
+    assert_eq!(
+        body["project_id"].as_str().map(str::to_string),
+        Some(tp.project_id.to_string()),
+        "ロック取得後に読んだ親の project_id を継承する"
+    );
 }
 
 /// フォルダ移動で配下のフォルダ・ファイルの `project_id` が揃う。

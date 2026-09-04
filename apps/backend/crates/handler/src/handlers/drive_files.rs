@@ -14,8 +14,8 @@ use chrono::Utc;
 use futures::{SinkExt, channel::mpsc as fmpsc};
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
 };
 
 use crate::AppState;
@@ -26,7 +26,7 @@ use entity::{drive_files, drive_folder_shares, drive_folders, scopes::Scope, ten
 use payload::drive_files::*;
 use service::drive::{
     can_access_project, current_storage_type, effective_quota, guess_mime, is_editable_mime,
-    is_tenant_owner, source_mime_override, tenant_used_bytes,
+    is_tenant_owner, lock_tenant_drive, source_mime_override, tenant_used_bytes,
 };
 use service::storage::{ByteStream, StorageError};
 
@@ -49,9 +49,18 @@ async fn load_folder_in_tenant(
     tenant_id: Uuid,
     folder_id: Uuid,
 ) -> Result<drive_folders::Model, AppError> {
+    load_folder_in_tenant_conn(&state.db, tenant_id, folder_id).await
+}
+
+/// トランザクション内から読むための版。ロックを取ったあとに読み直す経路で使う。
+async fn load_folder_in_tenant_conn<C: ConnectionTrait>(
+    conn: &C,
+    tenant_id: Uuid,
+    folder_id: Uuid,
+) -> Result<drive_folders::Model, AppError> {
     drive_folders::Entity::find_by_id(folder_id)
         .filter(drive_folders::Column::TenantId.eq(tenant_id))
-        .one(&state.db)
+        .one(conn)
         .await?
         .ok_or(AppError::NotFound)
 }
@@ -322,7 +331,9 @@ pub async fn upload_file(
                     return Err(AppError::ContentTooLarge);
                 }
 
-                let folder_project_id = if let Some(fid) = folder_id {
+                // 本文を流す前に落とすための先読み。確定値は下の txn 内で取り直す
+                // （アップロード中にフォルダが移動すると、ここで読んだ project_id は古い）
+                if let Some(fid) = folder_id {
                     let folder = load_folder_in_tenant(&state, tenant_id, fid).await?;
                     // プロジェクトフォルダへの書き込みはオーナーかメンバーのみ
                     // （共有受信者は読み取り専用。authorize_file_write と同方針）。
@@ -333,10 +344,7 @@ pub async fn upload_file(
                     {
                         return Err(AppError::Forbidden);
                     }
-                    folder.project_id
-                } else {
-                    None
-                };
+                }
 
                 // Field<'a> は 'static でないため stream::unfold 不可。
                 // mpsc channel の Receiver は 'static なので ByteStream として使える。
@@ -408,6 +416,23 @@ pub async fn upload_file(
                 let now = Utc::now();
                 let result: Result<drive_files::Model, AppError> = async {
                     let txn = state.db.begin().await?;
+                    // 階層の読みと挿入を直列化する。ロックの外で読むと、アップロード中に
+                    // フォルダが別プロジェクトへ移動していても古い project_id で入り、
+                    // 配下の同期が終わった後の行として残ってしまう
+                    lock_tenant_drive(&txn, tenant_id).await?;
+                    let folder_project_id = if let Some(fid) = folder_id {
+                        let folder = load_folder_in_tenant_conn(&txn, tenant_id, fid).await?;
+                        if let Some(project_id) = folder.project_id
+                            && !is_tenant_owner(&txn, tenant_id, auth.user_id).await?
+                            && !can_access_project(&txn, tenant_id, project_id, auth.user_id)
+                                .await?
+                        {
+                            return Err(AppError::Forbidden);
+                        }
+                        folder.project_id
+                    } else {
+                        None
+                    };
                     let tenant_q = tenants::Entity::find_by_id(tenant_id)
                         .lock_exclusive()
                         .one(&txn)
@@ -528,6 +553,12 @@ pub async fn update_file(
 
     let file = load_tenant_file(&state, tenant_id, id).await?;
     authorize_file_write(&state, &file, &auth).await?;
+
+    // 移動先の読みと書き込みを直列化する。ロックの外で読むと、そのフォルダが
+    // 別プロジェクトへ移動している最中に古い project_id を書いてしまう
+    let txn = state.db.begin().await?;
+    lock_tenant_drive(&txn, tenant_id).await?;
+
     let mut active: drive_files::ActiveModel = file.into();
 
     if let Some(name) = payload.name {
@@ -536,14 +567,14 @@ pub async fn update_file(
 
     if let Some(folder_id) = payload.folder_id {
         let project_id = if let Some(fid) = folder_id {
-            let folder = load_folder_in_tenant(&state, tenant_id, fid).await?;
+            let folder = load_folder_in_tenant_conn(&txn, tenant_id, fid).await?;
             // 移動先の ACL。authorize_file_write は移動「元」しか見ないので、
             // これが無いと自分が入れないプロジェクトのフォルダへ送り込める
             // （送り込んだ側は以後そのファイルを読めなくなるが、相手の
             // プロジェクトに他人のファイルを置ける）。upload と同方針
             if let Some(project_id) = folder.project_id
-                && !is_tenant_owner(&state.db, tenant_id, auth.user_id).await?
-                && !can_access_project(&state.db, tenant_id, project_id, auth.user_id).await?
+                && !is_tenant_owner(&txn, tenant_id, auth.user_id).await?
+                && !can_access_project(&txn, tenant_id, project_id, auth.user_id).await?
             {
                 return Err(AppError::Forbidden);
             }
@@ -556,7 +587,8 @@ pub async fn update_file(
     }
 
     active.updated_at = Set(Utc::now().into());
-    let updated = active.update(&state.db).await?;
+    let updated = active.update(&txn).await?;
+    txn.commit().await?;
     Ok(Json(updated.into()))
 }
 

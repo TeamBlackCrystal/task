@@ -259,6 +259,51 @@ async fn backfill_keeps_projects_separate() {
     assert_eq!(file_project_id(&app, file_b).await, Some(other_project));
 }
 
+/// 別プロジェクトのルートが入れ子になっている既存データは、書き換えずに失敗させる。
+///
+/// 修正前はプロジェクトルートの移動も移動先 ACL の無視もできたので、
+/// 「A のルートが B のツリー配下にある」状態を作れた。親の値をそのまま伝播すると
+/// A のルートと配下のファイルが B のものになり、A のファイルが B のメンバーへ公開され、
+/// A のメンバーはアクセスを失う。backfill が新しい漏れを作ってはいけない。
+#[tokio::test]
+async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
+    let app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let other_project = insert_extra_project(&app, tp.tenant_id).await;
+
+    // B のツリー
+    let root_b = insert_folder(&app, tp.tenant_id, owner.id, None, Some(other_project)).await;
+    // 修正前に B の配下へ移された A のルート（parent_id が付いた時点でルート判定から外れる）
+    let nested_a = insert_folder(
+        &app,
+        tp.tenant_id,
+        owner.id,
+        Some(root_b),
+        Some(tp.project_id),
+    )
+    .await;
+    let file_a = insert_file(&app, tp.tenant_id, Some(nested_a), owner.id).await;
+
+    let result = app.state.db.execute_unprepared(BACKFILL_SQL).await;
+
+    assert!(
+        result.is_err(),
+        "境界が食い違う既存データは、書き換えずに失敗させる"
+    );
+    assert_eq!(
+        folder_project_id(&app, nested_a).await,
+        Some(tp.project_id),
+        "A のフォルダを B のものにしない"
+    );
+    assert_eq!(
+        file_project_id(&app, file_a).await,
+        Some(tp.project_id),
+        "A のファイルを B のものにしない"
+    );
+}
+
 /// 2 回流しても結果が変わらない（デプロイのたびに適用されても壊れない）。
 #[tokio::test]
 async fn backfill_is_idempotent() {

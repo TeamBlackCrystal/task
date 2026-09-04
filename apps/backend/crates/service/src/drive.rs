@@ -4,10 +4,7 @@ use std::env;
 use std::path::Path;
 
 use sea_orm::prelude::Uuid;
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait, QueryFilter,
-    QuerySelect,
-};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect};
 
 use crate::error::AppError;
 use entity::{drive_files, tenants};
@@ -121,8 +118,8 @@ pub fn current_storage_type() -> entity::drive_files::StorageType {
 }
 
 /// テナントオーナー判定（drive_files / drive_folders の共通ヘルパー）。
-pub async fn is_tenant_owner(
-    db: &DatabaseConnection,
+pub async fn is_tenant_owner<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     user_id: Uuid,
 ) -> Result<bool, AppError> {
@@ -232,8 +229,8 @@ pub fn is_editable_mime(mime: &str) -> bool {
 /// メンバー未指定のプロジェクトはテナント全体に開放する（#568）。
 ///
 /// drive_files と drive_folders の両ハンドラーが同じ判定を使うので service に置く。
-pub async fn can_access_project(
-    db: &DatabaseConnection,
+pub async fn can_access_project<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     project_id: Uuid,
     user_id: Uuid,
@@ -245,6 +242,37 @@ pub async fn can_access_project(
         return Ok(false);
     }
     crate::access::project_is_open_or_member(db, project_id, user_id).await
+}
+
+/// テナントの Drive 階層を直列化するアドバイザリロック。
+///
+/// 移動・作成をトランザクションへ入れるだけでは足りない。ACL と親の `project_id` を
+/// 読んでから書くまでの間に別のリクエストが割り込めるため、たとえば一般フォルダを
+/// プロジェクト配下へ移動している最中にそのフォルダへ子を作ると、子は移動前の
+/// `project_id = NULL` を継承したまま残る。同期の対象を集めた後に挿入されれば
+/// プロジェクト配下に一般フォルダが残り、直したはずの ACL 漏れが再発する。
+///
+/// フォルダの作成・移動、ファイルの作成・移動をテナント単位で直列化して塞ぐ。
+/// キーはテナント UUID の先頭 8 バイト。別テナントと衝突しても余分に直列化される
+/// だけで、誤って通ることはない。
+///
+/// `pg_advisory_xact_lock` はトランザクション終了で自動的に解放される
+/// （明示的な unlock を忘れて詰まらせない）。
+pub async fn lock_tenant_drive<C: ConnectionTrait>(
+    txn: &C,
+    tenant_id: Uuid,
+) -> Result<(), AppError> {
+    let key = tenant_drive_lock_key(tenant_id);
+    common::db::execute_bound(txn, "SELECT pg_advisory_xact_lock(?)", vec![key.into()]).await?;
+    Ok(())
+}
+
+/// [`lock_tenant_drive`] が使うロックキー。テスト側から同じ鍵で押さえるために公開する。
+pub fn tenant_drive_lock_key(tenant_id: Uuid) -> i64 {
+    let head: [u8; 8] = tenant_id.as_bytes()[..8]
+        .try_into()
+        .expect("uuid は 16 バイト");
+    i64::from_be_bytes(head)
 }
 
 /// プロジェクト作成時に自動生成されたルートフォルダか。
