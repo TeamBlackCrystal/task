@@ -4157,7 +4157,7 @@
         }
       }
     },
-    "/v1/drive/v1/drive/share/{token}": {
+    "/v1/drive/share/{token}": {
       "get": {
         "tags": ["Drive Shares"],
         "summary": "公開リンクでフォルダメタデータ取得（認証不要）",
@@ -4241,7 +4241,7 @@
         }
       }
     },
-    "/v1/drive/v1/drive/share/{token}/files": {
+    "/v1/drive/share/{token}/files": {
       "get": {
         "tags": ["Drive Shares"],
         "summary": "公開リンク経由でファイル一覧取得（認証不要）",
