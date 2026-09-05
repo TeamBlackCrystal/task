@@ -521,3 +521,144 @@ async fn ui_path_guest_reaches_own_project_and_member_list_stays_as_before() {
     app.cleanup_user(s.stranger.id).await;
     app.cleanup_user(s.owner.id).await;
 }
+
+/// require_2fa テナントの 2FA 強制は客分にも及ぶ（回避経路を閉じる）。
+///
+/// 修正前: 客分は tenant_members に行が無いため強制から漏れ、2FA 未設定でも
+/// パスワードログインが本認証（204）になり、客分として project を読み書きできた — 赤。
+#[tokio::test]
+async fn guest_login_requires_2fa_setup_under_require_2fa() {
+    let mut app = TestApp::new().await;
+    let s = setup_guest(&mut app).await;
+
+    // owner がテナントの 2FA 強制を立てる（owner の現セッションは本認証のまま）
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let policy = app
+        .post_json_with_session(
+            &format!("/v1/tenants/{}/require-2fa", s.tenant_id),
+            serde_json::json!({ "enabled": true }),
+        )
+        .await;
+    assert_eq!(policy.status(), StatusCode::OK, "2FA 強制を有効化");
+
+    // ① 2FA 未設定の客分のパスワードログインはセットアップ要求（half-authenticated）
+    app.reset_session_client();
+    let response = app
+        .session_client()
+        .post(format!("{}/v1/auth/login", app.base_url()))
+        .json(&serde_json::json!({ "email": s.guest.email, "password": s.guest.password }))
+        .send()
+        .await
+        .expect("guest login request");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "① 客分のログインはセットアップ要求の JSON（204 の本認証ではない）"
+    );
+    let body: serde_json::Value = response.json().await.expect("login json");
+    assert_eq!(
+        body["requires_2fa_setup"].as_bool(),
+        Some(true),
+        "① require_2fa テナントの客分にはセットアップ要求が立つ"
+    );
+
+    // ② 2FA 設定完了前は、名指しの project の API も 403
+    assert_eq!(
+        app.get_with_session(&format!(
+            "/v1/tenants/{}/projects/{}",
+            s.tenant_id, s.own_project_id
+        ))
+        .await
+        .status(),
+        StatusCode::FORBIDDEN,
+        "② half-authenticated のままでは客分の project も 403"
+    );
+
+    app.cleanup_user(s.guest.id).await;
+    app.cleanup_user(s.stranger.id).await;
+    app.cleanup_user(s.owner.id).await;
+}
+
+/// TOTP を有効にしている客分が require_2fa テナントに関わる限り、TOTP 無効化は拒否される。
+///
+/// 修正前: 客分のテナントは判定に入らず無効化が通り、次のログインから
+/// 2FA 無しで客分アクセスできる状態へ移れた — 赤。
+#[tokio::test]
+async fn guest_cannot_disable_totp_under_require_2fa() {
+    let mut app = TestApp::new().await;
+    let s = setup_guest(&mut app).await;
+
+    // guest2: テナントメンバーとして TOTP を有効化した後に除名し、TOTP 持ちの客分にする
+    let guest2 = app.insert_user(false, false).await;
+    let members_path = format!("/v1/tenants/{}/members", s.tenant_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        s.tenant_id, s.own_project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let added = app
+        .post_json_with_session(
+            &members_path,
+            serde_json::json!({ "user_id": guest2.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let assigned = app
+        .post_json_with_session(
+            &project_members_path,
+            serde_json::json!({ "user_id": guest2.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(assigned.status(), StatusCode::CREATED);
+
+    // require_2fa が立つ前に TOTP を有効化（強制後は本認証ログインできないため）
+    app.reset_session_client();
+    let enabled = app.enable_2fa(&guest2).await;
+
+    // 除名して客分にし、owner が 2FA 強制を立てる
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let removed = app
+        .delete_with_session(&format!("{members_path}/{}", guest2.id))
+        .await;
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    let policy = app
+        .post_json_with_session(
+            &format!("/v1/tenants/{}/require-2fa", s.tenant_id),
+            serde_json::json!({ "enabled": true }),
+        )
+        .await;
+    assert_eq!(policy.status(), StatusCode::OK);
+
+    // guest2 がログイン（TOTP 持ちゆえ half）→ リカバリーコードで本認証
+    app.reset_session_client();
+    app.login_half_authed(&guest2).await;
+    let verify = app
+        .post_json_with_session(
+            "/v1/auth/2fa/verify",
+            serde_json::json!({ "recovery_code": &enabled.recovery_codes[0] }),
+        )
+        .await;
+    assert_eq!(verify.status(), StatusCode::NO_CONTENT);
+
+    // ③ require_2fa テナントに客分として関わる限り、TOTP 無効化は拒否される
+    let delete = app
+        .delete_json_with_session(
+            "/v1/auth/2fa/totp",
+            serde_json::json!({ "recovery_code": &enabled.recovery_codes[1] }),
+        )
+        .await;
+    assert_eq!(
+        delete.status(),
+        StatusCode::FORBIDDEN,
+        "③ 客分も require_2fa の対象ゆえ TOTP 無効化は 403"
+    );
+
+    app.cleanup_user(guest2.id).await;
+    app.cleanup_user(s.guest.id).await;
+    app.cleanup_user(s.stranger.id).await;
+    app.cleanup_user(s.owner.id).await;
+}

@@ -48,6 +48,8 @@ PAT のテナントバインドは「どのテナントを触れるか」の制�
   （`project_members::add_member` がテナント外の利用者を 400 で弾く条文は変えない）
 - 通知・メンションの宛先には入らない（`project_accessible_user_ids` はテナント在籍者に絞る）
 - Drive のファイル配信（`drive_files::can_access_project`）は客分を通さない
+- 客分もテナントの `require_2fa`（2FA 強制）の対象である
+  （`login_session::user_in_require_2fa_tenant` が `access::guest_tenant_ids` で客分のテナントも見る）
 
 ### frontend が tenant-wide に叩く口と客分への扱い
 
@@ -171,7 +173,7 @@ Drive にはファイル ID だけで引ける経路がある（`GET /v1/drive/f
 | プロジェクトメンバーの管理 | オーナー + プロジェクト `Admin` |
 
 一覧と取得で条件を揃えているのは、一覧に出るのに開けないテナントを作らないため（#572）。
-客分のテナントは一覧に出るが取得は開かない、という非対称だけは意図して許した — 
+客分のテナントは一覧に出るが取得は開かない、という非対称だけは意図して許した —
 `membership: "Guest"` の印がその見分けであり、クライアントは印で開ける口を判断する。
 
 ### テナント一覧の membership 印

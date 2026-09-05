@@ -2,7 +2,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{MockGitLabUser, TestApp, is_redirect};
-use entity::{oauth_connections, users};
+use entity::{oauth_connections, project_members, projects, tenants, users};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use url::Url;
 
@@ -367,6 +367,94 @@ async fn oauth_callback_requires_2fa_setup_for_tenant_member() {
     assert!(
         location.contains("/auth/2fa"),
         "テナントの 2FA 強制が OAuth 経路でも効くこと: {location}"
+    );
+    assert_eq!(
+        app.get_me().await.status(),
+        StatusCode::FORBIDDEN,
+        "2FA 未設定のあいだは半認証セッションのままであること"
+    );
+
+    app.cleanup_user(user_id).await;
+    app.cleanup_user(owner.id).await;
+}
+
+/// テナントの 2FA 強制は project-only の客分（tenant_members の行が無く
+/// project_members の明示指定だけで関わる利用者）にも OAuth 経路で効く。
+/// 修正前: 客分のテナントは判定に入らず、2 回目のコールバックが本認証になっていた — 赤。
+#[tokio::test]
+async fn oauth_callback_requires_2fa_setup_for_project_only_guest() {
+    let app = TestApp::new().await;
+    let unique = uuid::Uuid::new_v4();
+    app.set_mock_user(MockGitLabUser {
+        id: 100_008,
+        username: format!("oauth_2fa_guest_{unique}"),
+        email: Some(format!("oauth-2fa-guest-{unique}@example.com")),
+    });
+
+    // 1 回目のコールバックで利用者を作る
+    let callback = app.follow_oauth_start(app.oauth_start(false).await).await;
+    assert!(is_redirect(callback.status()), "oauth callback redirect");
+    let me: serde_json::Value = app.get_me().await.json().await.expect("me json");
+    let user_id: uuid::Uuid = me["id"].as_str().expect("user id").parse().expect("uuid");
+
+    // require_2fa テナントの project にだけ明示指定された客分にする
+    //（member にして project へ指定した後に除名した残行と同じ形を DB で組む）
+    let owner = app.insert_user_default().await;
+    let tenant_id = uuid::Uuid::new_v4();
+    tenants::ActiveModel {
+        id: Set(tenant_id),
+        display_id: Set(format!("g2fa-{}", &tenant_id.to_string()[..8])),
+        name: Set("Require 2FA Guest Tenant".into()),
+        description: Set(String::new()),
+        icon_url: Set(String::new()),
+        owner_id: Set(owner.id),
+        drive_quota_bytes: Set(None),
+        require_2fa: Set(true),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert tenant");
+    let project_id = uuid::Uuid::new_v4();
+    projects::ActiveModel {
+        id: Set(project_id),
+        name: Set("guest-2fa".into()),
+        description: Set(String::new()),
+        tenant_id: Set(tenant_id),
+        icon_emoji: Set(None),
+        icon_url: Set(None),
+        key: Set(format!(
+            "G{}",
+            &project_id.simple().to_string()[..8].to_uppercase()
+        )),
+        is_personal: Set(false),
+        personal_owner_id: Set(None),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert project");
+    project_members::ActiveModel {
+        id: Set(uuid::Uuid::new_v4()),
+        project_id: Set(project_id),
+        user_id: Set(user_id),
+        role: Set(project_members::ProjectRole::Member),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("insert project member");
+    // tenant_members には行を作らない（客分）
+
+    // 2 回目のコールバックは 2FA 設定へ飛ばされ、本認証セッションにならない
+    let callback = app.follow_oauth_start(app.oauth_start(false).await).await;
+    assert!(is_redirect(callback.status()), "oauth callback redirect");
+    let location = callback
+        .headers()
+        .get("location")
+        .expect("redirect location")
+        .to_str()
+        .expect("location str");
+    assert!(
+        location.contains("/auth/2fa"),
+        "テナントの 2FA 強制が客分にも OAuth 経路で効くこと: {location}"
     );
     assert_eq!(
         app.get_me().await.status(),

@@ -31,7 +31,8 @@ async fn user_has_active_2fa(db: &DatabaseConnection, user_id: Uuid) -> Result<b
     Ok(cred.map(|c| c.is_verified).unwrap_or(false))
 }
 
-/// ユーザーが所属する（テナントオーナー or テナントメンバー）テナントのいずれかで
+/// ユーザーが関わるテナント — テナントオーナー・テナントメンバー・project-only の客分
+/// （`project_members` の明示指定だけで関わる者）— のいずれかで
 /// `require_2fa=true` が設定されているかを判定する。
 /// 2FA セットアップ強制（`user_must_setup_2fa`）と 2FA 無効化禁止（`delete_totp`）の
 /// 双方で参照する共通ポリシー判定。
@@ -56,7 +57,25 @@ pub async fn user_in_require_2fa_tenant(
         .one(db)
         .await?
         .is_some();
-    Ok(member_of_required_tenant)
+    if member_of_required_tenant {
+        return Ok(true);
+    }
+    // project-only の客分として関わるテナントも対象に含める。残った project_members の
+    // 行が実アクセス権（客分）になった以上、ここから漏れると require_2fa テナントの
+    // project を 2FA 無しで読み書きできてしまう（docs/features/auth-2fa.md）。
+    // 客分テナントの列挙は access::guest_tenant_ids を再利用する（同じ SQL を増やさない）
+    let guest_ids = crate::access::guest_tenant_ids(db, user_id)
+        .await
+        .map_err(|e| AuthError::Internal(anyhow::Error::new(e)))?;
+    if guest_ids.is_empty() {
+        return Ok(false);
+    }
+    Ok(tenants::Entity::find()
+        .filter(tenants::Column::Id.is_in(guest_ids.into_iter().collect::<Vec<_>>()))
+        .filter(tenants::Column::Require2fa.eq(true))
+        .one(db)
+        .await?
+        .is_some())
 }
 
 async fn user_must_setup_2fa(db: &DatabaseConnection, user_id: Uuid) -> Result<bool, AuthError> {
