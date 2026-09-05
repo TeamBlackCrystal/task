@@ -2,10 +2,10 @@
 
 use payload::labels::LabelResponse;
 use payload::milestones::MilestoneResponse;
-use payload::project_members::ProjectMemberResponse;
 use payload::projects::ProjectResponse;
 use payload::sprints::SprintResponse;
 use payload::statuses::ProjectStatusResponse;
+use payload::users::UserSummary;
 use uuid::Uuid;
 
 use crate::api::ApiClient;
@@ -103,7 +103,7 @@ pub async fn default_status_id(api: &ApiClient, project_id: Uuid) -> Result<Uuid
     pick_default_status(&list_statuses(api, project_id).await?)
 }
 
-/// プロジェクト配下の一覧を引く（`labels` / `milestones` / `sprints` / `members`）。
+/// プロジェクト配下の一覧を引く（`labels` / `milestones` / `sprints`）。
 async fn list_under_project<T: serde::de::DeserializeOwned>(
     api: &ApiClient,
     project_id: Uuid,
@@ -205,8 +205,8 @@ pub async fn resolve_sprint_id(api: &ApiClient, project_id: Uuid, name: &str) ->
         })
 }
 
-pub async fn list_members(api: &ApiClient, project_id: Uuid) -> Result<Vec<ProjectMemberResponse>> {
-    list_under_project(api, project_id, "members").await
+pub async fn list_assignable_users(api: &ApiClient, project_id: Uuid) -> Result<Vec<UserSummary>> {
+    list_under_project(api, project_id, "assignable-users").await
 }
 
 /// 担当者はユーザー名で指す。UUID をそのまま渡す道も残す。
@@ -214,18 +214,18 @@ pub async fn resolve_user_id(api: &ApiClient, project_id: Uuid, name: &str) -> R
     if let Ok(uuid) = Uuid::parse_str(name) {
         return Ok(uuid);
     }
-    let members = list_members(api, project_id).await?;
-    members
+    let users = list_assignable_users(api, project_id).await?;
+    users
         .iter()
-        .find(|member| member.user.username.eq_ignore_ascii_case(name))
-        .map(|member| member.user_id)
+        .find(|user| user.username.eq_ignore_ascii_case(name))
+        .map(|user| user.id)
         .ok_or_else(|| {
             not_found_with_candidates(
-                "Member",
+                "Assignable user",
                 name,
-                members
+                users
                     .iter()
-                    .map(|member| member.user.username.clone())
+                    .map(|user| user.username.clone())
                     .collect(),
             )
         })

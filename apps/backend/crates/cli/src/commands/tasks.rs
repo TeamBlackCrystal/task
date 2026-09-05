@@ -581,18 +581,13 @@ async fn resolve_parent_task_id(
     }
 }
 
-/// 期限は RFC 3339、または `YYYY-MM-DD`（その日の終わりを UTC で取る）。
-///
-/// 日付だけを「00:00」に倒すと、その日いっぱいを期限にしたつもりが前日扱いになる。
+/// 期限は RFC 3339、または `YYYY-MM-DD`（Web UI と同じ日の始まりを UTC で取る）。
 fn parse_deadline(flag: &str, raw: &str) -> Result<DateTime<Utc>> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(raw) {
         return Ok(parsed.with_timezone(&Utc));
     }
     if let Ok(date) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        let end_of_day = date.and_time(
-            NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is a valid time of day"),
-        );
-        return Ok(Utc.from_utc_datetime(&end_of_day));
+        return Ok(Utc.from_utc_datetime(&date.and_time(NaiveTime::MIN)));
     }
     Err(CliError::validation(format!(
         "{flag}: expected RFC 3339 (2026-09-30T12:00:00Z) or a date (2026-09-30), got {raw}"
@@ -918,11 +913,10 @@ mod tests {
         assert_eq!(err.exit_code, 2);
     }
 
-    /// 日付だけを 00:00 に倒すと、その日いっぱいのつもりが前日扱いになる。
     #[test]
-    fn reads_a_bare_date_as_the_end_of_that_day() {
+    fn reads_a_bare_date_at_the_start_of_that_day() {
         let parsed = parse_deadline("--soft-deadline", "2026-09-30").unwrap();
-        assert_eq!(parsed.to_rfc3339(), "2026-09-30T23:59:59+00:00");
+        assert_eq!(parsed.to_rfc3339(), "2026-09-30T00:00:00+00:00");
 
         let exact = parse_deadline("--hard-deadline", "2026-09-30T12:00:00Z").unwrap();
         assert_eq!(exact.to_rfc3339(), "2026-09-30T12:00:00+00:00");
@@ -1012,8 +1006,8 @@ mod tests {
         });
         let json = serde_json::to_value(&body).unwrap();
 
-        assert_eq!(json["soft_deadline"], "2026-09-30T23:59:59Z");
-        assert_eq!(json["hard_deadline"], "2026-10-31T23:59:59Z");
+        assert_eq!(json["soft_deadline"], "2026-09-30T00:00:00Z");
+        assert_eq!(json["hard_deadline"], "2026-10-31T00:00:00Z");
         assert_eq!(json["estimated_minutes"], 90);
         assert_eq!(json["progress_pct"], 40);
         assert_eq!(json["parent_task_id"], uuid(7).to_string());
