@@ -18,6 +18,18 @@ export function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider;
 }
 
+/**
+ * 知っているプロバイダーか。
+ *
+ * `providerLabel` は知らない値をそのまま返すので、URL から拾った文字列を通知文へ
+ * 混ぜる前にこれで濾す。濾さないと `?linked=<任意の文字列>` を開かせるだけで、
+ * 正規の設定画面が出した通知として攻撃者の文面を読ませられる。
+ * `/v1/auth/oauth/providers` の応答は画面を開いた直後にはまだ無いので、判定には使えない。
+ */
+export function isKnownProvider(value: string): boolean {
+  return Object.hasOwn(PROVIDER_LABELS, value);
+}
+
 export type OAuthStartOptions = {
   /** 承認後の戻り先（フロントの相対パス）。 */
   redirectAfter: string;

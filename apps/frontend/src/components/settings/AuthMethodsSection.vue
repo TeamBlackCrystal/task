@@ -27,7 +27,7 @@ import {
   usePasskeysQuery,
 } from '@/lib/api-vue-query';
 import { countAuthMethods, formatConnectedAt, type OAuthConnection } from '@/lib/auth-methods';
-import { providerLabel, startOAuth } from '@/lib/oauth-providers';
+import { isKnownProvider, providerLabel, startOAuth } from '@/lib/oauth-providers';
 import type { components } from '@/generated/api';
 
 const props = defineProps<{ user: components['schemas']['UserResponse'] }>();
@@ -49,13 +49,17 @@ const instanceDrafts = ref<Record<string, string>>({});
 
 onMounted(() => {
   const params = new URLSearchParams(window.location.search);
+  // 知らない値は無視する。URL から来た文字列をそのまま通知文へ入れると、
+  // その画面を開かせるだけで任意の文面を「設定画面が出した通知」として読ませられる
   const linked = params.get('linked');
-  if (linked) flash.value = `${providerLabel(linked)} を連携しました。`;
+  const linkedProvider = linked && isKnownProvider(linked) ? linked : null;
+  if (linkedProvider) flash.value = `${providerLabel(linkedProvider)} を連携しました。`;
   // コールバックが失敗すると backend が ?oauth_error= を付けてここへ戻す。
   oauthFailed.value = params.has('oauth_error');
   if (linked || oauthFailed.value) {
     // 再読み込みで同じ通知が出ないよう、印だけ URL から落とす。
-    window.history.replaceState(null, '', SECURITY_PATH);
+    // state は引き継ぐ（null を渡すと vike のクライアントルーターの state を捨てる）
+    window.history.replaceState(window.history.state, '', SECURITY_PATH);
   }
 });
 

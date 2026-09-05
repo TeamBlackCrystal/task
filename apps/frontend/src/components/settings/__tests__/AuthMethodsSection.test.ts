@@ -373,3 +373,50 @@ describe('AuthMethodsSection の OAuth 連携', () => {
     expect(document.body.textContent).not.toContain('これが最後の認証方法の可能性があります。');
   });
 });
+
+describe('AuthMethodsSection の ?linked= の扱い', () => {
+  /** 連携から戻った直後の URL を作る。history.state も載せて引き継ぎを見る。 */
+  function enterWith(search: string, state: unknown = { vike: 'routed' }) {
+    window.history.replaceState(state, '', `/settings/security${search}`);
+  }
+
+  it('知っているプロバイダーなら成功通知を出し、印を URL から落とす', async () => {
+    stubFetch({ connections: [connection()], providers: [] });
+    enterWith('?linked=github');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('GitHub を連携しました。');
+    expect(window.location.search).toBe('');
+  });
+
+  // URL から拾った文字列をそのまま通知文へ入れると、その画面を開かせるだけで
+  // 正規の設定画面が出した通知として任意の文面を読ませられる
+  it('知らない値は通知に出さない', async () => {
+    stubFetch({ connections: [], providers: [] });
+    enterWith('?linked=%E5%81%BD%E3%81%AE%E3%81%8A%E7%9F%A5%E3%82%89%E3%81%9B');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('偽のお知らせ');
+    expect(wrapper.text()).not.toContain('を連携しました。');
+  });
+
+  it('知らない値でも印は URL から落とす（再読み込みで残さない）', async () => {
+    stubFetch({ connections: [], providers: [] });
+    enterWith('?linked=bogus');
+    mountSection();
+    await flushPromises();
+
+    expect(window.location.search).toBe('');
+  });
+
+  it('印を落とすときに history.state を捨てない', async () => {
+    stubFetch({ connections: [connection()], providers: [] });
+    enterWith('?linked=github', { vike: 'routed' });
+    mountSection();
+    await flushPromises();
+
+    expect(window.history.state).toEqual({ vike: 'routed' });
+  });
+});
