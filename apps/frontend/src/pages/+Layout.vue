@@ -64,9 +64,9 @@ const AppHeader = defineAsyncComponent(() => import('@/components/header/AppHead
     <AppHeader />
     <div class="flex min-h-0 w-full flex-1">
       <Suspense>
-        <AppSidebar />
+        <AppSidebar desktop-top-offset="3rem" />
         <template #fallback>
-          <AppSidebarSkeleton />
+          <AppSidebarSkeleton desktop-top-offset="3rem" />
         </template>
       </Suspense>
       <SidebarInset>
