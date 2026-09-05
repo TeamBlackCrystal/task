@@ -406,13 +406,15 @@ async fn removing_tenant_member_keeps_project_scoping() {
         "メンバーを外しても、絞り込み済みのプロジェクトは他のメンバーに開かない"
     );
 
-    // テナントから外れた alice も入れない（残った行はアクセスを与えない）
+    // テナントから外れた alice は project-only の客分になり、
+    // 残った明示指定のプロジェクトには引き続き入れる。
+    // テナント全体の口が閉じたままであることは project_guest_access_integration.rs が固定する
     app.reset_session_client();
     app.login_session(&alice.email, &alice.password).await;
     assert_eq!(
         app.get_with_session(&project_path).await.status(),
-        StatusCode::FORBIDDEN,
-        "テナントから外れた人は入れない"
+        StatusCode::OK,
+        "残った project_members の行は客分としてそのプロジェクトへ通す"
     );
 
     // テナントに戻せば、元のプロジェクト指定がそのまま効く

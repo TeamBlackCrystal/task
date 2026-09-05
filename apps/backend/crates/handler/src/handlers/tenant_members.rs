@@ -243,12 +243,13 @@ pub async fn remove_member(
     let txn = state.db.begin().await?;
     project_members::lock_membership_changes(&txn, tenant_id).await?;
 
-    // project_members の行はあえて残す。テナント所属は has_tenant_access が先に見るので、
-    // テナントに居ない人の行は何のアクセスも与えない。
+    // project_members の行はあえて残す。残った行の持ち主は project-only の客分になり、
+    // 名指しされたプロジェクトの中だけ引き続き入れる（テナント全体の口は開かない。
+    // apps/backend/docs/tenant-project-authz.md の「所属の 3 層」）。
     // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
     // 「メンバー未指定＝テナント全体に開放」の規則で他のメンバーに開いてしまう。
     // 残しておけば再参加したときに元の割り当てがそのまま戻る。
-    // 通知の宛先はテナントに居る人だけに絞られる（`service::access`）
+    // 通知の宛先はテナントに居る人だけに絞られる（`service::access`。客分には飛ばない）
     tenant_members::Entity::delete_by_id(member.id)
         .exec(&txn)
         .await?;

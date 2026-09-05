@@ -4859,7 +4859,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/TenantResponse"
+                    "$ref": "#/components/schemas/TenantListItemResponse"
                   }
                 }
               }
@@ -22755,6 +22755,53 @@
           }
         }
       },
+      "TenantListItemResponse": {
+        "type": "object",
+        "description": "`GET /v1/tenants` 専用のレスポンス。テナントの欄に `membership` の印を加えたもの。\n\n客分（membership=Guest）のテナントは一覧に出るが tenant-wide の口\n（テナント取得・プロジェクト一覧など）は開かないため、クライアントは\nこの印で開ける口を見分ける。取得・作成・更新は従来どおり `TenantResponse`。",
+        "required": [
+          "id",
+          "display_id",
+          "name",
+          "description",
+          "icon_url",
+          "owner_id",
+          "require_2fa",
+          "membership"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_id": {
+            "type": "string"
+          },
+          "drive_quota_bytes": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          },
+          "icon_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/TenantMembershipKind",
+            "description": "この利用者から見た関わり方（Owner / Member / Guest）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "require_2fa": {
+            "type": "boolean"
+          }
+        }
+      },
       "TenantMemberResponse": {
         "type": "object",
         "required": ["id", "tenant_id", "user_id", "role", "user"],
@@ -22779,6 +22826,11 @@
             "format": "uuid"
           }
         }
+      },
+      "TenantMembershipKind": {
+        "type": "string",
+        "description": "テナント一覧における、この利用者から見た関わり方の印。\n`TenantRole` と同じ流儀（PascalCase の文字列）で返す。",
+        "enum": ["Owner", "Member", "Guest"]
       },
       "TenantResponse": {
         "type": "object",

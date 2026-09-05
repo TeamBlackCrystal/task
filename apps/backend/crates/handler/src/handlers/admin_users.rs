@@ -140,7 +140,9 @@ async fn delete_user_cascade(db: &DatabaseConnection, user_id: Uuid) -> Result<(
     // テナントから外す（`tenant_members::remove_member`）のと同じ形にする。
     // `project_members` の行は消さない。消すと、その人しか指定されていなかったプロジェクトが
     // メンバー 0 件になり、テナント全体に開放されてしまう（#568）。
-    // 行が残ってもアクセスは与えない（`has_tenant_access` がテナント所属を先に見る）。
+    // 残った行は project-only の客分の名指しに当たるが、この削除は PAT を revoke し
+    // users の行を墓標化するため、削除済み利用者がそこから入ることはない
+    // （客分の定めは apps/backend/docs/tenant-project-authz.md の「所属の 3 層」）。
     // users の行は墓標として残す方式なので、FK の ON DELETE CASCADE は発火しない
     if table_exists(db, "tenant_members").await? {
         tenant_members::Entity::delete_many()
