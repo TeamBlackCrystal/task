@@ -10,6 +10,7 @@ import { useAssignableUsersQuery } from '@/lib/api-vue-query';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 import { useTaskActivities } from '@/composables/useTaskActivities';
 import { useTaskComments } from '@/composables/useTaskComments';
+import { useRenderedDescription } from '@/composables/useRenderedDescription';
 import { useTaskDetail } from '@/composables/useTaskDetail';
 import { useMeQuery } from '@/lib/api-vue-query';
 
@@ -159,6 +160,18 @@ const assigneeError = computed(() => {
 
 const meQuery = useMeQuery();
 const currentUserId = computed(() => meQuery.data.value?.id ?? null);
+/**
+ * 説明の KFM 描画。詳細ページは server data hook が HTML を渡してくれるが、
+ * このペインは選択がクライアント操作なので data hook が追従できない。描画は
+ * サーバへ置いたまま（クライアントへ載せると +417.5 KB）結果だけを取る。
+ *
+ * 本文が変わればクエリキーも変わるので、保存後は自動で描き直しになる。
+ * 取得中・失敗時は html が null のまま = Hub がプレーン表示へ倒す。
+ */
+const renderedDescription = useRenderedDescription(
+  () => displayTask.value?.id,
+  () => displayTask.value?.description,
+);
 
 function openDeleteDialog() {
   deleteError.value = null;
@@ -196,6 +209,8 @@ function onDeleteDialogCancel(event: Event) {
         :labels-error="labelsError"
         :field-updating="fieldUpdating"
         :field-errors="fieldErrors"
+        :description-html="renderedDescription.data.value?.html ?? null"
+        :description-source="renderedDescription.data.value?.source ?? null"
         :loading="isLoading"
         :not-found="isNotFound"
         :error="isError"

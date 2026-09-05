@@ -61,6 +61,7 @@ import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 import '@/lib/remark-gfm/style.css';
 import '@/lib/remark-koyori-alerts/style.css';
 import '@/lib/rehype-starry-night/style.css';
+import '@/lib/rehype-kfm-code/style.css';
 import '@/lib/remark-kfm-mermaid/style.css';
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
