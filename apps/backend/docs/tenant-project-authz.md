@@ -31,10 +31,16 @@ PAT のテナントバインドは「どのテナントを触れるか」の制�
 
 - 客分が入れるのは `project_members` に明示指定されたプロジェクトだけ。
   「メンバー未指定＝テナント全体に開放」の規則はテナントメンバー限りで、客分には開かない
-- プロジェクト名指しの無いテナント全体の口（テナント取得・プロジェクト一覧・メンバー一覧など）は
-  従来どおり 403。**「己の project に絞った一覧を返す」案は採らない** — tenant-wide の判定
-  （`has_tenant_access` の project_id=None 経路）を変えず、判定をハンドラー側に散らさないため。
-  客分が己のテナントを把握する口はテナント一覧の `membership` 印で足りる
+- テナント全体の口のうち**プロジェクト一覧（`GET /v1/tenants/{id}/projects`）と
+  My Tasks（`GET /v1/tenants/{id}/users/me/tasks`）だけは、客分には己が明示 member の
+  project の分に絞って返す**（公開 project は含めない）。当初は「従来どおり 403」を
+  採っていたが覆した（#688 レビュー）: frontend の project 解決（URL の projectKey →
+  UUID）とテナント選択直後の着地（My Tasks）がこの 2 つの一覧に依存しており、
+  UI 用の口を新設するより一覧を絞る方が判定を一箇所に保てるため。判定は
+  `AuthUser::ensure_tenant_access_or_guest_scope` + `access::explicit_member_project_ids`
+  に集約し、ハンドラーには散らさない
+- その他のテナント全体の口（テナント取得・メンバー一覧・Drive・テナント設定など）は
+  従来どおり 403。frontend は 403 を空表示・案内文で穏当に受ける（下の表）
 - テナント一覧（`GET /v1/tenants`）には客分として関わるテナントが `membership: "Guest"` の
   印付きで出る（「テナント一覧の membership 印」）
 - 客分を作る専用の口は無い。テナントメンバーをプロジェクトへ明示指定した後にテナントから外すと、
@@ -42,6 +48,18 @@ PAT のテナントバインドは「どのテナントを触れるか」の制�
   （`project_members::add_member` がテナント外の利用者を 400 で弾く条文は変えない）
 - 通知・メンションの宛先には入らない（`project_accessible_user_ids` はテナント在籍者に絞る）
 - Drive のファイル配信（`drive_files::can_access_project`）は客分を通さない
+
+### frontend が tenant-wide に叩く口と客分への扱い
+
+| 口 | frontend の呼び元 | 客分への扱い |
+|---|---|---|
+| `GET /v1/tenants` | stores/tenant.ts（TenantSwitcher の一覧）・useResolvedTenantId（URL の display_id → UUID 解決） | 印付きで返す（membership=Guest。テナント設定の欄は null） |
+| `GET /v1/tenants/{id}/projects` | api-vue-query の useProjectsQuery（AppSidebar の NavProjects・useResolvedProjectId の projectKey → UUID 解決）、ProjectCreateForm / DeleteProjectDialog / ProjectSettingsView（cache 更新） | **己の明示 member の project に絞って 200** |
+| `GET /v1/tenants/{id}/users/me/tasks` | pages/@tenant/my-tasks（テナント選択直後の着地） | **己の project の分に絞って 200** |
+| `GET /v1/tenants/{id}/members` | ProjectSettingsView の MembersSection | 403 のまま（MembersSection は 403 を「権限なし」表示で受け、画面は壊れない） |
+| `GET /v1/tenants/{id}` | 呼び元なし（一覧で足りる） | 403 のまま |
+| `GET /v1/tenants/{id}/users/me/personal-project` | 呼び元なし | 403 のまま |
+| Drive 系（`/v1/tenants/{id}/drive...`） | tenant-wide では呼ばない | 403 のまま |
 
 ## `tenant_members`
 
@@ -91,6 +109,9 @@ PAT のテナントバインドは「どのテナントを触れるか」の制�
 
 ハンドラーは `AuthUser::ensure_tenant_access` だけを呼ぶ。
 これがセッション・PAT の双方を `has_tenant_access`（`extractors.rs`）に合流させる。
+例外はテナント一覧系の 2 口（プロジェクト一覧・My Tasks）で、こちらは
+`ensure_tenant_access_or_guest_scope` を呼ぶ — 通常判定に加えて客分を通し、
+絞り込み用の project id 集合を返す。
 
 ```rust
 auth.require_scope(Scope::ReadTask)?;
@@ -112,7 +133,7 @@ auth.ensure_tenant_access(&state, tenant_id, Some(project_id)).await?;
 リクエスト元自身の認可に使うと同じクエリを二重に流すだけになる。
 担当者の追加など**自分以外**を検証するときにだけ使う。
 
-### `service::access` の 6 関数
+### `service::access` の 7 関数
 
 認可（handler）と通知の宛先抽出（service）が同じ規則を見る必要があるため、実装をここに集約している。
 
@@ -123,6 +144,7 @@ auth.ensure_tenant_access(&state, tenant_id, Some(project_id)).await?;
 | `project_is_open_or_member` | 1 プロジェクトの公開規則。**テナントに入れることは呼び出し側で確認済みの前提** |
 | `visible_project_ids` | 一覧系。候補をまとめて 3 クエリで解決する（件数分のクエリを避ける） |
 | `guest_tenant_ids` | 客分として関わるテナントの id 集合。テナント一覧の印付けに使う |
+| `explicit_member_project_ids` | テナント配下で明示指定されている project の id 集合。客分の一覧絞り込みに使う |
 | `project_accessible_user_ids` | 通知・メンションの宛先。テナントに残っている人だけに絞る |
 
 ### Drive は単純な置き換えをしない
@@ -140,6 +162,8 @@ Drive にはファイル ID だけで引ける経路がある（`GET /v1/drive/f
 |---|---|
 | テナント一覧（`GET /v1/tenants`） | 所属しているテナント＋客分として関わるテナントを `membership` の印付きで返す。PAT もバインド先に同じ判定を適用する |
 | テナントの取得（`GET /v1/tenants/{id}`） | テナントに入れる人全員（客分は含まない） |
+| プロジェクト一覧（`GET /v1/tenants/{id}/projects`） | owner: 全件。member: 公開規則どおり。客分: 明示 member の分だけ |
+| My Tasks（`GET /v1/tenants/{id}/users/me/tasks`） | 所属者: 従来どおり。客分: 己の project の分に絞る |
 | テナントの更新・削除 | オーナーのみ |
 | メンバー一覧の閲覧 | テナントに入れる人全員（客分は含まない） |
 | メンバーの追加・ロール変更・削除 | オーナー + テナント `Admin` |

@@ -77,8 +77,9 @@ pub async fn list_tenants(
     //          （ここが owner/member だけだと、客分は入れるプロジェクトがあるのに一覧に出ない）。
     // PAT: バインドされた tenant_id のうち、所属（客分を含む）しているものだけ返す。
     // フィルタ自体が認可を兼ねているため追加チェックは不要。
-    // 客分に tenant-wide の口は開かないため、クライアントは membership の印で
-    // 開ける口を見分ける（apps/backend/docs/tenant-project-authz.md）。
+    // 客分に開く tenant-wide の口はプロジェクト一覧・My Tasks（己の分に絞る）だけの
+    // ため、クライアントは membership の印で開ける口を見分ける
+    // （apps/backend/docs/tenant-project-authz.md）。
     auth.require_scope(Scope::AdminTenant)?;
     let items = match &auth.method {
         AuthMethod::Session => {

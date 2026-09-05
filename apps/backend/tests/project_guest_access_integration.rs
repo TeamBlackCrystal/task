@@ -57,7 +57,7 @@ async fn insert_pat_with_project_read(
         db.get_database_backend(),
         r#"INSERT INTO personal_tokens
             (id, name, token_hash, token_last_four, user_id, tenant_id, revoked, scopes)
-            VALUES ($1, $2, $3, $4, $5, $6, false, '["admin:tenant","read:project"]'::json)"#,
+            VALUES ($1, $2, $3, $4, $5, $6, false, '["admin:tenant","read:project","read:task"]'::json)"#,
         vec![
             id.into(),
             "guest-integration-test".into(),
@@ -156,6 +156,20 @@ async fn membership_of(res: reqwest::Response, tenant_id: Uuid) -> Option<String
         })
 }
 
+/// プロジェクト一覧レスポンスから id を取り出す。
+fn project_ids(body: Value) -> Vec<Uuid> {
+    body.as_array()
+        .expect("project list must be an array")
+        .iter()
+        .map(|p| {
+            p["id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .expect("project id")
+        })
+        .collect()
+}
+
 /// セッションの客分: 名指しの中だけ通り、テナント全体の口は閉じたまま、一覧に印が出る。
 #[tokio::test]
 async fn session_guest_passes_only_named_project_and_is_marked_in_list() {
@@ -188,10 +202,18 @@ async fn session_guest_passes_only_named_project_and_is_marked_in_list() {
         StatusCode::FORBIDDEN,
         "客分にテナント取得は開かない（tenant-wide は従来どおり）"
     );
+    // プロジェクト一覧だけは己が明示 member の project に絞って開く
+    //（公開 project = other は含めぬ。修正前は 403 — 赤）
+    let res = app.get_with_session(&projects_path).await;
     assert_eq!(
-        app.get_with_session(&projects_path).await.status(),
-        StatusCode::FORBIDDEN,
-        "客分にプロジェクト一覧は開かない（tenant-wide は従来どおり）"
+        res.status(),
+        StatusCode::OK,
+        "客分にプロジェクト一覧は己の分に絞って開く"
+    );
+    assert_eq!(
+        project_ids(res.json().await.expect("projects json")),
+        vec![s.own_project_id],
+        "客分の一覧は明示 member の project だけ（公開 project は含めぬ）"
     );
     // ④ テナント一覧に Guest の印付きで出る（修正前は出ない — 赤）
     assert_eq!(
@@ -367,12 +389,17 @@ async fn pat_guest_passes_only_named_project_and_is_marked_in_list() {
         StatusCode::FORBIDDEN,
         "客分の PAT にテナント取得は開かない"
     );
+    // プロジェクト一覧だけは PAT でも己の分に絞って開く（修正前は 403 — 赤）
+    let res = app.get_with_bearer(&projects_path, &guest_pat).await;
     assert_eq!(
-        app.get_with_bearer(&projects_path, &guest_pat)
-            .await
-            .status(),
-        StatusCode::FORBIDDEN,
-        "客分の PAT にプロジェクト一覧は開かない"
+        res.status(),
+        StatusCode::OK,
+        "客分の PAT にもプロジェクト一覧は己の分に絞って開く"
+    );
+    assert_eq!(
+        project_ids(res.json().await.expect("projects json")),
+        vec![s.own_project_id],
+        "客分の PAT の一覧も明示 member の project だけ"
     );
     // ④ テナント一覧に Guest の印付きで出る（修正前は出ない — 赤）
     assert_eq!(
@@ -394,6 +421,100 @@ async fn pat_guest_passes_only_named_project_and_is_marked_in_list() {
         .await,
         Some("Owner".to_string()),
         "オーナーの PAT は membership=Owner の印付きで出る"
+    );
+
+    app.cleanup_user(s.guest.id).await;
+    app.cleanup_user(s.stranger.id).await;
+    app.cleanup_user(s.owner.id).await;
+}
+
+/// UI 経路の模擬: 客分が ①テナント一覧で己のテナントを得て ②プロジェクト一覧で
+/// 己の project だけを得て ③その id で個別 API へ 200、着地の My Tasks も開ける。
+/// tenant member の一覧は従来の規則のまま（公開 project は見え、
+/// 絞り込み project は指定された人だけ）。セッションと PAT の両方。
+#[tokio::test]
+async fn ui_path_guest_reaches_own_project_and_member_list_stays_as_before() {
+    let mut app = TestApp::new().await;
+    let s = setup_guest(&mut app).await;
+
+    // stranger をテナントメンバーへ追加して member の対照にする
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let added = app
+        .post_json_with_session(
+            &format!("/v1/tenants/{}/members", s.tenant_id),
+            serde_json::json!({ "user_id": s.stranger.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(added.status(), StatusCode::CREATED);
+
+    let projects_path = format!("/v1/tenants/{}/projects", s.tenant_id);
+    let my_tasks_path = format!("/v1/tenants/{}/users/me/tasks", s.tenant_id);
+
+    // --- セッション
+    app.reset_session_client();
+    app.login_session(&s.guest.email, &s.guest.password).await;
+    assert_eq!(
+        membership_of(app.get_with_session("/v1/tenants").await, s.tenant_id).await,
+        Some("Guest".to_string()),
+        "① 客分はテナント一覧で己のテナントを得る"
+    );
+    let res = app.get_with_session(&projects_path).await;
+    assert_eq!(res.status(), StatusCode::OK, "② プロジェクト一覧が開く");
+    assert_eq!(
+        project_ids(res.json().await.expect("projects json")),
+        vec![s.own_project_id],
+        "② 己の project だけが返る（他の project・公開 project は含めぬ）"
+    );
+    assert_eq!(
+        app.get_with_session(&format!("{projects_path}/{}", s.own_project_id))
+            .await
+            .status(),
+        StatusCode::OK,
+        "③ 一覧で得た project の個別 API へ 200"
+    );
+    assert_eq!(
+        app.get_with_session(&my_tasks_path).await.status(),
+        StatusCode::OK,
+        "テナント選択後の着地（My Tasks）が客分に開く"
+    );
+
+    // --- PAT でも同じ
+    let secret = app.state.settings.personal_token_secret.clone();
+    let guest_pat =
+        insert_pat_with_project_read(&app.state.db, s.guest.id, s.tenant_id, &secret).await;
+    let res = app.get_with_bearer(&projects_path, &guest_pat).await;
+    assert_eq!(res.status(), StatusCode::OK, "② PAT でも一覧が開く");
+    assert_eq!(
+        project_ids(res.json().await.expect("projects json")),
+        vec![s.own_project_id],
+        "② PAT でも己の分だけ"
+    );
+    assert_eq!(
+        app.get_with_bearer(&format!("{projects_path}/{}", s.own_project_id), &guest_pat)
+            .await
+            .status(),
+        StatusCode::OK,
+        "③ PAT でも個別 API へ 200"
+    );
+    assert_eq!(
+        app.get_with_bearer(&my_tasks_path, &guest_pat)
+            .await
+            .status(),
+        StatusCode::OK,
+        "PAT でも My Tasks が開く"
+    );
+
+    // --- tenant member は従来の規則のまま
+    app.reset_session_client();
+    app.login_session(&s.stranger.email, &s.stranger.password)
+        .await;
+    let res = app.get_with_session(&projects_path).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        project_ids(res.json().await.expect("projects json")),
+        vec![s.other_project_id],
+        "member の一覧は従来規則のまま（公開 project は見え、絞り込み project は指定者だけ）"
     );
 
     app.cleanup_user(s.guest.id).await;

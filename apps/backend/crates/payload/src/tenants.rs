@@ -69,9 +69,10 @@ pub enum TenantMembershipKind {
 
 /// `GET /v1/tenants` 専用のレスポンス。テナントの欄に `membership` の印を加えたもの。
 ///
-/// 客分（membership=Guest）のテナントは一覧に出るが tenant-wide の口
-/// （テナント取得・プロジェクト一覧など）は開かないため、クライアントは
-/// この印で開ける口を見分ける。取得・作成・更新は従来どおり `TenantResponse`。
+/// 客分（membership=Guest）のテナントは一覧に出る。客分に開く tenant-wide の口は
+/// プロジェクト一覧・My Tasks（いずれも己の分に絞る）だけで、テナント取得などは
+/// 開かないため、クライアントはこの印で開ける口を見分ける。
+/// 取得・作成・更新は従来どおり `TenantResponse`。
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TenantListItemResponse {
     #[schema(value_type = String, format = "uuid")]

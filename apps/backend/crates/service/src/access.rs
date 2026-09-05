@@ -75,6 +75,38 @@ pub async fn guest_tenant_ids<C: ConnectionTrait>(
         .collect())
 }
 
+/// そのテナント配下で自分が `project_members` に明示指定されている project の id 集合。
+///
+/// project-only の客分に開く一覧系 2 口（プロジェクト一覧・My Tasks）の絞り込みに使う。
+/// 公開規則（メンバー未指定＝テナント全体に開放）はここでは見ない —
+/// 公開 project は客分に開かないため、明示指定の行だけを数える。
+pub async fn explicit_member_project_ids<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, AppError> {
+    let project_ids: Vec<Uuid> = project_members::Entity::find()
+        .filter(project_members::Column::UserId.eq(user_id))
+        .select_only()
+        .column(project_members::Column::ProjectId)
+        .into_tuple()
+        .all(db)
+        .await?;
+    if project_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(projects::Entity::find()
+        .filter(projects::Column::Id.is_in(project_ids))
+        .filter(projects::Column::TenantId.eq(tenant_id))
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
+
 /// プロジェクト単位のアクセス可否。**テナントに入れることは呼び出し側で確認済みの前提。**
 ///
 /// メンバーを 1 人も指定していないプロジェクトはテナント全体に開放し、

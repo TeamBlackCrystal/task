@@ -9,7 +9,11 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, prelude::Uuid};
 
 use entity::{projects, scopes::Scope, tenants, users};
 
-use crate::auth_helpers::{is_project_member, is_tenant_member, project_is_open_or_member};
+use std::collections::HashSet;
+
+use crate::auth_helpers::{
+    explicit_member_project_ids, is_project_member, is_tenant_member, project_is_open_or_member,
+};
 use crate::{AppState, error::AppError};
 use service::auth::{AuthError, authenticate_personal_token};
 
@@ -164,6 +168,34 @@ impl AuthUser {
         // 所属判定はセッションと同じ経路に通す。
         has_tenant_access(state, self.user_id, tenant_id, project_id).await
     }
+
+    /// テナント一覧系の 2 口（プロジェクト一覧・My Tasks）専用: 通常の所属判定に加えて
+    /// project-only の客分も通す。
+    ///
+    /// 戻り値は客分なら `Some(明示 member の project id 集合)` — 呼び出し側はこれに
+    /// 絞って返す。owner / tenant member なら `None` — 従来どおりの規則で返す。
+    /// PAT の束縛・scope の層は `ensure_tenant_access` と同じ
+    /// （別テナントへの口・project 制限付き PAT のテナント全体操作は従来どおり 403）。
+    /// 客分の判別は所属欠落の 403（tenant-membership-missing）だけを拾い、
+    /// それ以外の失敗はそのまま返す。
+    pub async fn ensure_tenant_access_or_guest_scope(
+        &self,
+        state: &AppState,
+        tenant_id: Uuid,
+    ) -> Result<Option<HashSet<Uuid>>, AppError> {
+        match self.ensure_tenant_access(state, tenant_id, None).await {
+            Ok(()) => Ok(None),
+            Err(AppError::ForbiddenDetail(detail)) if detail == "tenant-membership-missing" => {
+                let ids = explicit_member_project_ids(&state.db, tenant_id, self.user_id).await?;
+                if ids.is_empty() {
+                    Err(AppError::ForbiddenDetail(detail))
+                } else {
+                    Ok(Some(ids))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 async fn verify_project_in_tenant(
@@ -189,6 +221,8 @@ async fn verify_project_in_tenant(
 /// project にだけ参加しテナントに参加しない客分（project-only guest）は、
 /// 名指しされたプロジェクトの中だけ通る。名指しの無いテナント全体の口は従来どおり 403
 /// （apps/backend/docs/tenant-project-authz.md の「所属の 3 層」）。
+/// 一覧系 2 口（プロジェクト一覧・My Tasks）の客分への絞り込み開放は
+/// `ensure_tenant_access_or_guest_scope` が別途担う。
 async fn has_tenant_access(
     state: &AppState,
     user_id: Uuid,

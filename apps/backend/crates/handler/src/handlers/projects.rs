@@ -186,7 +186,21 @@ pub async fn list_projects(
     Path(tenant_id): Path<Uuid>,
 ) -> Result<Json<Vec<ProjectResponse>>, AppError> {
     auth.require_scope(Scope::ReadProject)?;
-    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    // project-only の客分には、明示 member の project だけに絞って返す（公開 project は
+    // 含めぬ）。frontend の project 解決（projectKey→UUID）がこの一覧に依存するため、
+    // 403 ではなく絞って開く（apps/backend/docs/tenant-project-authz.md）
+    if let Some(guest_project_ids) = auth
+        .ensure_tenant_access_or_guest_scope(&state, tenant_id)
+        .await?
+    {
+        let list = projects::Entity::find()
+            .filter(projects::Column::TenantId.eq(tenant_id))
+            .filter(projects::Column::IsPersonal.eq(false))
+            .filter(projects::Column::Id.is_in(guest_project_ids.into_iter().collect::<Vec<_>>()))
+            .all(&state.db)
+            .await?;
+        return Ok(Json(list.into_iter().map(Into::into).collect()));
+    }
     if is_tenant_owner(&state.db, tenant_id, auth.user_id).await? {
         let list = projects::Entity::find()
             .filter(projects::Column::TenantId.eq(tenant_id))
