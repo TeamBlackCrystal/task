@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import { createPinia, setActivePinia } from 'pinia';
-import { fn, expect, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import { provide } from 'vue';
+
+import { PhBell, PhGear } from '@phosphor-icons/vue';
 
 import AppHeader from '@/components/header/AppHeader.vue';
 import NavUser from '@/components/header/NavUser.vue';
@@ -91,6 +93,35 @@ function realLayoutDecorator() {
   });
 }
 
+function provideQueryClient() {
+  provide(
+    VUE_QUERY_CLIENT,
+    new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+    }),
+  );
+}
+
+/** ドロップダウンの頭に出すメンバー数のぶんだけ応答を用意する。 */
+function mockMembers(count = 4) {
+  return () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (req: Request | string) => {
+      const url = typeof req === 'string' ? req : req.url;
+      const body = url.includes('/members')
+        ? Array.from({ length: count }, (_, index) => ({ id: String(index) }))
+        : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
+    return () => {
+      globalThis.fetch = original;
+    };
+  };
+}
+
 /**
  * AppHeader は Pinia と pageContext から値を取るので、ストーリーでは同じ構成を
  * 手で組んで見た目だけを確認する（テナントは左、アカウントは右）。
@@ -98,9 +129,10 @@ function realLayoutDecorator() {
 const renderHeader =
   (options: { tenants?: Tenant[]; selectedTenantId?: string | null } = {}) =>
   () => ({
-    components: { NavUser, TenantSwitcher },
+    components: { NavUser, TenantSwitcher, PhBell, PhGear },
     setup() {
       setActivePinia(createPinia());
+      provideQueryClient();
       const store = useTenantStore();
       store.$patch({
         tenants: options.tenants ?? [acme, globex],
@@ -120,6 +152,21 @@ const renderHeader =
           @select="selectTenant"
         />
         <div class="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="通知"
+            class="flex size-7.5 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent"
+          >
+            <PhBell class="size-4" />
+          </button>
+          <a
+            href="/acme/settings"
+            aria-label="テナント設定"
+            class="flex size-7.5 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent"
+          >
+            <PhGear class="size-4" />
+          </a>
+          <span class="mx-1 h-4 w-px bg-border" />
           <NavUser :user="user" :on-logout="logout" />
         </div>
       </header>
@@ -136,10 +183,37 @@ export default meta;
 
 type Story = StoryObj;
 
-export const Default: Story = { render: renderHeader() };
+export const Default: Story = { render: renderHeader(), beforeEach: mockMembers() };
+
+/**
+ * テナントを押したときの中身。現在地・設定への導線・切り替え・作成が 1 枚に載る。
+ */
+export const TenantMenuOpen: Story = {
+  render: renderHeader(),
+  beforeEach: mockMembers(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const page = within(canvasElement.ownerDocument.body);
+
+    await userEvent.click(await canvas.findByRole('button', { name: /Acme Inc/ }));
+
+    await expect(page.findByText('4 人のメンバー')).resolves.toBeInTheDocument();
+    await expect(page.getByRole('menuitem', { name: 'テナント設定' })).toHaveAttribute(
+      'href',
+      '/acme/settings',
+    );
+    await expect(page.getByRole('menuitem', { name: 'メンバー' })).toHaveAttribute(
+      'href',
+      '/acme/settings/members',
+    );
+    await expect(page.getByText('テナントを切り替え')).toBeInTheDocument();
+    await expect(page.getByRole('button', { name: 'テナントを作成' })).toBeInTheDocument();
+  },
+};
 
 export const NoTenants: Story = {
   render: renderHeader({ tenants: [], selectedTenantId: null }),
+  beforeEach: mockMembers(),
 };
 
 /** ヘッダーとサイドバーの重なりを見るための並び。 */

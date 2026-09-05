@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PhBell, PhGear } from '@phosphor-icons/vue';
 import { computed, watch } from 'vue';
 import { usePageContext } from 'vike-vue/usePageContext';
 
@@ -28,6 +29,11 @@ function selectTenant(tenant: Tenant) {
   }
 }
 
+/** テナント設定を見ているあいだは歯車に印を付ける。 */
+const isTenantSettings = computed(() =>
+  pageContext.urlPathname.startsWith(`/${tenantSlug.value}/settings`),
+);
+
 const user = computed(() => ({
   name: authStore.user?.username ?? 'User',
   email: authStore.user?.email ?? '',
@@ -49,6 +55,25 @@ const user = computed(() => ({
       @retry="tenantStore.loadTenants(tenantSlug)"
     />
     <div class="ml-auto flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="通知"
+        title="通知"
+        class="flex size-7.5 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      >
+        <PhBell class="size-4" />
+      </button>
+      <a
+        v-if="tenantSlug"
+        :href="`/${tenantSlug}/settings`"
+        aria-label="テナント設定"
+        title="テナント設定"
+        class="flex size-7.5 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        :class="isTenantSettings ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+      >
+        <PhGear class="size-4" />
+      </a>
+      <span class="mx-1 h-4 w-px bg-border" />
       <NavUser :user="user" :on-logout="logout" />
     </div>
   </header>
