@@ -40,21 +40,13 @@ const props = defineProps<{
   /** 画像 URL。空なら絵文字を出す */
   imageUrl: string;
   emoji: string;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:emoji': [value: string];
   'update:imageUrl': [value: string];
 }>();
-
-/** 選んだ画像はその場では data URL で持ち、保存時に本体へ渡す。 */
-function onUpload(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => emit('update:imageUrl', String(reader.result));
-  reader.readAsDataURL(file);
-}
 </script>
 
 <template>
@@ -63,6 +55,7 @@ function onUpload(event: Event) {
       <button
         type="button"
         aria-label="テナントアイコンを変更"
+        :disabled="props.disabled"
         class="flex size-14 items-center justify-center overflow-hidden rounded-[10px] border bg-secondary p-0"
       >
         <span
@@ -76,12 +69,16 @@ function onUpload(event: Event) {
 
     <DropdownMenuContent align="start" class="w-[272px] p-1">
       <label
-        class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+        class="flex cursor-not-allowed items-center gap-2 rounded px-2 py-1.5 text-sm opacity-50"
       >
         <PhUploadSimple class="size-4 shrink-0 text-muted-foreground" />
-        <span class="min-w-0 flex-1">画像をアップロード</span>
-        <input type="file" accept="image/*" class="hidden" @change="onUpload" />
+        <span class="min-w-0 flex-1">画像をアップロード（準備中）</span>
+        <input type="file" class="hidden" disabled />
       </label>
+
+      <p class="px-2 py-1 text-xs text-muted-foreground">
+        画像アップロードは専用 API の実装後に利用できます。
+      </p>
 
       <Separator class="my-1" />
 
@@ -95,6 +92,7 @@ function onUpload(event: Event) {
           :key="choice"
           type="button"
           :aria-label="`アイコン ${choice}`"
+          :disabled="props.disabled"
           class="h-[30px] rounded-md text-lg leading-none hover:bg-accent"
           :class="!props.imageUrl && choice === props.emoji ? 'bg-secondary' : ''"
           @click="
@@ -110,6 +108,7 @@ function onUpload(event: Event) {
         <Separator class="my-1" />
         <button
           type="button"
+          :disabled="props.disabled"
           class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent"
           @click="emit('update:imageUrl', '')"
         >

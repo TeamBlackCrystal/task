@@ -108,9 +108,11 @@ function mockMembers(count = 4) {
     const original = globalThis.fetch;
     globalThis.fetch = (async (req: Request | string) => {
       const url = typeof req === 'string' ? req : req.url;
-      const body = url.includes('/members')
-        ? Array.from({ length: count }, (_, index) => ({ id: String(index) }))
-        : [];
+      const body = url.includes('/v1/auth/me')
+        ? { id: ownerId, username: 'yupix', avatar_url: null }
+        : url.includes('/members')
+          ? Array.from({ length: count }, (_, index) => ({ id: String(index) }))
+          : [];
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
 import { computed, reactive, ref, watch } from 'vue';
+import { navigate } from 'vike/client/router';
 
 import TenantIconPicker from '@/components/tenants/TenantIconPicker.vue';
 import { Button } from '@/components/ui/button';
@@ -15,8 +16,10 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import DeleteTenantDialog from '@/components/tenants/DeleteTenantDialog.vue';
-import { apiClient } from '@/lib/api-vue-query';
+import { apiClient, useMeQuery } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
+import { useAuthStore } from '@/stores/auth';
+import { useTenantStore } from '@/stores/tenant';
 
 type TenantResponse = components['schemas']['TenantResponse'];
 
@@ -26,8 +29,14 @@ const TENANT_PATH = '/v1/tenants/{id}' as const;
 const props = defineProps<{ tenant: TenantResponse }>();
 
 const queryClient = useQueryClient();
+const authStore = useAuthStore();
+const meQuery = useMeQuery();
+const tenantStore = useTenantStore();
 const submitError = ref<string | null>(null);
 const isDeleteOpen = ref(false);
+
+const currentUserId = computed(() => meQuery.data.value?.id ?? authStore.user?.id);
+const canEditGeneral = computed(() => currentUserId.value === props.tenant.owner_id);
 
 /**
  * 保存はページ下の固定バーからまとめて行う。
@@ -57,7 +66,9 @@ const isDirty = computed(
     draft.iconUrl !== props.tenant.icon_url,
 );
 
-const canSave = computed(() => isDirty.value && draft.name.trim().length > 0);
+const canSave = computed(
+  () => canEditGeneral.value && isDirty.value && draft.name.trim().length > 0,
+);
 
 const updateMutation = apiClient.useMutation('put', TENANT_PATH);
 
@@ -81,9 +92,16 @@ async function save() {
       },
     });
     await queryClient.invalidateQueries({ queryKey: ['get', LIST_TENANTS_PATH] });
+    await tenantStore.loadTenants(props.tenant.display_id);
   } catch {
     submitError.value = 'テナントを更新できませんでした';
   }
+}
+
+async function onDeleted(deletedTenant: TenantResponse) {
+  await tenantStore.loadTenants();
+  const nextTenant = tenantStore.tenants.find((tenant) => tenant.id !== deletedTenant.id);
+  await navigate(nextTenant ? `/${nextTenant.display_id}/my-tasks` : '/settings/profile');
 }
 
 /**
@@ -155,11 +173,21 @@ const ACCESS_FLAGS = [
           <div class="mb-4 flex items-start gap-4">
             <div class="shrink-0">
               <div class="mb-1.5 text-[13px] font-medium">アイコン</div>
-              <TenantIconPicker v-model:emoji="draft.emoji" v-model:image-url="draft.iconUrl" />
+              <TenantIconPicker
+                v-model:emoji="draft.emoji"
+                v-model:image-url="draft.iconUrl"
+                :disabled="!canEditGeneral"
+              />
             </div>
             <div class="min-w-0 flex-1">
               <Label for="tenant-name" class="mb-1.5 text-[13px] font-medium">テナント名</Label>
-              <Input id="tenant-name" v-model="draft.name" placeholder="Acme Inc" class="h-9" />
+              <Input
+                id="tenant-name"
+                v-model="draft.name"
+                placeholder="Acme Inc"
+                class="h-9"
+                :disabled="!canEditGeneral"
+              />
             </div>
           </div>
 
@@ -190,22 +218,31 @@ const ACCESS_FLAGS = [
               v-model="draft.description"
               rows="2"
               placeholder="このテナントの用途"
+              :disabled="!canEditGeneral"
             />
           </div>
         </section>
+
+        <p
+          v-if="!canEditGeneral && !meQuery.isPending.value"
+          class="mb-5 rounded-[10px] border border-dashed p-3 text-sm text-muted-foreground"
+          role="status"
+        >
+          基本情報と危険な操作を変更できるのはテナントオーナーだけです。
+        </p>
 
         <!-- Defaults -->
         <section class="mb-5 rounded-[10px] border p-4">
           <h2 class="mb-1 text-sm font-semibold">既定値</h2>
           <p class="mb-3.5 text-xs text-muted-foreground">
-            このテナントで新しく作るプロジェクトとタスクに使われます。
+            この設定は API 未実装のため、現在は表示のみです。変更は保存されません。
           </p>
           <div class="grid grid-cols-2 gap-3">
             <div v-for="field in DEFAULT_FIELDS" :key="field.key" class="min-w-0">
               <Label :for="`tenant-default-${field.key}`" class="mb-1.5 text-[13px] font-medium">
                 {{ field.label }}
               </Label>
-              <Select v-model="defaults[field.key]">
+              <Select v-model="defaults[field.key]" disabled>
                 <SelectTrigger :id="`tenant-default-${field.key}`" class="h-9 w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -222,6 +259,9 @@ const ACCESS_FLAGS = [
         <!-- Access -->
         <section class="mb-5 rounded-[10px] border">
           <h2 class="px-4 pt-4 text-sm font-semibold">アクセス</h2>
+          <p class="px-4 pt-1 text-xs text-muted-foreground">
+            この設定は API 未実装のため、現在は表示のみです。変更は保存されません。
+          </p>
           <div class="px-4 pb-1.5 pt-2.5">
             <div
               v-for="flag in ACCESS_FLAGS"
@@ -237,9 +277,9 @@ const ACCESS_FLAGS = [
                 role="switch"
                 :aria-checked="flags[flag.key]"
                 :aria-label="flag.label"
-                class="relative mt-0.5 h-5 w-9 shrink-0 rounded-full border transition-colors"
+                disabled
+                class="relative mt-0.5 h-5 w-9 shrink-0 cursor-not-allowed rounded-full border opacity-50 transition-colors"
                 :class="flags[flag.key] ? 'border-primary bg-primary' : 'border-input bg-secondary'"
-                @click="flags[flag.key] = !flags[flag.key]"
               >
                 <span
                   class="absolute top-px size-4 rounded-full bg-white transition-[left]"
@@ -251,7 +291,7 @@ const ACCESS_FLAGS = [
         </section>
 
         <!-- Danger zone -->
-        <section class="rounded-[10px] border p-4">
+        <section v-if="canEditGeneral" class="rounded-[10px] border p-4">
           <h2 class="mb-3.5 text-sm font-semibold">危険な操作</h2>
 
           <div class="flex items-center gap-3 border-b pb-3.5">
@@ -261,7 +301,9 @@ const ACCESS_FLAGS = [
                 このテナントを別の管理者に渡します。自分はメンバーとして残ります。
               </span>
             </span>
-            <Button variant="outline" size="sm" class="shrink-0">移す</Button>
+            <Button variant="outline" size="sm" class="shrink-0" disabled title="未実装">
+              移す
+            </Button>
           </div>
 
           <div class="flex items-center gap-3 pt-3.5">
@@ -280,7 +322,10 @@ const ACCESS_FLAGS = [
     </div>
 
     <!-- 保存バー。変更があるときだけ出す -->
-    <div v-if="isDirty" class="flex shrink-0 items-center gap-3 border-t bg-background px-6 py-3">
+    <div
+      v-if="isDirty && canEditGeneral"
+      class="flex shrink-0 items-center gap-3 border-t bg-background px-6 py-3"
+    >
       <span
         class="flex-1 text-[13px]"
         :class="submitError ? 'text-destructive' : 'text-muted-foreground'"
@@ -293,6 +338,11 @@ const ACCESS_FLAGS = [
       </Button>
     </div>
 
-    <DeleteTenantDialog v-model:open="isDeleteOpen" :tenant="props.tenant" />
+    <DeleteTenantDialog
+      v-if="canEditGeneral"
+      v-model:open="isDeleteOpen"
+      :tenant="props.tenant"
+      @deleted="onDeleted"
+    />
   </div>
 </template>

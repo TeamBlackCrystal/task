@@ -109,11 +109,31 @@ pub async fn list_members(
     // （PAT はテナント系エンドポイント共通で AdminTenant スコープを要求する）
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
+    let tenant = tenants::Entity::find_by_id(tenant_id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let members = tenant_members::Entity::find()
         .filter(tenant_members::Column::TenantId.eq(tenant_id))
         .all(&state.db)
         .await?;
-    Ok(Json(attach_users(&state, members).await?))
+    let mut response = attach_users(&state, members).await?;
+
+    // owner は認可上 tenant_members に行を持たないが、メンバー管理画面では
+    // 常に表示できる必要がある。実在するメンバー行とは区別して read-only の
+    // synthetic row を返し、PUT/DELETE の対象にはしない（UI 側でも操作を隠す）。
+    if !response
+        .iter()
+        .any(|member| member.user_id == tenant.owner_id)
+    {
+        let owner = users::Entity::find_by_id(tenant.owner_id)
+            .one(&state.db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("tenant {} has no owner row", tenant_id))?;
+        response.insert(0, TenantMemberResponse::from_owner(tenant_id, owner));
+    }
+
+    Ok(Json(response))
 }
 
 #[axum::debug_handler]

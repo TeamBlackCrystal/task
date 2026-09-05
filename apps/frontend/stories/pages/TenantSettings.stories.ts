@@ -2,8 +2,10 @@ import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { provide } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
+import { createPinia, setActivePinia } from 'pinia';
 
 import TenantSettingsPage from '@/pages/@tenant/settings/+Page.vue';
+import { useAuthStore } from '@/stores/auth';
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
 
@@ -13,6 +15,7 @@ const mockContext = {
 };
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
+const OWNER_ID = '00000000-0000-0000-0000-000000000002';
 
 const sampleTenant = {
   id: TENANT_UUID,
@@ -20,7 +23,7 @@ const sampleTenant = {
   name: 'Acme Inc',
   description: 'プロダクト開発チーム全体のタスクを管理するテナント。',
   icon_url: '',
-  owner_id: '00000000-0000-0000-0000-000000000002',
+  owner_id: OWNER_ID,
   drive_quota_bytes: null,
   require_2fa: false,
 };
@@ -32,6 +35,7 @@ const jsonResponse = (data: unknown, status = 200) =>
   });
 
 type MockOptions = {
+  me?: { id: string; username: string };
   noTenant?: boolean;
   rejectWrite?: number;
   hangTenants?: boolean;
@@ -51,6 +55,9 @@ function mockFetch(overrides: MockOptions = {}) {
         if (overrides.hangTenants) return new Promise<Response>(() => {});
         return jsonResponse(overrides.noTenant ? [] : [sampleTenant]);
       }
+      if (pathname.includes('/v1/auth/me')) {
+        return jsonResponse(overrides.me ?? { id: OWNER_ID, username: 'shadcn', avatar_url: null });
+      }
       if (pathname.endsWith(`/v1/tenants/${TENANT_UUID}`)) {
         if (overrides.rejectWrite) return jsonResponse({ message: 'error' }, overrides.rejectWrite);
         if (method === 'DELETE') return new Response(null, { status: 204 });
@@ -67,15 +74,32 @@ function mockFetch(overrides: MockOptions = {}) {
   };
 }
 
+type StoryUser = { id: string; username: string; avatar_url: null };
+
 function storyDecorator() {
-  return () => ({
+  return (_story: unknown, context: { parameters?: { currentUser?: StoryUser } }) => ({
     setup() {
+      setActivePinia(createPinia());
+      const currentUser = context.parameters?.currentUser ?? {
+        id: OWNER_ID,
+        username: 'shadcn',
+        avatar_url: null,
+      };
+      useAuthStore().setUser({
+        ...currentUser,
+        email: `${currentUser.username}@example.com`,
+        email_verified: true,
+        is_admin: false,
+        is_suspended: false,
+        totp_enabled: false,
+      });
       const queryClient = new QueryClient({
         defaultOptions: {
           queries: { retry: false, gcTime: 0, staleTime: 0 },
           mutations: { retry: false },
         },
       });
+      queryClient.setQueryData(['get', '/v1/auth/me'], currentUser);
       provide(VUE_QUERY_CLIENT, queryClient);
       provide(PAGE_CONTEXT_KEY, mockContext);
     },
@@ -92,7 +116,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'テナント設定の一般ページ。基本情報・既定値・アクセス・危険な操作。既定値とアクセスは API がまだ無いので表示のみ。',
+          'テナント設定の一般ページ。基本情報は owner のみ編集できる。既定値・アクセス・owner 移譲は未実装のため表示のみで、削除は owner のみ実行できる。',
       },
     },
   },
@@ -167,6 +191,30 @@ export const EmptyNameBlocksSave: Story = {
   },
 };
 
+export const MemberCannotEdit: Story = {
+  name: 'Member は編集できない',
+  parameters: {
+    currentUser: {
+      id: '00000000-0000-0000-0000-000000000004',
+      username: 'daisuke.sato',
+      avatar_url: null,
+    },
+  },
+  beforeEach: mockFetch({
+    me: {
+      id: '00000000-0000-0000-0000-000000000004',
+      username: 'daisuke.sato',
+    },
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByLabelText('テナント名')).resolves.toBeDisabled();
+    await expect(canvas.getByLabelText('説明')).toBeDisabled();
+    await expect(canvas.findByRole('status')).resolves.toHaveTextContent('テナントオーナーだけ');
+    await expect(canvas.queryByRole('button', { name: '削除' })).not.toBeInTheDocument();
+  },
+};
+
 export const SaveError: Story = {
   name: '保存に失敗',
   beforeEach: mockFetch({ rejectWrite: 500 }),
@@ -212,18 +260,16 @@ export const DeleteNeedsTypedSlug: Story = {
   },
 };
 
-export const AccessTogglesFlip: Story = {
-  name: 'アクセスの切り替え（表示のみ）',
+export const AccessTogglesDisabled: Story = {
+  name: 'アクセスの切り替え（未実装）',
   beforeEach: mockFetch(),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const user = userEvent.setup();
     const toggle = await canvas.findByRole('switch', { name: 'ゲスト用の共有リンクを許す' });
 
     await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await user.click(toggle);
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
-    // API に持ち場が無いので、切り替えても保存バーは出ない
+    await expect(toggle).toBeDisabled();
+    // API ができるまでは表示だけで状態は変えない
     await expect(canvas.queryByText('保存されていない変更があります')).not.toBeInTheDocument();
   },
 };

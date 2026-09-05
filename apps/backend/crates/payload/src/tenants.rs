@@ -44,6 +44,7 @@ pub struct CreateTenantRequest {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    #[validate(length(max = 700_000))]
     pub icon_url: String,
 }
 
@@ -52,5 +53,7 @@ pub struct UpdateTenantRequest {
     #[validate(length(min = 1))]
     pub name: Option<String>,
     pub description: Option<String>,
+    /// data URL を受け付ける場合も DB 行と一覧レスポンスを膨らませない上限を設ける。
+    #[validate(length(max = 700_000))]
     pub icon_url: Option<String>,
 }

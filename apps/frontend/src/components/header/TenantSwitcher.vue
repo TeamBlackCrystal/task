@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { apiClient } from '@/lib/api-vue-query';
+import { apiClient, useMeQuery } from '@/lib/api-vue-query';
 
 const MEMBERS_PATH = '/v1/tenants/{tenant_id}/members' as const;
 
@@ -67,6 +67,11 @@ const membersQuery = useQuery(
     staleTime: 60_000,
     retry: false,
   })),
+);
+
+const meQuery = useMeQuery();
+const canManageGeneral = computed(
+  () => !!activeTenant.value && meQuery.data.value?.id === activeTenant.value.owner_id,
 );
 
 const memberSummary = computed(() => {
@@ -131,7 +136,7 @@ const membersHref = computed(() =>
 
       <template v-if="activeTenant">
         <DropdownMenuSeparator />
-        <DropdownMenuItem as-child class="gap-2">
+        <DropdownMenuItem v-if="canManageGeneral" as-child class="gap-2">
           <a :href="settingsHref">
             <PhGear class="size-4 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1">テナント設定</span>

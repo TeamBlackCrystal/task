@@ -11,8 +11,8 @@ import { ListTodo } from '@lucide/vue';
 import NavMain from '@/components/sidebar/NavMain.vue';
 import NavProjects from '@/components/sidebar/NavProjects.vue';
 import {
- closeSidebarForProgrammaticNavigate,
- shouldCloseSidebarOnNavigate,
+  closeSidebarForProgrammaticNavigate,
+  shouldCloseSidebarOnNavigate,
 } from '@/components/sidebar/sidebar-navigation';
 
 import { Sidebar, SidebarContent, SidebarRail, useSidebar } from '@/components/ui/sidebar';

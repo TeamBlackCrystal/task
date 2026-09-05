@@ -2,8 +2,10 @@ import type { Meta, StoryObj } from '@storybook/vue3-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { provide } from 'vue';
 import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
+import { createPinia, setActivePinia } from 'pinia';
 
 import TenantMembersPage from '@/pages/@tenant/settings/members/+Page.vue';
+import { useAuthStore } from '@/stores/auth';
 
 const PAGE_CONTEXT_KEY = 'vike-vue:usePageContext';
 
@@ -14,6 +16,7 @@ const mockContext = {
 
 const TENANT_UUID = '11111111-1111-1111-1111-111111111111';
 const OWNER_ID = '00000000-0000-0000-0000-000000000002';
+const MEMBERS_PATH = '/v1/tenants/{tenant_id}/members';
 
 const sampleTenant = {
   id: TENANT_UUID,
@@ -35,7 +38,6 @@ const member = (id: string, username: string, role: string, userId: string) => (
 });
 
 const sampleMembers = [
-  member('aaaaaaaa-0000-4000-8000-000000000001', 'shadcn', 'Admin', OWNER_ID),
   member(
     'aaaaaaaa-0000-4000-8000-000000000002',
     'rei.tanaka',
@@ -64,6 +66,7 @@ const jsonResponse = (data: unknown, status = 200) =>
 
 type MockOptions = {
   members?: typeof sampleMembers;
+  me?: { id: string; username: string };
   rejectMembers?: boolean;
   hangMembers?: boolean;
   rejectWrite?: number;
@@ -83,8 +86,9 @@ function mockFetch(overrides: MockOptions = {}) {
       if (/\/v1\/tenants\/?$/.test(pathname) && method === 'GET') {
         return jsonResponse([sampleTenant]);
       }
-      if (pathname.endsWith('/v1/auth/me')) {
-        return jsonResponse({ id: OWNER_ID, username: 'shadcn', avatar_url: null });
+      if (pathname.includes('/v1/auth/me')) {
+        const currentUser = overrides.me ?? { id: OWNER_ID, username: 'shadcn' };
+        return jsonResponse({ ...currentUser, avatar_url: null });
       }
       if (pathname.endsWith('/members') && method === 'GET') {
         if (overrides.hangMembers) return new Promise<Response>(() => {});
@@ -112,15 +116,43 @@ function mockFetch(overrides: MockOptions = {}) {
   };
 }
 
+type StoryUser = { id: string; username: string; avatar_url: null };
+type StoryParameters = {
+  currentUser?: StoryUser;
+  preloadMembers?: boolean;
+};
+
 function storyDecorator() {
-  return () => ({
+  return (_story: unknown, context: { parameters?: StoryParameters }) => ({
     setup() {
+      setActivePinia(createPinia());
+      const currentUser = context.parameters?.currentUser ?? {
+        id: OWNER_ID,
+        username: 'shadcn',
+        avatar_url: null,
+      };
+      useAuthStore().setUser({
+        ...currentUser,
+        email: `${currentUser.username}@example.com`,
+        email_verified: true,
+        is_admin: false,
+        is_suspended: false,
+        totp_enabled: false,
+      });
       const queryClient = new QueryClient({
         defaultOptions: {
           queries: { retry: false, gcTime: 0, staleTime: 0 },
           mutations: { retry: false },
         },
       });
+      queryClient.setQueryData(['get', '/v1/auth/me'], currentUser);
+      if (context.parameters?.preloadMembers) {
+        queryClient.setQueryData(['get', '/v1/tenants'], [sampleTenant]);
+        queryClient.setQueryData(
+          ['get', MEMBERS_PATH, { params: { path: { tenant_id: TENANT_UUID } } }],
+          sampleMembers,
+        );
+      }
       provide(VUE_QUERY_CLIENT, queryClient);
       provide(PAGE_CONTEXT_KEY, mockContext);
     },
@@ -137,7 +169,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'テナント設定のメンバーページ。招待欄は API がまだ無いので表示のみ。一覧・ロール変更・除外は tenant_members API に繋いでいる。',
+          'テナント設定のメンバーページ。owner は API の synthetic row と、旧レスポンス向けの本人情報 fallback で表示する。招待は未実装で、一覧・ロール変更・除外は tenant_members API に繋いでいる。',
       },
     },
   },
@@ -206,9 +238,9 @@ export const RemoveMember: Story = {
   },
 };
 
-/** 最後の管理者を降格できないのは API 側の規則。理由が出ないと操作が謎に失敗する。 */
-export const RoleChangeConflict: Story = {
-  name: 'ロール変更が拒否される（409）',
+/** API が返すエラーを、実装されていない規則に読み替えずそのまま表示する。 */
+export const RoleChangeError: Story = {
+  name: 'ロール変更に失敗',
   beforeEach: mockFetch({ rejectWrite: 409 }),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -218,9 +250,7 @@ export const RoleChangeConflict: Story = {
     await user.click(await canvas.findByLabelText('rei.tanakaのロール'));
     await user.click(await page.findByRole('option', { name: /Member/ }));
 
-    await expect(
-      canvas.findByText('最後の管理者「rei.tanaka」は降格できません。'),
-    ).resolves.toBeInTheDocument();
+    await expect(canvas.findByText('ロールを変更できませんでした。')).resolves.toBeInTheDocument();
   },
 };
 
@@ -237,11 +267,29 @@ export const RemoveError: Story = {
 
 export const OwnerOnly: Story = {
   name: 'オーナーだけ',
-  beforeEach: mockFetch({ members: [sampleMembers[0]!] }),
+  beforeEach: mockFetch({ members: [] }),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.findByText('オーナー')).resolves.toBeInTheDocument();
     await expect(canvas.getByText('1')).toBeInTheDocument();
+  },
+};
+
+export const MemberReadOnly: Story = {
+  name: 'Member は閲覧のみ',
+  parameters: {
+    preloadMembers: true,
+    currentUser: {
+      id: '00000000-0000-0000-0000-000000000004',
+      username: 'daisuke.sato',
+      avatar_url: null,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.findByLabelText('rei.tanakaのロール')).resolves.toBeDisabled();
+    await expect(canvas.findByLabelText('rei.tanakaを外す')).resolves.toBeDisabled();
+    await expect(canvas.getByRole('button', { name: '招待' })).toBeDisabled();
   },
 };
 

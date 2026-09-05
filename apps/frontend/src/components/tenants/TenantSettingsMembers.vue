@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { apiClient, useMeQuery } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
+import { useAuthStore } from '@/stores/auth';
 
 type TenantResponse = components['schemas']['TenantResponse'];
 type TenantMemberResponse = components['schemas']['TenantMemberResponse'];
@@ -24,25 +25,55 @@ const ROLES: { value: TenantRole; label: string; description: string }[] = [
 const props = defineProps<{ tenant: TenantResponse }>();
 
 const queryClient = useQueryClient();
+const authStore = useAuthStore();
 
-const membersQuery = apiClient.useQuery('get', MEMBERS_PATH, {
-  params: { path: { tenant_id: props.tenant.id } },
-});
+const membersQuery = apiClient.useQuery(
+  'get',
+  MEMBERS_PATH,
+  {
+    params: { path: { tenant_id: props.tenant.id } },
+  },
+  {
+    staleTime: 60_000,
+    retry: false,
+  },
+);
 const meQuery = useMeQuery();
+const currentUser = computed(() => meQuery.data.value ?? authStore.user);
 
 const addMutation = apiClient.useMutation('post', MEMBERS_PATH);
 const updateMutation = apiClient.useMutation('put', MEMBER_PATH);
 const removeMutation = apiClient.useMutation('delete', MEMBER_PATH);
 
-const members = computed<TenantMemberResponse[]>(() => membersQuery.data.value ?? []);
+/**
+ * オーナーは認可上 tenant_members に行を持たない。現行 API は一覧用の synthetic row
+ * を返すが、旧レスポンスや更新途中でも owner が欠けないよう本人情報から補完する。
+ */
+const members = computed<TenantMemberResponse[]>(() => {
+  const currentMembers = [...(membersQuery.data.value ?? [])];
+  const me = currentUser.value;
+  if (me?.id === props.tenant.owner_id && !currentMembers.some((m) => m.user_id === me.id)) {
+    currentMembers.unshift({
+      id: me.id,
+      tenant_id: props.tenant.id,
+      user_id: me.id,
+      role: 'Admin',
+      user: { id: me.id, username: me.username, avatar_url: me.avatar_url ?? null },
+    });
+  }
+  return currentMembers;
+});
 const memberCount = computed(() => members.value.length);
+
+const canManageMembers = computed(() => {
+  const userId = currentUser.value?.id;
+  if (!userId) return false;
+  if (userId === props.tenant.owner_id) return true;
+  return members.value.some((member) => member.user_id === userId && member.role === 'Admin');
+});
 
 async function invalidateMembers() {
   await queryClient.invalidateQueries({ queryKey: ['get', MEMBERS_PATH] });
-}
-
-function errorStatus(e: unknown): number | undefined {
-  return (e as { response?: { status?: number } }).response?.status;
 }
 
 /** オーナーは外せず、ロールも変えられない。行の見た目もそこで分ける。 */
@@ -51,7 +82,7 @@ function isOwner(member: TenantMemberResponse) {
 }
 
 function isSelf(member: TenantMemberResponse) {
-  return member.user_id === meQuery.data.value?.id;
+  return member.user_id === currentUser.value?.id;
 }
 
 function roleDescription(role: TenantRole) {
@@ -73,7 +104,7 @@ function avatarColor(member: TenantMemberResponse) {
 // --- 招待 ---
 //
 // 招待の API はまだ無い（`add_member` は user_id を受け取るので、メールでは呼べない）。
-// 画面の形だけを先に作り、送信では何も起きない。
+// API ができるまで入力欄と送信ボタンは無効にしておく。
 
 const inviteEmail = ref('');
 const inviteRole = ref<TenantRole>('Member');
@@ -83,6 +114,7 @@ const inviteRole = ref<TenantRole>('Member');
 const roleError = ref<string | null>(null);
 
 async function onRoleChange(member: TenantMemberResponse, role: TenantRole) {
+  if (!canManageMembers.value || isOwner(member)) return;
   if (role === member.role) return;
   roleError.value = null;
   try {
@@ -91,11 +123,8 @@ async function onRoleChange(member: TenantMemberResponse, role: TenantRole) {
       body: { role },
     });
     await invalidateMembers();
-  } catch (e) {
-    roleError.value =
-      errorStatus(e) === 409
-        ? `最後の管理者「${member.user.username}」は降格できません。`
-        : 'ロールを変更できませんでした。';
+  } catch {
+    roleError.value = 'ロールを変更できませんでした。';
     // 表示は membersQuery のデータに束縛しているので、再取得で元のロールへ戻る
     await invalidateMembers();
   }
@@ -106,6 +135,7 @@ async function onRoleChange(member: TenantMemberResponse, role: TenantRole) {
 const removeError = ref<string | null>(null);
 
 async function onRemove(member: TenantMemberResponse) {
+  if (!canManageMembers.value || isOwner(member)) return;
   removeError.value = null;
   try {
     await removeMutation.mutateAsync({
@@ -140,12 +170,13 @@ async function onRemove(member: TenantMemberResponse) {
             <input
               v-model="inviteEmail"
               type="email"
+              disabled
               aria-label="招待するメールアドレス"
               placeholder="name@example.com"
               class="h-9 w-full rounded-md border bg-background pl-8 pr-3 text-sm shadow-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
           </div>
-          <Select v-model="inviteRole">
+          <Select v-model="inviteRole" disabled>
             <SelectTrigger aria-label="招待するロール" class="h-9 w-[130px]">
               <span class="truncate">{{ inviteRole }}</span>
             </SelectTrigger>
@@ -155,13 +186,13 @@ async function onRemove(member: TenantMemberResponse) {
               </SelectItem>
             </SelectContent>
           </Select>
-          <Button class="gap-2">
+          <Button class="gap-2" disabled>
             <PhPaperPlaneTilt class="size-4" />
             招待
           </Button>
         </div>
         <p class="mt-2.5 text-xs text-muted-foreground">
-          招待メールを送ります。相手が承諾すると参加します。
+          招待機能は準備中です。現在はメールを送信できません。
         </p>
       </section>
 
@@ -180,6 +211,10 @@ async function onRemove(member: TenantMemberResponse) {
         </p>
 
         <template v-else>
+          <p v-if="!canManageMembers" class="mb-2 text-sm text-muted-foreground" role="status">
+            メンバーのロール変更と除外ができるのは、テナントオーナーと Admin だけです。
+          </p>
+
           <p v-if="roleError" role="alert" class="mb-2 text-sm text-destructive">{{ roleError }}</p>
           <p v-if="removeError" role="alert" class="mb-2 text-sm text-destructive">
             {{ removeError }}
@@ -225,6 +260,7 @@ async function onRemove(member: TenantMemberResponse) {
               <template v-else>
                 <Select
                   :model-value="member.role"
+                  :disabled="!canManageMembers"
                   @update:model-value="onRoleChange(member, $event as TenantRole)"
                 >
                   <SelectTrigger
@@ -250,6 +286,7 @@ async function onRemove(member: TenantMemberResponse) {
                 <Button
                   variant="ghost"
                   size="icon"
+                  :disabled="!canManageMembers"
                   class="size-7 shrink-0 text-muted-foreground"
                   :aria-label="`${member.user.username}を外す`"
                   @click="onRemove(member)"
