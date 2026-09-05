@@ -251,15 +251,28 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
                 is_archived: archive.then_some(true).or(unarchive.then_some(false)),
             });
             check_deadline_order(body.soft_deadline, body.hard_deadline)?;
-            // 担当者は更新の本文では動かせない。専用の endpoint を先に当てて、
-            // 続く更新の応答に新しい顔ぶれが載るようにする
-            if let (Some(current), Some(desired)) = (&current, &resolved.assignees) {
-                sync_assignees(api, project.id, &task_id, &current.task.assignees, desired).await?;
-            }
+            // 担当者は更新の本文では動かせない。先にタスク本体を更新することで、
+            // 本体の検証に失敗したときに担当者だけが変わる状態を避ける。
             let updated: TaskDetailResponse = api
                 .put(&borrow(&task_path(api, project.id, &task_id)), &body)
                 .await?;
-            print(&updated, output);
+            if let (Some(current), Some(desired)) = (&current, &resolved.assignees) {
+                sync_assignees(api, project.id, &task_id, &current.task.assignees, desired).await?;
+                // PUT の応答には専用 endpoint で反映した担当者がまだ含まれないため、
+                // 成功時の出力は最終状態を再取得する。
+                let final_task: TaskDetailResponse = api
+                    .get(&borrow(&task_path(api, project.id, &task_id)), &[])
+                    .await
+                    .map_err(|error| {
+                        CliError::new(format!(
+                            "Task and assignees were updated, but fetching the final task failed: {}",
+                            error.message
+                        ))
+                    })?;
+                print(&final_task, output);
+            } else {
+                print(&updated, output);
+            }
         }
         TasksCommand::Complete { task_ref, project } => {
             let target = check_task_target(&task_ref, project.as_deref())?;
@@ -480,7 +493,7 @@ async fn resolve_fields(
 }
 
 /// 更新で `--assignee` に渡された顔ぶれへ寄せる。付け外しは専用の endpoint しかないので、
-/// 今の担当者との差分を当てる。既にいる利用者の役割はそのまま残す。
+/// 今の担当者との差分を当てる。途中で失敗したら、成功済みの差分を逆向きに戻す。
 async fn sync_assignees(
     api: &ApiClient,
     project_id: Uuid,
@@ -492,31 +505,124 @@ async fn sync_assignees(
         current.iter().map(|assignee| assignee.user.id),
         desired.iter().map(|assignee| assignee.user_id),
     );
+    let mut applied_adds = Vec::new();
+    let mut applied_removes = Vec::new();
+
     for user_id in added {
         // 役割は作成のときと同じ綴りを使う（`--assignee` は役割を受けない）
         let role = desired
             .iter()
             .find(|assignee| assignee.user_id == user_id)
             .map_or(ASSIGNEE_ROLE, |assignee| assignee.role.as_str());
-        let mut segments = task_path(api, project_id, task_id);
-        segments.push("assignees".into());
-        let _: TaskAssigneeResponse = api
-            .post(
-                &borrow(&segments),
-                &AddAssigneeRequest {
-                    user_id,
-                    role: role.to_string(),
-                },
+        if let Err(error) = add_assignee(api, project_id, task_id, user_id, role).await {
+            return rollback_assignee_sync(
+                api,
+                project_id,
+                task_id,
+                current,
+                &applied_adds,
+                &applied_removes,
+                error,
             )
-            .await?;
+            .await;
+        }
+        applied_adds.push(user_id);
     }
     for user_id in removed {
-        let mut segments = task_path(api, project_id, task_id);
-        segments.push("assignees".into());
-        segments.push(user_id.to_string());
-        api.delete(&borrow(&segments)).await?;
+        if let Err(error) = remove_assignee(api, project_id, task_id, user_id).await {
+            return rollback_assignee_sync(
+                api,
+                project_id,
+                task_id,
+                current,
+                &applied_adds,
+                &applied_removes,
+                error,
+            )
+            .await;
+        }
+        applied_removes.push(user_id);
     }
     Ok(())
+}
+
+async fn add_assignee(
+    api: &ApiClient,
+    project_id: Uuid,
+    task_id: &str,
+    user_id: Uuid,
+    role: &str,
+) -> Result<()> {
+    let mut segments = task_path(api, project_id, task_id);
+    segments.push("assignees".into());
+    let _: TaskAssigneeResponse = api
+        .post(
+            &borrow(&segments),
+            &AddAssigneeRequest {
+                user_id,
+                role: role.to_string(),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+async fn remove_assignee(
+    api: &ApiClient,
+    project_id: Uuid,
+    task_id: &str,
+    user_id: Uuid,
+) -> Result<()> {
+    let mut segments = task_path(api, project_id, task_id);
+    segments.push("assignees".into());
+    segments.push(user_id.to_string());
+    api.delete(&borrow(&segments)).await
+}
+
+/// 担当者同期が途中で失敗したとき、本体更新後に残った部分更新を可能な範囲で戻す。
+async fn rollback_assignee_sync(
+    api: &ApiClient,
+    project_id: Uuid,
+    task_id: &str,
+    current: &[TaskAssigneeSummary],
+    applied_adds: &[Uuid],
+    applied_removes: &[Uuid],
+    original_error: CliError,
+) -> Result<()> {
+    let mut rollback_errors = Vec::new();
+
+    for user_id in applied_adds.iter().rev().copied() {
+        if let Err(error) = remove_assignee(api, project_id, task_id, user_id).await {
+            rollback_errors.push(format!("remove {user_id}: {}", error.message));
+        }
+    }
+
+    for user_id in applied_removes.iter().rev().copied() {
+        let Some(previous) = current.iter().find(|assignee| assignee.user.id == user_id) else {
+            rollback_errors.push(format!(
+                "restore {user_id}: original assignee was not found"
+            ));
+            continue;
+        };
+        if let Err(error) = add_assignee(api, project_id, task_id, user_id, &previous.role).await {
+            rollback_errors.push(format!("restore {user_id}: {}", error.message));
+        }
+    }
+
+    if rollback_errors.is_empty() {
+        let mut error = original_error;
+        error.message = format!(
+            "Task fields were updated, but assignee synchronization failed; assignees were restored: {}",
+            error.message
+        );
+        Err(error)
+    } else {
+        Err(CliError::new(format!(
+            "Task fields were updated, but assignee synchronization failed: {}; rollback was incomplete: {}",
+            original_error.message,
+            rollback_errors.join("; ")
+        )))
+    }
 }
 
 /// 今の担当者を頼まれた顔ぶれに合わせるための「足す・外す」。
@@ -581,13 +687,14 @@ async fn resolve_parent_task_id(
     }
 }
 
-/// 期限は RFC 3339、または `YYYY-MM-DD`（Web UI と同じ日の始まりを UTC で取る）。
+/// 期限は RFC 3339、または `YYYY-MM-DD`（その日の終わりを UTC で取る）。
 fn parse_deadline(flag: &str, raw: &str) -> Result<DateTime<Utc>> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(raw) {
         return Ok(parsed.with_timezone(&Utc));
     }
     if let Ok(date) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        return Ok(Utc.from_utc_datetime(&date.and_time(NaiveTime::MIN)));
+        let end_of_day = NaiveTime::from_hms_opt(23, 59, 59).expect("valid end-of-day time");
+        return Ok(Utc.from_utc_datetime(&date.and_time(end_of_day)));
     }
     Err(CliError::validation(format!(
         "{flag}: expected RFC 3339 (2026-09-30T12:00:00Z) or a date (2026-09-30), got {raw}"
@@ -914,9 +1021,9 @@ mod tests {
     }
 
     #[test]
-    fn reads_a_bare_date_at_the_start_of_that_day() {
+    fn reads_a_bare_date_at_the_end_of_that_day() {
         let parsed = parse_deadline("--soft-deadline", "2026-09-30").unwrap();
-        assert_eq!(parsed.to_rfc3339(), "2026-09-30T00:00:00+00:00");
+        assert_eq!(parsed.to_rfc3339(), "2026-09-30T23:59:59+00:00");
 
         let exact = parse_deadline("--hard-deadline", "2026-09-30T12:00:00Z").unwrap();
         assert_eq!(exact.to_rfc3339(), "2026-09-30T12:00:00+00:00");
@@ -1006,8 +1113,8 @@ mod tests {
         });
         let json = serde_json::to_value(&body).unwrap();
 
-        assert_eq!(json["soft_deadline"], "2026-09-30T00:00:00Z");
-        assert_eq!(json["hard_deadline"], "2026-10-31T00:00:00Z");
+        assert_eq!(json["soft_deadline"], "2026-09-30T23:59:59Z");
+        assert_eq!(json["hard_deadline"], "2026-10-31T23:59:59Z");
         assert_eq!(json["estimated_minutes"], 90);
         assert_eq!(json["progress_pct"], 40);
         assert_eq!(json["parent_task_id"], uuid(7).to_string());

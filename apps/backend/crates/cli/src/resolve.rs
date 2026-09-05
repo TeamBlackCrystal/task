@@ -223,10 +223,7 @@ pub async fn resolve_user_id(api: &ApiClient, project_id: Uuid, name: &str) -> R
             not_found_with_candidates(
                 "Assignable user",
                 name,
-                users
-                    .iter()
-                    .map(|user| user.username.clone())
-                    .collect(),
+                users.iter().map(|user| user.username.clone()).collect(),
             )
         })
 }

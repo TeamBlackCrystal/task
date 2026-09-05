@@ -9,6 +9,8 @@ use wiremock::{Mock, ResponseTemplate};
 
 const TODO_STATUS: &str = "33333333-3333-4333-8333-333333333333";
 const DONE_STATUS: &str = "66666666-6666-4666-8666-666666666666";
+const ALICE_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BOB_ID: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 /// プロジェクトのキー解決と状態一覧は、ほぼ全てのコマンドの前段になる。
 async fn mount_project_lookup(harness: &Harness) {
@@ -283,6 +285,128 @@ async fn tasks_create_falls_back_to_the_projects_default_status() {
         .await
         .unwrap();
     assert_eq!(code, 0);
+}
+
+#[tokio::test]
+async fn tasks_update_does_not_change_assignees_when_task_update_is_rejected() {
+    let harness = harness().await;
+    mount_project_lookup(&harness).await;
+    Mock::given(method("GET"))
+        .and(path(project_path("assignable-users")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": ALICE_ID, "username": "alice", "avatar_url": null }
+        ])))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(task_detail_json()))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+            "message": "task cannot be updated"
+        })))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+
+    let err = harness
+        .run(&[
+            "task",
+            "tasks",
+            "update",
+            "APP-7",
+            "--title",
+            "Rejected",
+            "--assignee",
+            "alice",
+        ])
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.exit_code, 1);
+    let requests = harness.server.received_requests().await.unwrap();
+    assert!(requests.iter().all(|request| {
+        request.method.as_str() != "POST" && request.method.as_str() != "DELETE"
+    }));
+}
+
+#[tokio::test]
+async fn tasks_update_rolls_back_assignees_when_the_sync_fails_part_way_through() {
+    let harness = harness().await;
+    mount_project_lookup(&harness).await;
+    Mock::given(method("GET"))
+        .and(path(project_path("assignable-users")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": ALICE_ID, "username": "alice", "avatar_url": null },
+            { "id": BOB_ID, "username": "bob", "avatar_url": null }
+        ])))
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(task_detail_json()))
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(task_detail_json()))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(project_path("tasks/APP-7/assignees")))
+        .and(body_json(
+            json!({ "user_id": ALICE_ID, "role": "assignee" }),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "task_id": "22222222-2222-4222-8222-222222222222",
+            "user_id": ALICE_ID,
+            "role": "assignee",
+            "assigned_at": "2026-01-01T00:00:00Z"
+        })))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(project_path("tasks/APP-7/assignees")))
+        .and(body_json(json!({ "user_id": BOB_ID, "role": "assignee" })))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "message": "assignee service unavailable"
+        })))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(project_path(&format!(
+            "tasks/APP-7/assignees/{ALICE_ID}"
+        ))))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+
+    let err = harness
+        .run(&[
+            "task",
+            "tasks",
+            "update",
+            "APP-7",
+            "--assignee",
+            "alice",
+            "--assignee",
+            "bob",
+        ])
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.exit_code, 1);
+    assert!(err.message.contains("assignee service unavailable"));
 }
 
 /// 一覧の絞り込みはクエリ、本文は enum の綴り。取り違えるとサーバーが 400 を返す。
