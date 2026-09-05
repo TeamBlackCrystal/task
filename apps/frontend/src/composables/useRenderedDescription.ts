@@ -20,6 +20,22 @@ export type RenderedDescription = {
 
 export const RENDER_DESCRIPTION_PATH = '/internal/render-description';
 
+/**
+ * その入力では何度試しても成功しない応答。
+ *
+ * - `411` / `413` — 本文が上限を超えていて、読む前に落とされている
+ * - `422` — スキーマ違反（本文長・`taskId` の形式）
+ *
+ * これらは結果として覚えてよい（プレーン表示のまま再取得しない）。逆に `401` や
+ * `5xx` は backend の一時的な不調で出るので、ここに入れない。成功として覚えると
+ * `staleTime: Infinity` でプレーン表示に固定され、この PR が直すはずの
+ * 「分割ビューが素の Markdown のまま」へ戻ってしまう。
+ */
+const PERMANENT_FAILURE_STATUSES = new Set([411, 413, 422]);
+
+/** 一時的な失敗を何回まで試すか。諦めたら呼び出し側がプレーン表示へ倒す。 */
+const TRANSIENT_FAILURE_RETRIES = 2;
+
 export function renderedDescriptionQueryKey(taskUuid: string, description: string) {
   // 本文そのものをキーに含める。ハッシュにすると衝突時に別タスクの HTML を掴むため、
   // 照合と同じく厳密（衝突なし）にしておく。説明はタスク単位の短文である前提。
@@ -50,18 +66,28 @@ export function useRenderedDescription(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ taskId: current.uuid, description: current.text }),
           });
-          // 失敗は throw せず html: null。説明の KFM 表示は付加価値で、
-          // 呼び出し側はプレーン表示へ倒せる（エラー表示を増やさない）
-          if (!response.ok) return { html: null, source: current.text };
+          if (!response.ok) {
+            // 入力由来の拒否は結果として覚える。説明の KFM 表示は付加価値なので、
+            // 呼び出し側はプレーン表示へ倒せる（エラー表示を増やさない）
+            if (PERMANENT_FAILURE_STATUSES.has(response.status)) {
+              return { html: null, source: current.text };
+            }
+            // 401（backend が不調でセッション確認に失敗した）や 5xx は一時的。
+            // ここで html: null を返すと成功として覚えられ、staleTime: Infinity の
+            // ぶんプレーン表示に固定される。投げて再試行へ載せる
+            throw new Error(`render-description failed with ${response.status}`);
+          }
 
           const data = (await response.json()) as { html?: string | null };
           return { html: data.html ?? null, source: current.text };
         },
         enabled: !!resolved.value,
-        // 同じ本文なら結果は変わらない（描画は決定的）。再取得の価値がない
+        // 同じ本文なら結果は変わらない（描画は決定的）。再取得の価値がない。
+        // これが効くのは成功した結果だけで、投げた失敗は data を持たないため
+        // 次のマウント・フォーカスで取り直される（一時的な不調から戻れる）
         staleTime: Infinity,
         gcTime: 5 * 60 * 1000,
-        retry: false,
+        retry: TRANSIENT_FAILURE_RETRIES,
       };
     }),
   );
