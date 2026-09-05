@@ -412,6 +412,11 @@ const projectMembersState = computed(() => ({
 // next_cursor を積む。
 const groupCursors = ref<Record<string, (string | null)[]>>({});
 
+/** タスクの追加・並び順に関わる更新後は、全グループを先頭から読み直す。 */
+function resetGroupCursors() {
+  groupCursors.value = {};
+}
+
 // プロジェクトやラベル絞り込みを変えたら取得済みページを戻す（前の条件の分だけ残さない）。
 // カーソルは絞り込み後の並びの中の位置なので、条件が変わったら意味を失う
 watch([projectKey, selectedLabelId], () => {
@@ -479,6 +484,7 @@ function loadMoreInGroup(statusId: string) {
 const rowMutations = useTaskRowMutations({
   tenantId: () => tenantId.value,
   projectId: () => projectId.value,
+  onTaskListChanged: resetGroupCursors,
 });
 // ---- List 表示: 詳細のオーバーレイ ----
 //
@@ -1231,6 +1237,7 @@ const table = useVueTable({
             :tenant-display-id="tenantDisplayId"
             :project-key="projectKey"
             :task-id="selectedTaskId ?? ''"
+            :on-task-list-changed="resetGroupCursors"
             @close="closeDetail"
           />
         </ResizablePanel>
@@ -1245,6 +1252,7 @@ const table = useVueTable({
       :tenant-display-id="tenantDisplayId"
       :project-key="projectKey"
       :task-id="overlayRenderedTaskSeqKey"
+      :on-task-list-changed="resetGroupCursors"
       @update:open="
         (value) => {
           if (!value) selectedTaskId = null;

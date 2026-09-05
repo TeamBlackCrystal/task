@@ -28,6 +28,8 @@ const props = withDefaults(
     layout?: 'page' | 'pane';
     /** 器が閉じる手段を持つ場合（オーバーレイの × など）は自前の閉じるボタンを出さない */
     showCloseButton?: boolean;
+    /** 一覧の cursor chain を捨てて先頭から読み直す。 */
+    onTaskListChanged?: () => void;
   }>(),
   { layout: 'pane', showCloseButton: true },
 );
@@ -82,6 +84,7 @@ const {
     closeDeleteDialog();
     emit('close');
   },
+  onTaskListChanged: props.onTaskListChanged,
 });
 
 // アクティビティ（コメント）。詳細ページと同じ composable を使い、

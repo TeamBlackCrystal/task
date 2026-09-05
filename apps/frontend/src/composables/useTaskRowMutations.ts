@@ -33,6 +33,8 @@ export type CreateTaskInput = {
 export type TaskRowMutationsParams = {
   tenantId: MaybeRefOrGetter<string | null | undefined>;
   projectId: MaybeRefOrGetter<string | null | undefined>;
+  /** タスク一覧の cursor chain を捨てて先頭から読み直す。 */
+  onTaskListChanged?: () => void;
 };
 
 /**
@@ -86,6 +88,9 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
     errors.value = { ...errors.value, [taskId]: undefined };
     try {
       await action();
+      // cursor は直前ページのスナップショットに依存するため、書き込み後に
+      // 古い chain を再取得しない。呼び出し側で先頭ページから組み直す。
+      params.onTaskListChanged?.();
       await invalidateLists();
     } catch {
       // 失敗は行の下に出すだけ。ここで throw すると一覧全体がエラー表示になる
@@ -191,6 +196,7 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
         },
       });
       if (error) throw error;
+      params.onTaskListChanged?.();
       await invalidateLists();
       return true;
     } catch {

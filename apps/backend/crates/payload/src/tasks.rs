@@ -208,6 +208,7 @@ pub struct TaskListResponse {
     pub total: u64,
     /// 次のページを引く鍵。`null` なら取り切っている。
     /// `cursor` を渡していない要求でも返すので、先頭ページから継いでいける
+    #[schema(required, nullable)]
     pub next_cursor: Option<String>,
 }
 

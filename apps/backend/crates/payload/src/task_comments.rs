@@ -134,6 +134,7 @@ pub struct ActivityListResponse {
     /// （取得中に増えるので、総数と取得済み件数の比較では終わらなくなる）
     pub total: u64,
     /// 次のページを引く鍵。`null` なら取り切っている
+    #[schema(required, nullable)]
     pub next_cursor: Option<String>,
 }
 

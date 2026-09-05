@@ -73,7 +73,7 @@ export function useTaskActivities(params: {
         },
         // 続きの有無はサーバの next_cursor だけで決める。offset と件数の比較でやると、
         // 読んでいる最中に履歴が積まれた分だけ境界がずれ、同じ行が 2 度出たり抜けたりする
-        getNextPageParam: (lastPage: { next_cursor?: string | null }) =>
+        getNextPageParam: (lastPage: { next_cursor: string | null }) =>
           lastPage.next_cursor ?? undefined,
         enabled: !!tenantId.value && !!projectId.value && !!taskId.value,
       };

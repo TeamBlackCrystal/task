@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use common::TestApp;
 use entity::task_activities;
 use sea_orm::{ActiveValue::Set, EntityTrait, prelude::Uuid};
@@ -56,8 +56,13 @@ async fn create_default_status(app: &TestApp, tenant_id: Uuid, project_id: Uuid)
 }
 
 /// 履歴を `count` 件積む。API 経由だと 1 件ごとに操作が要るので直接入れる。
-async fn seed_activities(app: &TestApp, task_id: Uuid, user_id: Uuid, count: usize) {
-    let base = Utc::now();
+async fn seed_activities(
+    app: &TestApp,
+    task_id: Uuid,
+    user_id: Uuid,
+    count: usize,
+    base: DateTime<Utc>,
+) {
     let rows: Vec<task_activities::ActiveModel> = (0..count)
         .map(|i| task_activities::ActiveModel {
             id: Set(Uuid::new_v4()),
@@ -196,7 +201,7 @@ async fn activities_are_paged_and_capped() {
     // 既定（20 件）と上限（100 件）の両方を越える件数にする。
     // 境界ちょうどだと「境界で切れるバグ」をテストが隠す
     let seeded = 137;
-    seed_activities(&app, task_uuid, owner.id, seeded).await;
+    seed_activities(&app, task_uuid, owner.id, seeded, Utc::now()).await;
 
     let activities_path = format!("{tasks_path}/{task_id}/activities");
 
@@ -301,7 +306,8 @@ async fn activities_paging_is_not_shifted_by_rows_added_while_reading() {
 
     // 1 ページ（20 件）では収まらない件数を積む。タスク作成の 1 件と合わせて 46 件
     let seeded = 45;
-    seed_activities(&app, task_uuid, owner.id, seeded).await;
+    let seed_base = Utc::now();
+    seed_activities(&app, task_uuid, owner.id, seeded, seed_base).await;
 
     let activities_path = format!("{tasks_path}/{task_id}/activities");
     let first = app
@@ -317,7 +323,16 @@ async fn activities_paging_is_not_shifted_by_rows_added_while_reading() {
     // 並びは新しい順なので、これは読み終えた側（先頭）に入る。
     // ページサイズ（20）より多く積んで、ずれが 1 ページぶんを越えても崩れないことを見る
     let added = 23;
-    seed_activities(&app, task_uuid, owner.id, added).await;
+    // 追加分は最初のページより確実に新しい側へ置く。helper 内で毎回 now() を
+    // 取り直すと、初回 seed の未来方向の行より古い追加行が混ざってしまう。
+    seed_activities(
+        &app,
+        task_uuid,
+        owner.id,
+        added,
+        seed_base + Duration::seconds(seeded as i64 + 1),
+    )
+    .await;
 
     // カーソルで残りを読み切る
     let mut seen = first_ids.clone();

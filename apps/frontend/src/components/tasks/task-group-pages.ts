@@ -6,7 +6,7 @@ type TaskResponse = components['schemas']['TaskResponse'];
 
 /** 1 ページ分の取得結果。TanStack の `useQueries` の要素から必要な分だけ受ける。 */
 export type TaskGroupPage = {
-  data?: { tasks: TaskResponse[]; total: number; next_cursor?: string | null };
+  data?: { tasks: TaskResponse[]; total: number; next_cursor: string | null };
   isLoading?: boolean;
   isError?: boolean;
   refetch?: () => unknown;

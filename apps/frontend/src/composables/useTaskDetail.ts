@@ -56,6 +56,8 @@ export interface UseTaskDetailParams {
    * KFM を描画しないための取り直し導線。
    */
   onAfterFieldSaved?: (field: MutatingField) => void;
+  /** 一覧の cursor chain を捨てて先頭から読み直す。 */
+  onTaskListChanged?: () => void;
 }
 
 /**
@@ -231,6 +233,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     onSuccess: async () => {
       deleteError.value = null;
       queryClient.removeQueries({ queryKey: taskQueryKey.value, exact: true });
+      params.onTaskListChanged?.();
       await invalidateAfterTaskDelete();
       onAfterDelete(listHref.value);
     },
@@ -337,6 +340,9 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       })
       .then((data: TaskDetail) => {
         applyMutationSuccess(field, revision, data, queryKey);
+        // cursor は直前ページのスナップショットに依存するため、書き込み後に
+        // 古い chain を再取得しない。呼び出し側で先頭ページから組み直す。
+        params.onTaskListChanged?.();
         void invalidateAfterTaskMutation();
         params.onAfterFieldSaved?.(field);
       })

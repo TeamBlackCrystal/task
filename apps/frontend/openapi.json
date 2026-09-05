@@ -19775,7 +19775,7 @@
       },
       "ActivityListResponse": {
         "type": "object",
-        "required": ["activities", "total"],
+        "required": ["activities", "total", "next_cursor"],
         "properties": {
           "activities": {
             "type": "array",
@@ -22541,7 +22541,7 @@
       },
       "TaskListResponse": {
         "type": "object",
-        "required": ["tasks", "total"],
+        "required": ["tasks", "total", "next_cursor"],
         "properties": {
           "next_cursor": {
             "type": ["string", "null"],

@@ -282,7 +282,7 @@ async fn task_list_paging_keeps_rows_that_shift_when_earlier_ones_leave_the_filt
     let moved = 3;
     for id in first_ids.iter().take(moved) {
         let response = app
-            .patch_json_with_session(
+            .put_json_with_session(
                 &format!("{base}/{id}"),
                 serde_json::json!({ "status_id": done_id }),
             )
