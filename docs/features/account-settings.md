@@ -62,7 +62,8 @@ icon: lucide:user-cog
 
 左にアカウント設定のナビ、右にプロフィールのフォームを並べる。
 
-ナビは 5 項目を表示するが、リンクとして機能するのは **プロフィール** と **アクセストークン**。
+ナビは 6 項目を表示するが、リンクとして機能するのは
+**プロフィール** / **セキュリティ** / **アクセストークン**。
 残りの 3 項目（環境設定 / 通知 / セッション）は、
 対応する画面がまだ無いため `aria-disabled` の押せない項目として並べる。
 
@@ -164,6 +165,7 @@ PAT で自分のプロフィールを書き換えられないことは、
 | メールアドレスの変更 | 変更後の再確認フローが無い（`email_verification` は新規登録用） | 変更要求 → 新アドレスへ確認メール → 確認後に反映、の経路を新設する |
 | アバターのファイルアップロード | アップロード先の API が無い | ドライブ（`drive_files`）に載せるか、専用の保存先を用意するかの判断から |
 | 環境設定 / 通知 / セッション の各画面 | 本仕様の対象外 | 通知は `/v1/users/me/notification-settings/{project_id}` が既にある |
+| 二要素認証・パスキーの管理 | 認証方法（§7）とは別タスク（TASK-188 / TASK-189） | セキュリティ画面にセクションを足す。API は既にある |
 | トークンのプロジェクト絞り込み | アクセストークン画面（§6）の対象外 | API（`project_ids`）は既にある。フォームに選択 UI を足す |
 
 画面上部のパンくず（`Account settings / Profile`）も未対応。
@@ -180,6 +182,9 @@ PAT で自分のプロフィールを書き換えられないことは、
 | 単体 | `apps/frontend/src/components/settings/__tests__/ProfileForm.test.ts` | 空欄が `clear_avatar_url` になること、URL の送信、前後の空白を取り除くこと、不正スキームとユーザー名長を送信前に止めること、失敗時（400 / それ以外）の表示、保存後に編集を再開すると保存済み表示が消えること |
 | 単体 | `apps/frontend/src/components/settings/__tests__/AccessTokensSection.test.ts` | 一覧表示（伏せ字・スコープ数・期限・最終使用）、発行リクエストの内容（90 日既定・無期限）、名前とスコープの入力チェック、403 の表示、取り消しの確認ダイアログと失敗時の表示、オーナーのテナントが無い場合の無効化 |
 | 単体 | `apps/frontend/src/lib/__tests__/personal-tokens.test.ts` | 有効期限プリセットの計算、伏せ字、期限・最終使用の表示文言（境界値込み） |
+| 統合 | `apps/backend/tests/oauth_integration.rs` | `has_password` の反転、初回パスワード設定が一度きりであること、パスワードを得たあとに最後の連携を解除できること |
+| 単体 | `apps/frontend/src/components/settings/__tests__/AuthMethodsSection.test.ts` | パスワードあり／なしの出し分け、初回設定に現在のパスワード欄を出さないこと、確認不一致で送信しないこと、現在のパスワード不一致の表示、変更後のサインイン画面への遷移、連携一覧と追加候補、self-hosted の URL 未入力での無効化、確認を挟む解除と `instance_url` の付与、最後の認証方法の拒否表示 |
+| 単体 | `apps/frontend/src/lib/__tests__/auth-methods.test.ts` | 認証方法の数え方（パスキー込み）、パスワード入力チェック（8 文字の境界・現在と同値・確認不一致） |
 
 拒否を確認するテストには、対照として通るケースも置いている（過剰に拒否していないことの確認）。
 
@@ -229,3 +234,63 @@ PAT で自分のプロフィールを書き換えられないことは、
   名前の昇順（同名は `id` 順）。`PersonalTokenResponse` の配列で、平文トークン・ハッシュは含まない
 - トークンを 1 件も持たない場合は空配列（404 にしない）
 
+---
+
+## 7. セキュリティ画面（認証方法）
+
+パスワードと OAuth 連携を「サインインできる方法」としてまとめて管理する画面。
+OAuth の認可フローと解除規則は [OAuth ログイン](/features/auth-oauth) を正とする。
+
+| 項目 | 値 |
+|---|---|
+| URL | `/settings/security` |
+| ページファイル | `apps/frontend/src/pages/settings/security/+Page.vue` |
+| 本体 | `apps/frontend/src/components/settings/AuthMethodsSection.vue` |
+| パスワード行 | `apps/frontend/src/components/settings/PasswordMethodRow.vue` |
+
+1 枚のカードに「パスワード」「連携済み」「追加できる連携」を上から並べる。
+
+### パスワード
+
+`GET /v1/auth/me` の `has_password` で出し分ける。
+
+| 状態 | ボタン | 送信先 | 入力 |
+|---|---|---|---|
+| 設定済み | パスワードを変更 | `POST /v1/auth/password/change` | 現在 + 新しい + 確認 |
+| 未設定（OAuth のみ） | パスワードを設定 | `POST /v1/auth/password` | 新しい + 確認 |
+
+変更はすべてのセッションと PAT を失効させるため、フォームを開いた時点でその旨を出す。
+成功したら `/signin?password_changed=1` へフルページ遷移し、サインイン画面はこのパラメータを見て
+なぜサインアウトされたのかを表示する。クライアントルーティングにしないのは、
+失効済みのセッションで取ったキャッシュを持ち越さないため。
+
+入力チェックは `lib/auth-methods.ts` の `validatePasswordForm`。8 文字以上、確認との一致、
+変更のときだけ「現在のパスワードが空でない」「現在と同じ値でない」。強度表示は
+サインアップと同じ `PasswordStrengthBar` を使う。
+
+### OAuth 連携
+
+- **連携済み**: `GET /v1/auth/oauth/connections`。プロバイダー名、`provider_email`、接続日時、
+  self-hosted の `instance_url` を出す。解除は確認を挟んで
+  `DELETE /v1/auth/oauth/connections/{provider}`（self-hosted は `instance_url` をクエリに添える）
+- **追加できる連携**: `GET /v1/auth/oauth/providers` のうち未連携のもの。「連携する」で既存の
+  OAuth 開始 URL へフルページ遷移する。`redirect_after` にこの画面を指定して戻し、
+  `?linked=<provider>` で連携できた旨を出す。プロバイダー側のエラーは backend が
+  `?oauth_error=` を付けて同じ画面に戻す
+
+開始 URL の組み立てとプロバイダー表示名は、サインイン画面の `OAuthButtons` と共通の
+`lib/oauth-providers.ts` に置く。片方だけ直すと画面ごとに名前や戻り先が食い違うため。
+
+### 最後の認証方法
+
+利用できる認証方法が 0 件にならないよう、backend は「その連携が最後の 1 件 かつ
+パスワード無し かつ パスキー無し」のとき解除を `403 oauth-last-auth-method` で拒む。
+
+画面はこの判定を先取りして注意書きを出すだけで、可否はサーバーの応答に従う
+（画面が数えた後に別のタブで増減されうるため）。先取りの数え方（`countAuthMethods`）は
+backend と揃えてパスキーも数えるので、この画面は件数を見る目的で `GET /v1/auth/passkeys` も呼ぶ。
+
+### `UserResponse.has_password`
+
+パスワードの有無で表示を切り替えるために `GET /v1/auth/me`（`UserResponse`）へ
+`has_password: bool` を追加した。ハッシュそのものは返さない。

@@ -12,6 +12,7 @@ const user: components['schemas']['UserResponse'] = {
   is_admin: false,
   is_suspended: false,
   totp_enabled: false,
+  has_password: true,
   bio: '最初の説明',
   avatar_url: 'https://example.com/a.png',
 };

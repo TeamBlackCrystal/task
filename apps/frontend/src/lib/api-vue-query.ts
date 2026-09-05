@@ -257,6 +257,36 @@ export function usePasswordResetCompleteMutation() {
   return apiClient.useMutation('post', '/v1/auth/password-reset/complete');
 }
 
+/** 連携済み OAuth プロバイダー。設定画面の認証方法セクションで一覧と解除に使う。 */
+export const oauthConnectionsQueryOptions = () =>
+  apiClient.queryOptions('get', '/v1/auth/oauth/connections', undefined, { retry: false });
+
+export function useOAuthConnectionsQuery() {
+  return apiClient.useQuery('get', '/v1/auth/oauth/connections', undefined, { retry: false });
+}
+
+/**
+ * 登録済みパスキー。認証方法セクションでは件数だけ使う。
+ * backend は「パスワード・OAuth 連携・パスキー」を合わせて最後の1つを守るので、
+ * 解除できるかの見立てをサーバーと揃えるために数える。
+ */
+export function usePasskeysQuery() {
+  return apiClient.useQuery('get', '/v1/auth/passkeys', undefined, { retry: false });
+}
+
+export function useDisconnectOAuthMutation() {
+  return apiClient.useMutation('delete', '/v1/auth/oauth/connections/{provider}');
+}
+
+/** OAuth だけで登録した利用者の初回パスワード設定。 */
+export function useSetPasswordMutation() {
+  return apiClient.useMutation('post', '/v1/auth/password');
+}
+
+export function usePasswordChangeMutation() {
+  return apiClient.useMutation('post', '/v1/auth/password/change');
+}
+
 export function createTestApiClient(fetchImpl: (input: Request) => Promise<Response>) {
   return createClient<paths>(
     createFetchClient<paths>({

@@ -200,6 +200,72 @@ async fn oauth_disconnect_last_auth_method_returns_403() {
     app.cleanup_user(user_id).await;
 }
 
+/// OAuth だけで登録した利用者が、設定画面から初回パスワードを設定するまでの一連。
+/// `has_password` の反転、初回設定が一度きりであること、パスワードを持ってからは
+/// 最後の連携も解除できることを続けて確かめる。
+#[tokio::test]
+async fn oauth_only_user_sets_first_password_then_unlinks() {
+    let app = TestApp::new().await;
+    let unique = uuid::Uuid::new_v4();
+    app.set_mock_user(MockGitLabUser {
+        id: 400_002,
+        username: format!("pwless_{unique}"),
+        email: Some(format!("pwless-{unique}@example.com")),
+    });
+
+    let start = app.oauth_start(false).await;
+    let callback = app.follow_oauth_start(start).await;
+    assert!(is_redirect(callback.status()), "oauth callback redirect");
+
+    let me = app.get_me().await;
+    assert_eq!(me.status(), StatusCode::OK);
+    let body: serde_json::Value = me.json().await.expect("me json");
+    let user_id: uuid::Uuid = body["id"]
+        .as_str()
+        .expect("user id")
+        .parse()
+        .expect("uuid parse");
+    assert_eq!(body["has_password"], serde_json::json!(false));
+
+    let disconnect_path = format!(
+        "/v1/auth/oauth/connections/gitlab_selfhosted?instance_url={}",
+        urlencoding::encode(app.instance_url())
+    );
+
+    // パスワードが無いうちは、この連携が最後の認証方法になる
+    let blocked = app.delete_with_session(&disconnect_path).await;
+    assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+
+    let set = app
+        .post_json_with_session(
+            "/v1/auth/password",
+            serde_json::json!({ "password": "FirstPassword123!" }),
+        )
+        .await;
+    assert_eq!(set.status(), StatusCode::NO_CONTENT);
+
+    let me = app.get_me().await;
+    assert_eq!(me.status(), StatusCode::OK);
+    let body: serde_json::Value = me.json().await.expect("me json");
+    assert_eq!(body["has_password"], serde_json::json!(true));
+
+    // 初回設定は一度きり。既に持っている利用者が呼んだら弾く
+    let again = app
+        .post_json_with_session(
+            "/v1/auth/password",
+            serde_json::json!({ "password": "SecondPassword123!" }),
+        )
+        .await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+
+    // パスワードが認証方法として残るので、最後の連携も解除できる
+    let disconnect = app.delete_with_session(&disconnect_path).await;
+    assert_eq!(disconnect.status(), StatusCode::NO_CONTENT);
+    assert_eq!(app.count_connections_for_user(user_id).await, 0);
+
+    app.cleanup_user(user_id).await;
+}
+
 #[tokio::test]
 async fn oauth_callback_provider_error_redirects_with_oauth_error() {
     let app = TestApp::new().await;

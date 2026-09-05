@@ -23158,7 +23158,8 @@
           "email_verified",
           "is_admin",
           "is_suspended",
-          "totp_enabled"
+          "totp_enabled",
+          "has_password"
         ],
         "properties": {
           "avatar_url": {
@@ -23173,6 +23174,10 @@
           },
           "email_verified": {
             "type": "boolean"
+          },
+          "has_password": {
+            "type": "boolean",
+            "description": "パスワードでサインインできるか。ハッシュを出さずに認証方法の表示を出し分けるために返す。"
           },
           "id": {
             "type": "string",

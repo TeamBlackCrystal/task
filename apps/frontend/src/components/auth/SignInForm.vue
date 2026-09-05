@@ -2,7 +2,7 @@
 import { useQueryClient } from '@tanstack/vue-query';
 import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import EmailNotVerified from '@/components/auth/EmailNotVerified.vue';
 import OAuthButtons from '@/components/auth/OAuthButtons.vue';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,16 @@ import PasswordInput from '@/components/auth/PasswordInput.vue';
 import { Input } from '@/components/ui/input';
 import { meQueryOptions, useLoginMutation, useLogoutMutation } from '@/lib/api-vue-query';
 import { arkMessage } from '@/lib/auth-validation';
+
+/**
+ * パスワード変更はすべてのセッションと PAT を失効させるので、設定画面から
+ * `?password_changed=1` 付きでここへ戻ってくる。なぜサインアウトされたのかを伝える。
+ */
+const passwordChanged = ref(false);
+
+onMounted(() => {
+  passwordChanged.value = new URLSearchParams(window.location.search).has('password_changed');
+});
 
 const schema = type({
   email: 'string.email',
@@ -96,6 +106,9 @@ function handleSubmit() {
                 メールアドレスを入力してサインインしてください
               </p>
             </div>
+            <p v-if="passwordChanged" class="rounded-md border bg-secondary p-3 text-sm">
+              パスワードを変更しました。すべてのセッションとパーソナルアクセストークンが失効したため、再度サインインしてください。
+            </p>
             <!--
               onBlur だと、一度エラーを出した後に入力を直しても次にフォーカスを外すまで
               エラーが残る（onBlur 由来のエラーが errorMap に残るため）。onChange で

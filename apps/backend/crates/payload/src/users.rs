@@ -20,6 +20,8 @@ pub struct UserResponse {
     pub is_admin: bool,
     pub is_suspended: bool,
     pub totp_enabled: bool,
+    /// パスワードでサインインできるか。ハッシュを出さずに認証方法の表示を出し分けるために返す。
+    pub has_password: bool,
 }
 
 /// 他リソースのレスポンスに埋め込む軽量なユーザー情報
@@ -54,6 +56,7 @@ impl From<entity::users::Model> for UserResponse {
             is_admin: model.is_admin,
             is_suspended: model.is_suspended,
             totp_enabled: model.totp_enabled,
+            has_password: model.password_hash.is_some(),
         }
     }
 }

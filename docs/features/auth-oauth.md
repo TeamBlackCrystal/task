@@ -306,30 +306,39 @@ DELETE /v1/auth/oauth/connections/{provider}
 └─────────────────────────────────────────────┘
 ```
 
-### アカウント設定「連携済みサービス」
+### アカウント設定「認証方法」
+
+連携の一覧・追加・解除は、パスワードと同じ「サインインできる方法」として
+`/settings/security` にまとめた。どちらも「最低 1 つは残す」という同じ制約を共有するため、
+別々の画面にしていない。画面の仕様は
+[アカウント設定](/features/account-settings) §7 を正とする。
 
 ```text
-/settings/account
+/settings/security
 ```
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ 連携済みサービス                              │
+│ 認証方法                                      │
 ├─────────────────────────────────────────────┤
-│ GitHub   user@example.com    [解除]          │
-│ GitLab   —                   [連携する]      │
-│ Google   —                   [連携する]      │
-│                                             │
-│ パスワード: 未設定            [パスワードを設定] │
+│ パスワード  設定済み          [パスワードを変更] │
+│ GitHub     user@example.com  [解除]          │
+├─ 追加できる連携 ─────────────────────────────┤
+│ Google     —                 [連携する]      │
 └─────────────────────────────────────────────┘
 ```
+
+連携の追加は既存の開始 URL（`GET /v1/auth/oauth/{provider}`）をそのまま使い、
+`redirect_after` にこの画面を指定して戻す。ログイン済みで開始した場合の連携追加は §6.3 の経路。
 
 ### コンポーネント
 
 | コンポーネント | ファイル |
 |--------------|---------|
 | `OAuthButtons` | `components/auth/OAuthButtons.vue` |
-| `ConnectedServices` | `components/settings/ConnectedServices.vue` |
+| `AuthMethodsSection` | `components/settings/AuthMethodsSection.vue` |
+| `PasswordMethodRow` | `components/settings/PasswordMethodRow.vue` |
+| プロバイダー表示名・開始 URL | `lib/oauth-providers.ts`（サインイン画面と共通） |
 
 ---
 

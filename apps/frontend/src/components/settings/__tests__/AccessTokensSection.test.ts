@@ -16,6 +16,7 @@ const user: components['schemas']['UserResponse'] = {
   is_admin: false,
   is_suspended: false,
   totp_enabled: false,
+  has_password: true,
   bio: null,
   avatar_url: null,
 };
