@@ -582,3 +582,102 @@ async fn the_project_root_folder_cannot_be_deleted_or_moved() {
         .expect("delete plain");
     assert_eq!(deleted_plain.status(), StatusCode::NO_CONTENT);
 }
+
+/// ロックを待っているあいだにファイルが別プロジェクトへ移ったら、更新は拒む。
+///
+/// 取得と認可をロックの外で済ませると、ロックを待っているあいだに別のリクエストが
+/// そのファイルを自分の入れないプロジェクトへ移していても、古いモデルと古い認可結果の
+/// まま名前を変えたりルートへ持ち出したりできる。ここではテスト側が同じ鍵でロックを
+/// 握り、握っているあいだに移動を確定させてから離す。
+#[tokio::test]
+async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    // 書き手はプロジェクト A のメンバー。B には入れない
+    let writer = app.insert_user(false, false).await;
+    add_member(&app, tp.project_id, writer.id).await;
+    let project_b = insert_extra_project(&app, tp.tenant_id).await;
+    // メンバーが 1 人も居ないプロジェクトはテナント全体へ開くので（project_is_open_or_member）、
+    // 別の利用者を入れて閉じた状態にする。そうしないと writer も入れてしまう
+    let stranger = app.insert_user(false, false).await;
+    add_member(&app, project_b, stranger.id).await;
+
+    let root_a = insert_project_root_folder(&app, tp.tenant_id, tp.project_id, owner.id).await;
+    let file = insert_file(&app, tp.tenant_id, root_a, owner.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&writer.email, &writer.password)
+        .await;
+
+    let file_url = format!(
+        "{}/v1/tenants/{}/drive/files/{file}",
+        app.base_url(),
+        tp.tenant_id
+    );
+
+    // 対照: 移動していなければ同じ要求が通る（過剰拒否になっていないこと）
+    let allowed = app
+        .client()
+        .patch(&file_url)
+        .json(&serde_json::json!({ "name": "before.txt" }))
+        .send()
+        .await
+        .expect("rename file");
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    // 同じ鍵をテスト側のトランザクションで握る
+    let blocker = app.state.db.begin().await.expect("begin blocker");
+    common::execute_advisory_lock(
+        &blocker,
+        service::drive::tenant_drive_lock_key(tp.tenant_id),
+    )
+    .await;
+
+    let client = app.client().clone();
+    let pending_url = file_url.clone();
+    let pending = tokio::spawn(async move {
+        client
+            .patch(pending_url)
+            .json(&serde_json::json!({ "name": "renamed-after-move.txt" }))
+            .send()
+            .await
+            .expect("rename file")
+    });
+
+    // 握っているあいだは進まない（ロックが無いと即座に 200 が返る）
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "テナントの Drive ロックを待たずに更新が通っている"
+    );
+
+    // ロックを握ったまま、書き手が入れないプロジェクトへ移して確定させる
+    common::execute_sql(
+        &blocker,
+        "UPDATE drive_files SET project_id = $1 WHERE id = $2",
+        vec![project_b.into(), file.into()],
+    )
+    .await;
+    blocker.commit().await.expect("commit blocker");
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+        .await
+        .expect("ロック解放後に完了する")
+        .expect("join");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "ロック待ちのあいだに移ったファイルを、古い認可結果のまま更新できている"
+    );
+
+    // 名前も変わっていない（ロックの内側で弾けている）
+    let after = drive_files::Entity::find_by_id(file)
+        .one(&app.state.db)
+        .await
+        .expect("load file")
+        .expect("file exists");
+    assert_eq!(after.name, "before.txt");
+    assert_eq!(after.project_id, Some(project_b));
+}

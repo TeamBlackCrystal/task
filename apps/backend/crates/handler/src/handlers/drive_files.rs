@@ -37,9 +37,18 @@ async fn load_tenant_file(
     tenant_id: Uuid,
     file_id: Uuid,
 ) -> Result<drive_files::Model, AppError> {
+    load_tenant_file_conn(&state.db, tenant_id, file_id).await
+}
+
+/// トランザクション内から読むための版。ロックを取ったあとに読み直す経路で使う。
+async fn load_tenant_file_conn<C: ConnectionTrait>(
+    conn: &C,
+    tenant_id: Uuid,
+    file_id: Uuid,
+) -> Result<drive_files::Model, AppError> {
     drive_files::Entity::find_by_id(file_id)
         .filter(drive_files::Column::TenantId.eq(tenant_id))
-        .one(&state.db)
+        .one(conn)
         .await?
         .ok_or(AppError::NotFound)
 }
@@ -189,18 +198,22 @@ async fn authorize_file_access(
 }
 
 /// プロジェクトファイルの書き込み権限を確認する（共有受信者は読み取り専用のため除外）。
-async fn authorize_file_write(
-    state: &AppState,
+///
+/// ロックを取ったトランザクションからも呼べるように接続を受け取る。移動を伴う経路は
+/// ロックの内側で読み直したファイルを渡すこと（外で認可すると、ロック待ちのあいだの
+/// 移動を見落とす）。
+async fn authorize_file_write<C: ConnectionTrait>(
+    conn: &C,
     file: &drive_files::Model,
     user: &AuthUser,
 ) -> Result<(), AppError> {
     let Some(project_id) = file.project_id else {
         return Ok(());
     };
-    if is_tenant_owner(&state.db, file.tenant_id, user.user_id).await? {
+    if is_tenant_owner(conn, file.tenant_id, user.user_id).await? {
         return Ok(());
     }
-    if can_access_project(&state.db, file.tenant_id, project_id, user.user_id).await? {
+    if can_access_project(conn, file.tenant_id, project_id, user.user_id).await? {
         return Ok(());
     }
     Err(AppError::Forbidden)
@@ -551,13 +564,16 @@ pub async fn update_file(
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
-    let file = load_tenant_file(&state, tenant_id, id).await?;
-    authorize_file_write(&state, &file, &auth).await?;
-
-    // 移動先の読みと書き込みを直列化する。ロックの外で読むと、そのフォルダが
-    // 別プロジェクトへ移動している最中に古い project_id を書いてしまう
+    // 取得・認可・更新をすべて同じロックの内側で行う。ロックの外で読むと、そのフォルダが
+    // 別プロジェクトへ移動している最中に古い project_id を書いてしまう。
+    // **認可もロックの内側でやり直す。** 外で認可すると、ロックを待っているあいだに
+    // 別のリクエストがそのファイルを自分の入れないプロジェクトへ移していても、
+    // 古いモデルと古い認可結果のまま名前を変えたりルートへ持ち出したりできる
     let txn = state.db.begin().await?;
     lock_tenant_drive(&txn, tenant_id).await?;
+
+    let file = load_tenant_file_conn(&txn, tenant_id, id).await?;
+    authorize_file_write(&txn, &file, &auth).await?;
 
     let mut active: drive_files::ActiveModel = file.into();
 
@@ -628,7 +644,7 @@ pub async fn update_file_content(
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
     let file = load_tenant_file(&state, tenant_id, id).await?;
-    authorize_file_write(&state, &file, &auth).await?;
+    authorize_file_write(&state.db, &file, &auth).await?;
 
     if !is_editable_mime(&file.mime_type) {
         return Err(AppError::BadRequestDetail(format!(
@@ -738,7 +754,7 @@ pub async fn delete_file(
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
     let file = load_tenant_file(&state, tenant_id, id).await?;
-    authorize_file_write(&state, &file, &auth).await?;
+    authorize_file_write(&state.db, &file, &auth).await?;
     let storage_key = file.storage_key.clone();
     drive_files::Entity::delete_by_id(id)
         .exec(&state.db)
