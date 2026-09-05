@@ -137,7 +137,6 @@ describe('useTaskDetail のキャッシュ同期', () => {
   let queryClient: QueryClient;
   let detail: ReturnType<typeof useTaskDetail>;
   let onAfterDelete: ReturnType<typeof vi.fn<(listHref: string) => void>>;
-  let onTaskListChanged: ReturnType<typeof vi.fn<() => void>>;
 
   function mountHost() {
     const Host = defineComponent({
@@ -147,7 +146,6 @@ describe('useTaskDetail のキャッシュ同期', () => {
           projectKey: 'ENG',
           taskId: TASK_SEQ_KEY,
           onAfterDelete,
-          onTaskListChanged,
         });
         return () => null;
       },
@@ -167,7 +165,6 @@ describe('useTaskDetail のキャッシュ同期', () => {
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     onAfterDelete = vi.fn<(listHref: string) => void>();
-    onTaskListChanged = vi.fn<() => void>();
     putControl.resolve = undefined;
     labelsControl.mode = 'success';
     labelsControl.data = [];
@@ -216,7 +213,6 @@ describe('useTaskDetail のキャッシュ同期', () => {
     expect(queryClient.getQueryData(taskQueryKey)).toMatchObject({ title: '新しいタイトル' });
     expect(queryClient.getQueryState(listQueryKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(searchQueryKey)?.isInvalidated).toBe(true);
-    expect(onTaskListChanged).toHaveBeenCalledTimes(1);
   });
 
   it('検索結果表示中の更新で検索キャッシュも invalidate される（mount したまま）', async () => {
@@ -231,7 +227,6 @@ describe('useTaskDetail のキャッシュ同期', () => {
 
     expect(queryClient.getQueryState(searchQueryKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(listQueryKey)?.isInvalidated).toBe(true);
-    expect(onTaskListChanged).toHaveBeenCalledTimes(1);
   });
 
   it('ラベル更新の楽観値を名前順、同名時は ID 順に並べる', async () => {
@@ -387,6 +382,5 @@ describe('useTaskDetail のキャッシュ同期', () => {
     expect(queryClient.getQueryState(listQueryKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(searchQueryKey)?.isInvalidated).toBe(true);
     expect(onAfterDelete).toHaveBeenCalledWith('/acme/projects/ENG/tasks');
-    expect(onTaskListChanged).toHaveBeenCalledTimes(1);
   });
 });

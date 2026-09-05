@@ -15,8 +15,6 @@ defineProps<{
   projectKey: string;
   /** URL と同じ seq key 形式（例: "ENG-42"） */
   taskId: string;
-  /** 一覧の cursor chain を捨てて先頭から読み直す。 */
-  onTaskListChanged?: () => void;
 }>();
 
 const emit = defineEmits<{
@@ -42,7 +40,6 @@ const emit = defineEmits<{
         :tenant-display-id="tenantDisplayId"
         :project-key="projectKey"
         :task-id="taskId"
-        :on-task-list-changed="onTaskListChanged"
         @close="emit('update:open', false)"
       />
     </DialogContent>

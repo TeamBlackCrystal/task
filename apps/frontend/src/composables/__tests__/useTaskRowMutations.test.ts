@@ -73,7 +73,6 @@ vi.mock('@/lib/api-vue-query', async (importOriginal) => {
 describe('useTaskRowMutations', () => {
   let queryClient: QueryClient;
   let mutations: ReturnType<typeof useTaskRowMutations>;
-  let onTaskListChanged: ReturnType<typeof vi.fn<() => void>>;
 
   /**
    * 履歴とコメント一覧も一緒にマウントする。invalidate は表示中のクエリしか
@@ -83,11 +82,7 @@ describe('useTaskRowMutations', () => {
   function mountHost() {
     const Host = defineComponent({
       setup() {
-        mutations = useTaskRowMutations({
-          tenantId: 'tenant-1',
-          projectId: 'project-1',
-          onTaskListChanged,
-        });
+        mutations = useTaskRowMutations({ tenantId: 'tenant-1', projectId: 'project-1' });
         useTaskActivities({ tenantId: 'tenant-1', projectId: 'project-1', taskId: 'task-1' });
         useTaskComments({ tenantId: 'tenant-1', projectId: 'project-1', taskId: 'task-1' });
         return () => null;
@@ -114,7 +109,6 @@ describe('useTaskRowMutations', () => {
     control.held = [];
     control.rejectPost = false;
     requestLog.length = 0;
-    onTaskListChanged = vi.fn<() => void>();
   });
 
   it('コメント追加の失敗を行のエラーとして残し、false を返す', async () => {
@@ -180,16 +174,6 @@ describe('useTaskRowMutations', () => {
     await expect(first).resolves.toBe(true);
     await expect(second).resolves.toBe(true);
     expect(requestLog.filter((entry) => entry.method === 'POST')).toHaveLength(2);
-  });
-
-  it('タスク作成に成功したら一覧の cursor chain を先頭から組み直す', async () => {
-    mountHost();
-
-    await expect(
-      mutations.createTask({ title: '先頭に追加されるタスク', statusId: 'status-a' }),
-    ).resolves.toBe(true);
-
-    expect(onTaskListChanged).toHaveBeenCalledTimes(1);
   });
 
   // backend は更新のたびに task_activities を積むので、取り直さないと

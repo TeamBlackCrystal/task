@@ -45,6 +45,7 @@ const group: TaskGroup = {
   isError: false,
   hasMore: false,
   retry: () => {},
+  loadMore: () => {},
 };
 
 /** 作成の受け口。成否を返す契約なので、既定は成功にする。 */

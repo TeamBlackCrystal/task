@@ -18,7 +18,7 @@ import {
 import { PhCaretDown, PhCaretUp, PhCaretUpDown, PhRows, PhTable } from '@phosphor-icons/vue';
 import { computed, h, onUnmounted, ref, watch, type Component } from 'vue';
 import type { Column } from '@tanstack/vue-table';
-import { useQueries, useQuery, keepPreviousData } from '@tanstack/vue-query';
+import { useQuery, keepPreviousData } from '@tanstack/vue-query';
 import { navigate } from 'vike/client/router';
 import { usePageContext } from 'vike-vue/usePageContext';
 import { useMediaQuery } from '@vueuse/core';
@@ -66,8 +66,8 @@ import {
   type TaskListView,
 } from './task-list-url-state';
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
+import TaskGroupQuery from '@/components/tasks/TaskGroupQuery.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
-import { nextGroupCursor, toTaskGroup } from '@/components/tasks/task-group-pages';
 import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 
@@ -408,83 +408,32 @@ const projectMembersState = computed(() => ({
 // 1 ページ目を読んだ後にタスクが 1 件でも他のステータスへ移ると後続の境界が詰まり、
 // 境界のタスクがどのページにも現れない（重複は ID で落とせるが、欠落は戻らない）。
 //
-// 先頭は必ず null（カーソル無し）で、「もっと見る」のたびに最後のページの
-// next_cursor を積む。
-const groupCursors = ref<Record<string, (string | null)[]>>({});
-
-/** タスクの追加・並び順に関わる更新後は、全グループを先頭から読み直す。 */
-function resetGroupCursors() {
-  groupCursors.value = {};
-}
-
-// プロジェクトやラベル絞り込みを変えたら取得済みページを戻す（前の条件の分だけ残さない）。
-// カーソルは絞り込み後の並びの中の位置なので、条件が変わったら意味を失う
-watch([projectKey, selectedLabelId], () => {
-  groupCursors.value = {};
-});
-
+// カーソルの列はこの画面では持たず、ステータスごとの TaskGroupQuery（infinite query）に
+// 持たせる。ページを 1 本ずつ別クエリにすると後続ページのキーに取得時点のカーソルが
+// 焼き付き、window focus や外からの invalidate で先頭ページだけ中身が変わったときに、
+// 後続が古い鍵のまま引いて境界のタスクを落とす。infinite query はページを順に引き直して
+// 鍵を採り直すので、取り直しの経路を数え上げなくてよい。
 const workflowStatuses = computed(() => statusesQuery.data.value ?? []);
 
-/** (ステータス, カーソル) の組。useQueries は平らな配列しか取れないので、後で畳み直す。 */
-const groupPageRequests = computed(() =>
-  workflowStatuses.value.flatMap((status) =>
-    (groupCursors.value[status.id] ?? [null]).map((cursor) => ({ statusId: status.id, cursor })),
-  ),
-);
+/** TaskGroupQuery から受け取った、ステータス id ごとの塊。 */
+const groupByStatusId = ref<Record<string, TaskGroup>>({});
 
-const groupQueries = useQueries({
-  queries: computed(() =>
-    groupPageRequests.value.map(({ statusId, cursor }) => {
-      const params = {
-        params: {
-          path: { tenant_id: tenantId.value!, project_id: projectId.value! },
-          query: {
-            status_id: statusId,
-            label_id: selectedLabelId.value ?? undefined,
-            limit: GROUP_PAGE_SIZE,
-            cursor: cursor ?? undefined,
-          },
-        },
-      };
-      return {
-        queryKey: ['get', LIST_TASKS_PATH, params],
-        queryFn: async ({ signal }: { signal: AbortSignal }) => {
-          const { data, error } = await fetchClient.GET(LIST_TASKS_PATH, { ...params, signal });
-          if (error) throw error;
-          return data;
-        },
-        enabled: !!tenantId.value && !!projectId.value && isListView.value && !isSearchActive.value,
-      };
-    }),
-  ),
-});
-
-/** ステータス 1 つ分のページを、要求した順のまま取り出す。 */
-function pagesOfStatus(statusId: string) {
-  return groupPageRequests.value.map((request, index) =>
-    request.statusId === statusId ? groupQueries.value[index] : null,
-  );
+function setTaskGroup(group: TaskGroup) {
+  groupByStatusId.value = { ...groupByStatusId.value, [group.status.id]: group };
 }
 
 const taskGroups = computed<TaskGroup[]>(() =>
-  workflowStatuses.value.map((status) => toTaskGroup(status, pagesOfStatus(status.id))),
+  workflowStatuses.value.flatMap((status) => groupByStatusId.value[status.id] ?? []),
 );
 
 function loadMoreInGroup(statusId: string) {
-  const cursor = nextGroupCursor(pagesOfStatus(statusId));
-  // 取り切っている / まだ返ってきていないときは足さない。押しても増えないだけで、
-  // 同じカーソルを 2 度積んで同じページを二重に並べるより安全
-  if (cursor === null) return;
-  const current = groupCursors.value[statusId] ?? [null];
-  if (current.includes(cursor)) return;
-  groupCursors.value = { ...groupCursors.value, [statusId]: [...current, cursor] };
+  groupByStatusId.value[statusId]?.loadMore();
 }
 
 // ---- List 表示: 行からの更新 ----
 const rowMutations = useTaskRowMutations({
   tenantId: () => tenantId.value,
   projectId: () => projectId.value,
-  onTaskListChanged: resetGroupCursors,
 });
 // ---- List 表示: 詳細のオーバーレイ ----
 //
@@ -1035,6 +984,24 @@ const table = useVueTable({
             @retry-labels="labelsQuery.refetch()"
           />
 
+          <!--
+            List 表示の取得。ステータスごとに 1 つの infinite query を持たせるため、
+            描画しないコンポーネントを並べる。ページを 1 本ずつ別クエリにすると
+            後続ページのキーにカーソルが焼き付き、取り直しのときに境界のタスクが落ちる。
+            下の v-if の連なりには入れない（連鎖を切ると一覧が出なくなる）
+          -->
+          <TaskGroupQuery
+            v-for="status in isListView ? workflowStatuses : []"
+            :key="status.id"
+            :status="status"
+            :tenant-id="tenantId"
+            :project-id="projectId"
+            :label-id="selectedLabelId"
+            :page-size="GROUP_PAGE_SIZE"
+            :enabled="!isSearchActive"
+            @update:group="setTaskGroup"
+          />
+
           <!-- スクロールするテーブル領域（ツールバーとページネーションは固定） -->
           <div class="min-h-0 flex-1 overflow-y-auto">
             <!-- 検索結果。API は検索ヒットの最小情報のみ返すため、虚偽の状態値は補完しない。 -->
@@ -1237,7 +1204,6 @@ const table = useVueTable({
             :tenant-display-id="tenantDisplayId"
             :project-key="projectKey"
             :task-id="selectedTaskId ?? ''"
-            :on-task-list-changed="resetGroupCursors"
             @close="closeDetail"
           />
         </ResizablePanel>
@@ -1252,7 +1218,6 @@ const table = useVueTable({
       :tenant-display-id="tenantDisplayId"
       :project-key="projectKey"
       :task-id="overlayRenderedTaskSeqKey"
-      :on-task-list-changed="resetGroupCursors"
       @update:open="
         (value) => {
           if (!value) selectedTaskId = null;
