@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { provide } from 'vue';
 
-import { PhBell, PhGear } from '@phosphor-icons/vue';
+import { PhGear } from '@phosphor-icons/vue';
 
 import AppHeader from '@/components/header/AppHeader.vue';
 import NavUser from '@/components/header/NavUser.vue';
@@ -131,7 +131,7 @@ function mockMembers(count = 4) {
 const renderHeader =
   (options: { tenants?: Tenant[]; selectedTenantId?: string | null } = {}) =>
   () => ({
-    components: { NavUser, TenantSwitcher, PhBell, PhGear },
+    components: { NavUser, TenantSwitcher, PhGear },
     setup() {
       setActivePinia(createPinia());
       provideQueryClient();
@@ -154,13 +154,6 @@ const renderHeader =
           @select="selectTenant"
         />
         <div class="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="通知"
-            class="flex size-7.5 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent"
-          >
-            <PhBell class="size-4" />
-          </button>
           <a
             href="/acme/settings"
             aria-label="テナント設定"

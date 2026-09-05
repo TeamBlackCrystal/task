@@ -16,10 +16,19 @@ type TenantRole = components['schemas']['TenantRole'];
 const MEMBERS_PATH = '/v1/tenants/{tenant_id}/members' as const;
 const MEMBER_PATH = '/v1/tenants/{tenant_id}/members/{user_id}' as const;
 
+/**
+ * ロールを見ているのは今のところテナントメンバー管理 API だけで、Viewer と Member に
+ * 書き込みの差は無い（`apps/backend/docs/tenant-project-authz.md`）。読み取り専用が
+ * 全経路で効くまでは、権限が絞られたと誤解させない書き方にしておく。
+ */
 const ROLES: { value: TenantRole; label: string; description: string }[] = [
-  { value: 'Admin', label: 'Admin', description: 'メンバーと設定を管理できる' },
+  { value: 'Admin', label: 'Admin', description: 'メンバーの追加・変更・削除ができる' },
   { value: 'Member', label: 'Member', description: 'タスクの作成と編集ができる' },
-  { value: 'Viewer', label: 'Viewer', description: '読み取りのみ' },
+  {
+    value: 'Viewer',
+    label: 'Viewer',
+    description: '今は Member と同じ（読み取り専用は未実装）',
+  },
 ];
 
 const props = defineProps<{ tenant: TenantResponse }>();

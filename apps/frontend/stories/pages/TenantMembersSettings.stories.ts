@@ -248,7 +248,7 @@ export const RoleChangeError: Story = {
     const user = userEvent.setup();
 
     await user.click(await canvas.findByLabelText('rei.tanakaのロール'));
-    await user.click(await page.findByRole('option', { name: /Member/ }));
+    await user.click(await page.findByRole('option', { name: /^Member/ }));
 
     await expect(canvas.findByText('ロールを変更できませんでした。')).resolves.toBeInTheDocument();
   },
