@@ -284,6 +284,56 @@ async fn creating_a_folder_waits_for_the_tenant_drive_lock() {
     );
 }
 
+/// フォルダの削除もテナント単位で直列化する。
+///
+/// 子の有無を読んでから消すまでの間に子を作られると、`parent_id` の ON DELETE SET NULL で
+/// その子が `parent_id = NULL` かつ `project_id = Some` のままドライブ直下へ出る。これは
+/// 自動生成のプロジェクトルートと同じ形なので、以後は更新も削除も 409 で拒まれ、API から
+/// 片付けられなくなる（`drive_files` と違い、この表には受け止める CHECK が無い）。
+///
+/// ここではテスト側が同じ鍵でロックを握り、握っているあいだ削除が進まないこと・
+/// 離した後に完了することを見る。
+#[tokio::test]
+async fn deleting_a_folder_waits_for_the_tenant_drive_lock() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let plain = insert_plain_folder(&app, tp.tenant_id, owner.id).await;
+
+    app.reset_session_client();
+    app.login_session_no_content(&owner.email, &owner.password)
+        .await;
+
+    // 同じ鍵をテスト側のトランザクションで握る
+    let blocker = app.state.db.begin().await.expect("begin blocker");
+    common::execute_advisory_lock(
+        &blocker,
+        service::drive::tenant_drive_lock_key(tp.tenant_id),
+    )
+    .await;
+
+    let url = format!("{}/{plain}", folders_url(&app, tp.tenant_id));
+    let client = app.client().clone();
+    let pending =
+        tokio::spawn(async move { client.delete(url).send().await.expect("delete folder") });
+
+    // 握っているあいだは進まない（ロックが無いと即座に 204 が返る）
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "テナントの Drive ロックを待たずに削除が通っている"
+    );
+
+    blocker.rollback().await.expect("release blocker");
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+        .await
+        .expect("ロック解放後に完了する")
+        .expect("join");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
 /// フォルダ移動で配下のフォルダ・ファイルの `project_id` が揃う。
 #[tokio::test]
 async fn moving_a_folder_syncs_the_project_of_everything_underneath() {

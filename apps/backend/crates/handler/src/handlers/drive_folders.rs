@@ -130,17 +130,20 @@ async fn validate_parent_folder<C: ConnectionTrait>(
     Ok(())
 }
 
-async fn folder_has_children(state: &AppState, folder_id: Uuid) -> Result<bool, AppError> {
+async fn folder_has_children<C: ConnectionTrait>(
+    conn: &C,
+    folder_id: Uuid,
+) -> Result<bool, AppError> {
     let subfolder_count = drive_folders::Entity::find()
         .filter(drive_folders::Column::ParentId.eq(folder_id))
-        .count(&state.db)
+        .count(conn)
         .await?;
     if subfolder_count > 0 {
         return Ok(true);
     }
     let file_count = drive_files::Entity::find()
         .filter(drive_files::Column::FolderId.eq(folder_id))
-        .count(&state.db)
+        .count(conn)
         .await?;
     Ok(file_count > 0)
 }
@@ -393,18 +396,27 @@ pub async fn delete_folder(
 ) -> Result<StatusCode, AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state.db, tenant_id, folder_id).await?;
-    require_folder_project_write(&state.db, tenant_id, folder.project_id, auth.user_id).await?;
+    // 子の有無を読んでから消すまでの間に、その子として新しいフォルダを挿入されうる。
+    // drive_folders.parent_id は ON DELETE SET NULL なので、割り込まれた子は
+    // parent_id = NULL かつ project_id = Some のままドライブ直下へ出る。これは
+    // 自動生成のプロジェクトルートと同じ形で、以後は更新も削除も 409 で拒まれ、
+    // API から片付けられなくなる（drive_files と違い、この表には受け止める CHECK が無い）。
+    // 作成・移動と同じテナントロックの下で、確認から削除までを一続きにする。
+    let txn = state.db.begin().await?;
+    lock_tenant_drive(&txn, tenant_id).await?;
+    let folder = get_folder_in_tenant(&txn, tenant_id, folder_id).await?;
+    require_folder_project_write(&txn, tenant_id, folder.project_id, auth.user_id).await?;
     // プロジェクトルートフォルダは空でも消さない。破棄はプロジェクト削除の CASCADE に任せる
     if is_project_root_folder(&folder) {
         return Err(AppError::Conflict);
     }
-    if folder_has_children(&state, folder_id).await? {
+    if folder_has_children(&txn, folder_id).await? {
         return Err(AppError::Conflict);
     }
     drive_folders::Entity::delete_by_id(folder.id)
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
+    txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
