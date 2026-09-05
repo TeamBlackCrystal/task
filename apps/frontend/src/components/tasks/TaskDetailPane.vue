@@ -4,6 +4,7 @@ import { ref } from 'vue';
 
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useRenderedDescription } from '@/composables/useRenderedDescription';
 import { useTaskDetail } from '@/composables/useTaskDetail';
 
 const props = defineProps<{
@@ -65,6 +66,19 @@ const {
   },
 });
 
+/**
+ * 説明の KFM 描画。詳細ページは server data hook が HTML を渡してくれるが、
+ * このペインは選択がクライアント操作なので data hook が追従できない。描画は
+ * サーバへ置いたまま（クライアントへ載せると +417.5 KB）結果だけを取る。
+ *
+ * 本文が変わればクエリキーも変わるので、保存後は自動で描き直しになる。
+ * 取得中・失敗時は html が null のまま = Hub がプレーン表示へ倒す。
+ */
+const renderedDescription = useRenderedDescription(
+  () => displayTask.value?.id,
+  () => displayTask.value?.description,
+);
+
 function openDeleteDialog() {
   deleteError.value = null;
   deleteDialogRef.value?.showModal();
@@ -97,6 +111,8 @@ function onDeleteDialogCancel(event: Event) {
         :labels-error="labelsError"
         :field-updating="fieldUpdating"
         :field-errors="fieldErrors"
+        :description-html="renderedDescription.data.value?.html ?? null"
+        :description-source="renderedDescription.data.value?.source ?? null"
         :loading="isLoading"
         :not-found="isNotFound"
         :error="isError"
