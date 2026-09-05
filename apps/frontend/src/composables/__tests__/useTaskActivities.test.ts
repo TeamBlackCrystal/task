@@ -5,6 +5,11 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import type { paths } from '@/generated/api';
 import { useTaskActivities, ACTIVITIES_PAGE_SIZE } from '../useTaskActivities';
 
+/** 新しいほど大きい ID。並びは ID の降順 = 新しい順 */
+function actId(n: number) {
+  return `act-${String(n).padStart(4, '0')}`;
+}
+
 // vi.mock の factory から参照するため hoisted に置く
 const { control, requestLog, fetchMock } = vi.hoisted(() => {
   function jsonResponse(body: unknown, status = 200) {
@@ -14,26 +19,32 @@ const { control, requestLog, fetchMock } = vi.hoisted(() => {
     });
   }
 
-  const control: { total: number; fail: boolean } = { total: 0, fail: false };
-  const requestLog: { limit: number; offset: number }[] = [];
+  const control: { ids: string[]; fail: boolean } = { ids: [], fail: false };
+  const requestLog: { limit: number; cursor: string | null }[] = [];
 
+  // backend の keyset と同じ形にする。カーソルは「並びの中の位置」ではなく
+  // 並び順のキーそのものなので、取得のあいだに行が増減しても境界がずれない
   const fetchMock = async (input: Request) => {
     if (control.fail) return jsonResponse({ message: 'boom' }, 500);
     const url = new URL(input.url);
     const limit = Number(url.searchParams.get('limit'));
-    const offset = Number(url.searchParams.get('offset'));
-    requestLog.push({ limit, offset });
+    const cursor = url.searchParams.get('cursor');
+    requestLog.push({ limit, cursor });
 
-    const activities = Array.from({
-      length: Math.max(0, Math.min(limit, control.total - offset)),
-    }).map((_, i) => ({
-      id: `act-${offset + i}`,
-      event_type: 'status_changed',
-      payload: {},
-      created_at: '2026-06-01T00:00:00Z',
-      user: null,
-    }));
-    return jsonResponse({ activities, total: control.total });
+    const ordered = [...control.ids].sort().reverse();
+    const after = cursor ? ordered.filter((id) => id < cursor) : ordered;
+    const page = after.slice(0, limit);
+    return jsonResponse({
+      activities: page.map((id) => ({
+        id,
+        event_type: 'status_changed',
+        payload: {},
+        created_at: '2026-06-01T00:00:00Z',
+        user: null,
+      })),
+      total: control.ids.length,
+      next_cursor: after.length > limit ? page[page.length - 1] : null,
+    });
   };
 
   return { control, requestLog, fetchMock };
@@ -58,6 +69,11 @@ describe('useTaskActivities', () => {
   let queryClient: QueryClient;
   let activities: ReturnType<typeof useTaskActivities>;
 
+  /** 0..count-1 の履歴を積んだ状態にする */
+  function seed(count: number) {
+    control.ids = Array.from({ length: count }, (_, i) => actId(i));
+  }
+
   function mountHost() {
     const Host = defineComponent({
       setup() {
@@ -74,33 +90,34 @@ describe('useTaskActivities', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    control.total = 0;
+    control.ids = [];
     control.fail = false;
     requestLog.length = 0;
   });
 
   // 全件取ると、長く使われたタスクほど DB・レスポンス・描画のコストが上限なく伸びる
   it('開いた時点では先頭の 1 ページだけ取る', async () => {
-    control.total = 137;
+    seed(137);
     mountHost();
     await flushPromises();
 
-    expect(requestLog).toEqual([{ limit: ACTIVITIES_PAGE_SIZE, offset: 0 }]);
+    expect(requestLog).toEqual([{ limit: ACTIVITIES_PAGE_SIZE, cursor: null }]);
     expect(activities.activities.value).toHaveLength(ACTIVITIES_PAGE_SIZE);
     expect(activities.hasMoreActivities.value).toBe(true);
   });
 
   it('もっと見るで続きを足す（重複しない）', async () => {
-    control.total = 137;
+    seed(137);
     mountHost();
     await flushPromises();
 
     activities.loadMoreActivities();
     await flushPromises();
 
+    // 2 回目は 1 ページ目の最後の ID を鍵にして続きを引く
     expect(requestLog).toEqual([
-      { limit: ACTIVITIES_PAGE_SIZE, offset: 0 },
-      { limit: ACTIVITIES_PAGE_SIZE, offset: ACTIVITIES_PAGE_SIZE },
+      { limit: ACTIVITIES_PAGE_SIZE, cursor: null },
+      { limit: ACTIVITIES_PAGE_SIZE, cursor: actId(137 - ACTIVITIES_PAGE_SIZE) },
     ]);
     const ids = activities.activities.value.map((item) => item.id);
     expect(ids).toHaveLength(ACTIVITIES_PAGE_SIZE * 2);
@@ -108,9 +125,30 @@ describe('useTaskActivities', () => {
     expect(activities.hasMoreActivities.value).toBe(true);
   });
 
+  // 欠落・重複の再発ガード。offset で継いでいたときは、1 ページ目を読んだ後に
+  // 履歴が 1 件積まれるだけで 2 ページ目の境界が 1 件ぶんずれ、境界の行が二重に出ていた
+  it('読んでいる最中に履歴が積まれても、重複も欠落もしない', async () => {
+    seed(30);
+    mountHost();
+    await flushPromises();
+    const firstPage = activities.activities.value.map((item) => item.id);
+
+    // 別の操作で新しい履歴が 3 件積まれる（並びの先頭側に入る）
+    control.ids.push(actId(100), actId(101), actId(102));
+
+    activities.loadMoreActivities();
+    await flushPromises();
+
+    const ids = activities.activities.value.map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // 1 ページ目より古い 10 件が、1 件も飛ばずに続きとして出る
+    expect(ids).toEqual([...firstPage, ...Array.from({ length: 10 }, (_, i) => actId(9 - i))]);
+    expect(activities.hasMoreActivities.value).toBe(false);
+  });
+
   it('取り切ったら導線を出さない', async () => {
     // 1 ページに収まらないが 2 ページ目で終わる件数
-    control.total = ACTIVITIES_PAGE_SIZE + 3;
+    seed(ACTIVITIES_PAGE_SIZE + 3);
     mountHost();
     await flushPromises();
     expect(activities.hasMoreActivities.value).toBe(true);
@@ -118,12 +156,12 @@ describe('useTaskActivities', () => {
     activities.loadMoreActivities();
     await flushPromises();
 
-    expect(activities.activities.value).toHaveLength(control.total);
+    expect(activities.activities.value).toHaveLength(ACTIVITIES_PAGE_SIZE + 3);
     expect(activities.hasMoreActivities.value).toBe(false);
   });
 
   it('1 ページに収まるなら導線を出さない', async () => {
-    control.total = 7;
+    seed(7);
     mountHost();
     await flushPromises();
 

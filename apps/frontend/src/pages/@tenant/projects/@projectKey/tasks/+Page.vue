@@ -67,7 +67,7 @@ import {
 } from './task-list-url-state';
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
-import { toTaskGroup } from '@/components/tasks/task-group-pages';
+import { nextGroupCursor, toTaskGroup } from '@/components/tasks/task-group-pages';
 import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
 
@@ -400,29 +400,36 @@ const projectMembersState = computed(() => ({
 // 件数はサーバの total を使う。
 //
 // 「もっと見る」は limit を伸ばすのではなくページを足す。limit を伸ばす方式だと
-// サーバ側の上限（tasks.rs の `min(q.limit, 200)`）に当たった時点で 201 件目以降へ
+// サーバ側の上限（tasks.rs の `clamp(1, 200)`）に当たった時点で 201 件目以降へ
 // 進めなくなり、押すたびに同じ 200 件を取り直すだけになる。ページ単位なら取得済みの
 // ページがキャッシュに残るので、押した瞬間に行が消える問題も起きない。
-const groupPageCounts = ref<Record<string, number>>({});
+//
+// ページの継ぎ目は offset ではなくサーバの next_cursor で持つ。offset だと、
+// 1 ページ目を読んだ後にタスクが 1 件でも他のステータスへ移ると後続の境界が詰まり、
+// 境界のタスクがどのページにも現れない（重複は ID で落とせるが、欠落は戻らない）。
+//
+// 先頭は必ず null（カーソル無し）で、「もっと見る」のたびに最後のページの
+// next_cursor を積む。
+const groupCursors = ref<Record<string, (string | null)[]>>({});
 
-// プロジェクトやラベル絞り込みを変えたら取得済みページを戻す（前の条件の分だけ残さない）
+// プロジェクトやラベル絞り込みを変えたら取得済みページを戻す（前の条件の分だけ残さない）。
+// カーソルは絞り込み後の並びの中の位置なので、条件が変わったら意味を失う
 watch([projectKey, selectedLabelId], () => {
-  groupPageCounts.value = {};
+  groupCursors.value = {};
 });
 
 const workflowStatuses = computed(() => statusesQuery.data.value ?? []);
 
-/** (ステータス, ページ) の組。useQueries は平らな配列しか取れないので、後で畳み直す。 */
+/** (ステータス, カーソル) の組。useQueries は平らな配列しか取れないので、後で畳み直す。 */
 const groupPageRequests = computed(() =>
-  workflowStatuses.value.flatMap((status) => {
-    const pages = groupPageCounts.value[status.id] ?? 1;
-    return Array.from({ length: pages }, (_, page) => ({ statusId: status.id, page }));
-  }),
+  workflowStatuses.value.flatMap((status) =>
+    (groupCursors.value[status.id] ?? [null]).map((cursor) => ({ statusId: status.id, cursor })),
+  ),
 );
 
 const groupQueries = useQueries({
   queries: computed(() =>
-    groupPageRequests.value.map(({ statusId, page }) => {
+    groupPageRequests.value.map(({ statusId, cursor }) => {
       const params = {
         params: {
           path: { tenant_id: tenantId.value!, project_id: projectId.value! },
@@ -430,7 +437,7 @@ const groupQueries = useQueries({
             status_id: statusId,
             label_id: selectedLabelId.value ?? undefined,
             limit: GROUP_PAGE_SIZE,
-            offset: page * GROUP_PAGE_SIZE,
+            cursor: cursor ?? undefined,
           },
         },
       };
@@ -447,21 +454,25 @@ const groupQueries = useQueries({
   ),
 });
 
+/** ステータス 1 つ分のページを、要求した順のまま取り出す。 */
+function pagesOfStatus(statusId: string) {
+  return groupPageRequests.value.map((request, index) =>
+    request.statusId === statusId ? groupQueries.value[index] : null,
+  );
+}
+
 const taskGroups = computed<TaskGroup[]>(() =>
-  workflowStatuses.value.map((status) =>
-    toTaskGroup(
-      status,
-      groupPageRequests.value.map((request, index) =>
-        request.statusId === status.id ? groupQueries.value[index] : null,
-      ),
-      GROUP_PAGE_SIZE,
-    ),
-  ),
+  workflowStatuses.value.map((status) => toTaskGroup(status, pagesOfStatus(status.id))),
 );
 
 function loadMoreInGroup(statusId: string) {
-  const current = groupPageCounts.value[statusId] ?? 1;
-  groupPageCounts.value = { ...groupPageCounts.value, [statusId]: current + 1 };
+  const cursor = nextGroupCursor(pagesOfStatus(statusId));
+  // 取り切っている / まだ返ってきていないときは足さない。押しても増えないだけで、
+  // 同じカーソルを 2 度積んで同じページを二重に並べるより安全
+  if (cursor === null) return;
+  const current = groupCursors.value[statusId] ?? [null];
+  if (current.includes(cursor)) return;
+  groupCursors.value = { ...groupCursors.value, [statusId]: [...current, cursor] };
 }
 
 // ---- List 表示: 行からの更新 ----

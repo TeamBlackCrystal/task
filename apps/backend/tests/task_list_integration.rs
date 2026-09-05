@@ -45,6 +45,20 @@ async fn create_status(app: &TestApp, tp: &TestTenantProject) -> Uuid {
         .expect("uuid")
 }
 
+fn task_ids(body: &serde_json::Value) -> Vec<String> {
+    body["tasks"]
+        .as_array()
+        .expect("tasks array")
+        .iter()
+        .map(|t| t["id"].as_str().expect("id").to_string())
+        .collect()
+}
+
+/// 次のページの鍵。取り切っていれば `None`。
+fn next_cursor(body: &serde_json::Value) -> Option<String> {
+    body["next_cursor"].as_str().map(|s| s.to_string())
+}
+
 fn assert_user_summary(value: &serde_json::Value, expected_id: Uuid) {
     assert_eq!(
         value["id"].as_str(),
@@ -56,11 +70,11 @@ fn assert_user_summary(value: &serde_json::Value, expected_id: Uuid) {
 
 /// 同時刻のタスクがページ境界をまたいでも、重複も欠落もしない。
 ///
-/// List 表示はステータスごとに `offset` を 20 件ずつ増やしてページを継ぐ。既定の
-/// 並びは `created_at DESC` だけだったので、同じ `created_at` を持つタスクが境界に
-/// 来ると、静的なデータへの連続リクエストでも同じタスクが複数ページに出たり、
-/// 別のタスクがどのページにも出なかったりする。frontend の `toTaskGroup()` は重複 ID を
-/// 落とすので重複は隠れるが、欠落は戻らない。
+/// List 表示はステータスごとに `cursor` でページを継ぐ。既定の並びは `created_at DESC`
+/// だけだったので、同じ `created_at` を持つタスクが境界に来ると、静的なデータへの
+/// 連続リクエストでも同じタスクが複数ページに出たり、別のタスクがどのページにも
+/// 出なかったりする。frontend の `toTaskGroup()` は重複 ID を落とすので重複は隠れるが、
+/// 欠落は戻らない。カーソルの不等式も `ORDER BY` と同じ形でないと同じことが起きる。
 #[tokio::test]
 async fn task_list_paging_is_stable_when_created_at_ties() {
     let mut app = TestApp::new().await;
@@ -91,24 +105,20 @@ async fn task_list_paging_is_stable_when_created_at_ties() {
     .await;
 
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0;
+    let mut cursor: Option<String> = None;
     loop {
-        let page = app
-            .get_with_session(&format!("{base}?limit=20&offset={offset}"))
-            .await;
+        let url = match &cursor {
+            Some(c) => format!("{base}?limit=20&cursor={c}"),
+            None => format!("{base}?limit=20"),
+        };
+        let page = app.get_with_session(&url).await;
         assert_eq!(page.status(), StatusCode::OK);
         let body: serde_json::Value = page.json().await.expect("list json");
-        let ids: Vec<String> = body["tasks"]
-            .as_array()
-            .expect("tasks array")
-            .iter()
-            .map(|t| t["id"].as_str().expect("id").to_string())
-            .collect();
-        if ids.is_empty() {
-            break;
+        seen.extend(task_ids(&body));
+        match next_cursor(&body) {
+            Some(c) => cursor = Some(c),
+            None => break,
         }
-        seen.extend(ids);
-        offset += 20;
     }
 
     assert_eq!(
@@ -207,4 +217,149 @@ async fn task_responses_include_user_info() {
     assert_user_summary(&detail_assignees[0]["user"], user.id);
 
     app.cleanup_user(user.id).await;
+}
+
+/// 読んでいる最中にタスクが一覧から外れても、続きのページが 1 件も飛ばさない。
+///
+/// これが offset ページングで欠落が出る筋。1 ページ目を読んだ後に、そのページより
+/// 前（新しい側）のタスクが別のステータスへ移ると、後続のタスクが 1 件ぶん前へ詰まる。
+/// `offset=20` は詰まった後の 21 件目を指すので、境界にいたタスクがどのページにも
+/// 出てこない。しかも最後のページが埋まらずに終わるため、「もっと見る」も消える。
+/// カーソルは並び順のキーそのものを持つので、前が減っても位置が動かない。
+#[tokio::test]
+async fn task_list_paging_keeps_rows_that_shift_when_earlier_ones_leave_the_filter() {
+    let mut app = TestApp::new().await;
+    let (_user, tp) = setup_project(&mut app).await;
+    let todo_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+
+    // 「移動先」のステータス。1 ページ目のタスクをここへ逃がして一覧から外す
+    let statuses_path = format!(
+        "/v1/tenants/{}/projects/{}/statuses",
+        tp.tenant_id, tp.project_id
+    );
+    let done = app
+        .post_json_with_session(
+            &statuses_path,
+            serde_json::json!({
+                "name": "Done",
+                "color": "#22aa66",
+                "position": 2,
+                "is_default": false,
+                "is_done_state": true,
+            }),
+        )
+        .await;
+    assert_eq!(done.status(), StatusCode::CREATED);
+    let done_body: serde_json::Value = done.json().await.expect("status json");
+    let done_id = done_body["id"].as_str().expect("status id").to_string();
+
+    // ページサイズ（20）を越える件数。境界の前後に十分な行を置く
+    let count = 45;
+    let mut created = Vec::new();
+    for i in 0..count {
+        let response = app
+            .post_json_with_session(
+                &base,
+                serde_json::json!({ "title": format!("Todo {i}"), "status_id": todo_id }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: serde_json::Value = response.json().await.expect("task json");
+        created.push(body["id"].as_str().expect("id").to_string());
+    }
+
+    let scoped = format!("{base}?status_id={todo_id}&limit=20");
+    let first = app.get_with_session(&scoped).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body: serde_json::Value = first.json().await.expect("list json");
+    let first_ids = task_ids(&first_body);
+    assert_eq!(first_ids.len(), 20);
+    let cursor = next_cursor(&first_body).expect("まだ残っている");
+
+    // 1 ページ目にいたタスクを 3 件、別のステータスへ移す（Todo の一覧から外れる）。
+    // offset ならここで後続が 3 件ぶん前へ詰まり、境界の 3 件が飛ぶ
+    let moved = 3;
+    for id in first_ids.iter().take(moved) {
+        let response = app
+            .patch_json_with_session(
+                &format!("{base}/{id}"),
+                serde_json::json!({ "status_id": done_id }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "move task out of Todo");
+    }
+
+    // カーソルで残りを読み切る
+    let mut seen = first_ids.clone();
+    let mut cursor = Some(cursor);
+    while let Some(c) = cursor {
+        let page = app.get_with_session(&format!("{scoped}&cursor={c}")).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let body: serde_json::Value = page.json().await.expect("list json");
+        seen.extend(task_ids(&body));
+        cursor = next_cursor(&body);
+    }
+
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(unique.len(), seen.len(), "同じタスクが複数ページに出ている");
+    assert_eq!(
+        seen.len(),
+        count,
+        "読んでいる最中に前のタスクが外れたぶんだけ後続が飛んでいる"
+    );
+    // 移した 3 件も含め、作った全件がどこかのページに出ている
+    let seen_set: std::collections::HashSet<&String> = seen.iter().collect();
+    for id in &created {
+        assert!(
+            seen_set.contains(id),
+            "タスク {id} がどのページにも出ていない"
+        );
+    }
+}
+
+/// カーソルは並びごとに別物なので、`sort` を変えたまま使い回せない。
+///
+/// 黙って先頭へ戻すと、並び替えのたびに一覧が巻き戻って原因が見えなくなる。
+#[tokio::test]
+async fn task_list_rejects_a_cursor_made_for_another_sort() {
+    let mut app = TestApp::new().await;
+    let (_user, tp) = setup_project(&mut app).await;
+    let status_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+
+    for i in 0..3 {
+        let response = app
+            .post_json_with_session(
+                &base,
+                serde_json::json!({ "title": format!("並び替え {i}"), "status_id": status_id }),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // 既定（created_at_desc）の 1 ページ目からカーソルを取る
+    let first = app.get_with_session(&format!("{base}?limit=1")).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body: serde_json::Value = first.json().await.expect("list json");
+    let cursor = next_cursor(&first_body).expect("まだ残っている");
+
+    // 同じ並びなら続きが取れる（過剰に拒否していないこと）
+    let same = app
+        .get_with_session(&format!("{base}?limit=1&cursor={cursor}"))
+        .await;
+    assert_eq!(same.status(), StatusCode::OK);
+    assert_eq!(task_ids(&same.json().await.expect("list json")).len(), 1);
+
+    // 別の並びへ持ち込むと 400
+    let crossed = app
+        .get_with_session(&format!("{base}?limit=1&sort=priority_asc&cursor={cursor}"))
+        .await;
+    assert_eq!(crossed.status(), StatusCode::BAD_REQUEST);
+
+    // offset と併用も 400（起点が二重になる）
+    let mixed = app
+        .get_with_session(&format!("{base}?limit=1&offset=20&cursor={cursor}"))
+        .await;
+    assert_eq!(mixed.status(), StatusCode::BAD_REQUEST);
 }

@@ -14657,11 +14657,21 @@
           {
             "name": "offset",
             "in": "query",
+            "description": "ページ番号で飛ぶ一覧（表形式）が使う。続きを読み足す用途には `cursor` を使う",
             "required": false,
             "schema": {
               "type": "integer",
               "format": "int64",
               "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "前のページの `next_cursor`。先頭ページでは付けない。\n\n`offset` と同時には指定できない（400）。取得のあいだにタスクが増減すると\n`offset` の境界がずれ、境界の行がどちらのページにも出なくなるため、\n続きを読み足す一覧はこちらを使う（`common::cursor`）。\nカーソルは `sort` ごとに別物なので、並び替えを変えたら先頭から取り直す",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -15547,13 +15557,12 @@
             }
           },
           {
-            "name": "offset",
+            "name": "cursor",
             "in": "query",
+            "description": "前のページの `next_cursor`。先頭ページでは付けない。\n\n`offset` を使わないのは、履歴が積まれている最中にページを継ぐと境界がずれ、\n同じ行が 2 度出たり抜けたりするため（`common::cursor`）。",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
+              "type": "string"
             }
           }
         ],
@@ -19774,10 +19783,14 @@
               "$ref": "#/components/schemas/ActivityItem"
             }
           },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "次のページを引く鍵。`null` なら取り切っている"
+          },
           "total": {
             "type": "integer",
             "format": "int64",
-            "description": "絞り込み前の総数。呼び出し側が「まだ残っているか」を判断する",
+            "description": "総数。件数の表示に使う。**「まだ残っているか」の判断には使わない**\n（取得中に増えるので、総数と取得済み件数の比較では終わらなくなる）",
             "minimum": 0
           }
         }
@@ -22530,6 +22543,10 @@
         "type": "object",
         "required": ["tasks", "total"],
         "properties": {
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "次のページを引く鍵。`null` なら取り切っている。\n`cursor` を渡していない要求でも返すので、先頭ページから継いでいける"
+          },
           "tasks": {
             "type": "array",
             "items": {
@@ -22539,6 +22556,7 @@
           "total": {
             "type": "integer",
             "format": "int64",
+            "description": "絞り込み後の総数。件数の表示とページ番号の算出に使う。\n**「まだ残っているか」の判断には使わない**（取得中に動くので終わらなくなる）",
             "minimum": 0
           }
         }

@@ -19,6 +19,15 @@ export type ActivityItem = components['schemas']['ActivityItem'];
 export const ACTIVITIES_PAGE_SIZE = 20;
 
 /**
+ * ページを継ぐ鍵。`null` は先頭ページ。
+ *
+ * offset ではなくカーソルで継ぐ。履歴は先頭（新しい側）に積まれるので、
+ * 1 ページ目を読んだ後に 1 件積まれるだけで offset の境界が 1 件ぶんずれ、
+ * 同じ行が 2 度出る。
+ */
+type ActivitiesCursor = string | null;
+
+/**
  * タスクの操作履歴（作成・ステータス変更・担当者の増減など）。
  *
  * コメントとは別の口で、タスク詳細のアクティビティ欄に時系列で並べる。
@@ -43,25 +52,29 @@ export function useTaskActivities(params: {
         // 更新系は ['get', ACTIVITIES_PATH] の prefix で invalidate する。
         // ページ番号はキーに入れない（infinite query が 1 キーで全ページを持つ）
         queryKey: ['get', ACTIVITIES_PATH, { params: { path } }],
-        initialPageParam: 0,
-        queryFn: async ({ pageParam, signal }: { pageParam: number; signal: AbortSignal }) => {
+        // 先頭ページは cursor を付けない
+        initialPageParam: null as ActivitiesCursor,
+        queryFn: async ({
+          pageParam,
+          signal,
+        }: {
+          pageParam: ActivitiesCursor;
+          signal: AbortSignal;
+        }) => {
           const { data, error } = await fetchClient.GET(ACTIVITIES_PATH, {
-            params: { path, query: { limit: ACTIVITIES_PAGE_SIZE, offset: pageParam } },
+            params: {
+              path,
+              query: { limit: ACTIVITIES_PAGE_SIZE, cursor: pageParam ?? undefined },
+            },
             signal,
           });
           if (error) throw error;
           return data;
         },
-        getNextPageParam: (
-          lastPage: { activities: ActivityItem[]; total: number },
-          allPages: { activities: ActivityItem[] }[],
-        ) => {
-          const loaded = allPages.reduce((sum, page) => sum + page.activities.length, 0);
-          // 最後のページが埋まっていない = 取り切った。total だけで判断すると、
-          // 件数が変わったときに終わらない「もっと見る」が残る
-          if (lastPage.activities.length < ACTIVITIES_PAGE_SIZE) return undefined;
-          return loaded < lastPage.total ? loaded : undefined;
-        },
+        // 続きの有無はサーバの next_cursor だけで決める。offset と件数の比較でやると、
+        // 読んでいる最中に履歴が積まれた分だけ境界がずれ、同じ行が 2 度出たり抜けたりする
+        getNextPageParam: (lastPage: { next_cursor?: string | null }) =>
+          lastPage.next_cursor ?? undefined,
         enabled: !!tenantId.value && !!projectId.value && !!taskId.value,
       };
     }),

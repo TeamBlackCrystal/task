@@ -7,9 +7,11 @@ use axum_valid::Valid;
 use chrono::Utc;
 use sea_orm::sea_query::{Expr, LockType};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait, EntityTrait,
-    IsolationLevel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
-    prelude::Uuid,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, IsolationLevel, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    prelude::{DateTimeWithTimeZone, Uuid},
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -18,6 +20,7 @@ use crate::auth_helpers::{is_tenant_owner, require_project_access};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::openapi::CrudErrors;
+use common::cursor::{decode_cursor, encode_cursor};
 use entity::{
     labels, milestones, project_statuses, sprints, task_assignees, task_labels, task_relations,
     tasks,
@@ -271,6 +274,119 @@ fn parse_task_priority(value: &str) -> Result<tasks::TaskPriority, AppError> {
     }
 }
 
+/// 一覧のカーソル。並び順の第一キーを持ち、`sort` を跨いだ使い回しを弾くために
+/// どの並びで作られたかも一緒に運ぶ。`id` は全変種で `DESC` のタイブレーカー。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "sort")]
+enum TaskCursor {
+    #[serde(rename = "created_at_desc")]
+    CreatedAtDesc {
+        created_at: chrono::DateTime<chrono::Utc>,
+        id: Uuid,
+    },
+    #[serde(rename = "priority_asc")]
+    PriorityAsc {
+        priority: tasks::TaskPriority,
+        id: Uuid,
+    },
+    #[serde(rename = "deadline_asc")]
+    DeadlineAsc {
+        /// 期限なしは `null`。Postgres の `ASC` は NULL が最後なので、
+        /// `null` のカーソルは「末尾の期限なしの塊の途中」を指す
+        soft_deadline: Option<chrono::DateTime<chrono::Utc>>,
+        id: Uuid,
+    },
+}
+
+/// 一覧の並び。`sort` の文字列を 1 度だけ解釈し、順序とカーソルの形を 1 か所に揃える。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskSort {
+    CreatedAtDesc,
+    PriorityAsc,
+    DeadlineAsc,
+}
+
+impl TaskSort {
+    /// 知らない値は既定（作成日の新しい順）に倒す。既存の挙動を変えない
+    fn parse(raw: Option<&str>) -> Self {
+        match raw.unwrap_or("created_at_desc") {
+            "priority_asc" => Self::PriorityAsc,
+            "deadline_asc" => Self::DeadlineAsc,
+            _ => Self::CreatedAtDesc,
+        }
+    }
+
+    fn cursor_of(self, task: &tasks::Model) -> String {
+        encode_cursor(&match self {
+            Self::CreatedAtDesc => TaskCursor::CreatedAtDesc {
+                created_at: task.created_at.with_timezone(&chrono::Utc),
+                id: task.id,
+            },
+            Self::PriorityAsc => TaskCursor::PriorityAsc {
+                priority: task.priority,
+                id: task.id,
+            },
+            Self::DeadlineAsc => TaskCursor::DeadlineAsc {
+                soft_deadline: task.soft_deadline.map(|d| d.with_timezone(&chrono::Utc)),
+                id: task.id,
+            },
+        })
+    }
+
+    /// 「このカーソルより後ろ」の条件。`ORDER BY` と同じ形にしないと行が飛ぶ。
+    ///
+    /// 並びを変えるとキーの意味が変わるので、別の並びで作られたカーソルは 400 で断る
+    /// （黙って先頭へ戻すと、並び替えのたびに一覧が巻き戻る）。
+    fn keyset_after(self, cursor: TaskCursor) -> Result<Condition, AppError> {
+        Ok(match (self, cursor) {
+            (Self::CreatedAtDesc, TaskCursor::CreatedAtDesc { created_at, id }) => {
+                let at: DateTimeWithTimeZone = created_at.into();
+                Condition::any().add(tasks::Column::CreatedAt.lt(at)).add(
+                    Condition::all()
+                        .add(tasks::Column::CreatedAt.eq(at))
+                        .add(tasks::Column::Id.lt(id)),
+                )
+            }
+            (Self::PriorityAsc, TaskCursor::PriorityAsc { priority, id }) => Condition::any()
+                .add(tasks::Column::Priority.gt(priority))
+                .add(
+                    Condition::all()
+                        .add(tasks::Column::Priority.eq(priority))
+                        .add(tasks::Column::Id.lt(id)),
+                ),
+            // 期限ありの途中。期限なしは並びの末尾なので、まとめて「後ろ」に含める
+            (
+                Self::DeadlineAsc,
+                TaskCursor::DeadlineAsc {
+                    soft_deadline: Some(deadline),
+                    id,
+                },
+            ) => {
+                let at: DateTimeWithTimeZone = deadline.into();
+                Condition::any()
+                    .add(tasks::Column::SoftDeadline.gt(at))
+                    .add(tasks::Column::SoftDeadline.is_null())
+                    .add(
+                        Condition::all()
+                            .add(tasks::Column::SoftDeadline.eq(at))
+                            .add(tasks::Column::Id.lt(id)),
+                    )
+            }
+            // 期限なしの塊の途中。ここから先は期限なししか残っていない
+            (
+                Self::DeadlineAsc,
+                TaskCursor::DeadlineAsc {
+                    soft_deadline: None,
+                    id,
+                },
+            ) => Condition::all()
+                .add(tasks::Column::SoftDeadline.is_null())
+                .add(tasks::Column::Id.lt(id)),
+            _ => return Err(AppError::BadRequest),
+        })
+    }
+}
+
 async fn build_task_detail_response(
     state: &AppState,
     project_id: Uuid,
@@ -345,23 +461,48 @@ pub async fn list_tasks(
         ));
     }
 
-    query = match q.sort.as_deref().unwrap_or("created_at_desc") {
-        "priority_asc" => query.order_by_asc(tasks::Column::Priority),
-        "deadline_asc" => query.order_by_asc(tasks::Column::SoftDeadline),
-        _ => query.order_by_desc(tasks::Column::CreatedAt),
+    let sort = TaskSort::parse(q.sort.as_deref());
+    let limit = q.limit.clamp(1, 200);
+    let total = query.clone().count(&state.db).await?;
+
+    // カーソルは並びのキーを持ち回るので、`offset` と混ぜると起点が二重になる。
+    // 黙って片方を捨てると呼び出し側の間違いが表に出ないので弾く
+    if q.cursor.is_some() && q.offset != 0 {
+        return Err(AppError::BadRequest);
+    }
+    if let Some(raw) = &q.cursor {
+        query = query.filter(sort.keyset_after(decode_cursor(raw)?)?);
+    }
+
+    query = match sort {
+        TaskSort::PriorityAsc => query.order_by_asc(tasks::Column::Priority),
+        TaskSort::DeadlineAsc => query.order_by_asc(tasks::Column::SoftDeadline),
+        TaskSort::CreatedAtDesc => query.order_by_desc(tasks::Column::CreatedAt),
     };
-    // 同じ値を持つ行の順序は Postgres 上で未定義。タイブレーカーが無いと、
-    // offset でページを継ぐ List 表示（+Page.vue の groupPageRequests）で
-    // 同時刻のタスクが境界をまたいだ瞬間に重複・欠落が出る。frontend は重複 ID を
-    // 落とすので重複は隠れるが、欠落は戻らない（priority / deadline は同値がもっと多い）
+    // 同じ値を持つ行の順序は Postgres 上で未定義。タイブレーカーが無いと、同じデータでも
+    // ページ境界に同値の行があるだけで重複・欠落が出る。カーソルの不等式もこの並びと
+    // 同じ形にする（priority / deadline は同値がもっと多い）
     query = query.order_by_desc(tasks::Column::Id);
 
-    let limit = std::cmp::min(q.limit, 200);
-    let total = query.clone().count(&state.db).await?;
-    let tasks_page = query.offset(q.offset).limit(limit).all(&state.db).await?;
+    // 「まだ残っているか」は総数との比較ではなく 1 件多く引いて確かめる。
+    // 総数は取得中に動くので、比較では終わらない「もっと見る」が残る
+    let mut rows = query
+        .offset(q.offset)
+        .limit(limit + 1)
+        .all(&state.db)
+        .await?;
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = if has_more {
+        rows.last().map(|task| sort.cursor_of(task))
+    } else {
+        None
+    };
+
     Ok(Json(TaskListResponse {
-        tasks: build_task_responses(&state.db, tasks_page).await?,
+        tasks: build_task_responses(&state.db, rows).await?,
         total,
+        next_cursor,
     }))
 }
 

@@ -4,11 +4,15 @@ use axum::{
     http::StatusCode,
 };
 use axum_valid::Valid;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait, prelude::Uuid,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    TransactionTrait,
+    prelude::{DateTimeWithTimeZone, Uuid},
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::AppState;
@@ -17,10 +21,18 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::handlers::tasks::resolve_task;
 use crate::openapi::CrudErrors;
+use common::cursor::{decode_cursor, encode_cursor};
 use entity::{task_activities, task_comments, users};
 use payload::task_comments::*;
 use service::notifications::{notify_comment_added, notify_mentioned};
 use service::task_activities::{extract_mentions, record_activity};
+
+/// 履歴一覧のカーソル。並び順（`created_at DESC, id DESC`）のキーをそのまま持つ。
+#[derive(Serialize, Deserialize)]
+struct ActivityCursor {
+    created_at: DateTime<Utc>,
+    id: Uuid,
+}
 
 /// コメントの投稿者。名前が引けない場合も表示は続けたいので `unknown` へ倒す。
 fn comment_user(map: &HashMap<Uuid, (String, Option<String>)>, user_id: Uuid) -> CommentUser {
@@ -396,18 +408,52 @@ pub async fn list_activities(
     let task = resolve_task(&state, tenant_id, project_id, &id).await?;
 
     // 履歴は操作のたびに増えるので、全件返さず範囲を切る
-    let limit = std::cmp::min(q.limit, MAX_ACTIVITIES_LIMIT);
+    let limit = q.limit.clamp(1, MAX_ACTIVITIES_LIMIT);
     let base = task_activities::Entity::find().filter(task_activities::Column::TaskId.eq(task.id));
     let total = base.clone().count(&state.db).await?;
-    let rows = base
+
+    // 続きは offset ではなくカーソルで継ぐ。履歴は先頭（新しい側）に積まれるので、
+    // offset だと 1 ページ目を読んだ後に 1 件積まれるだけで 2 ページ目が 1 件ぶん後ろへずれ、
+    // 境界の行が二重に出る
+    let mut query = base;
+    if let Some(raw) = &q.cursor {
+        let c: ActivityCursor = decode_cursor(raw)?;
+        let at: DateTimeWithTimeZone = c.created_at.into();
+        query = query.filter(
+            Condition::any()
+                .add(task_activities::Column::CreatedAt.lt(at))
+                .add(
+                    Condition::all()
+                        .add(task_activities::Column::CreatedAt.eq(at))
+                        .add(task_activities::Column::Id.lt(c.id)),
+                ),
+        );
+    }
+
+    // 「まだ残っているか」は総数との比較ではなく 1 件多く引いて確かめる。
+    // 総数は取得中に動くので、比較では終わらない「もっと見る」が残る
+    let mut rows = query
         .order_by_desc(task_activities::Column::CreatedAt)
         // 同時刻の行の順序は Postgres 上で未定義。タイブレーカーが無いと、同じデータでも
-        // ページ境界に同時刻の履歴があるだけで 1 ページ目と 2 ページ目に重複・欠落が出る
+        // ページ境界に同時刻の履歴があるだけで 1 ページ目と 2 ページ目に重複・欠落が出る。
+        // カーソルの不等式もこの並びと同じ形にする
         .order_by_desc(task_activities::Column::Id)
-        .limit(limit)
-        .offset(q.offset)
+        .limit(limit + 1)
         .all(&state.db)
         .await?;
+
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = if has_more {
+        rows.last().map(|row| {
+            encode_cursor(&ActivityCursor {
+                created_at: row.created_at.with_timezone(&Utc),
+                id: row.id,
+            })
+        })
+    } else {
+        None
+    };
 
     let user_ids: Vec<Uuid> = rows.iter().filter_map(|a| a.user_id).collect();
     let users_map: HashMap<Uuid, String> = if user_ids.is_empty() {
@@ -442,5 +488,9 @@ pub async fn list_activities(
         })
         .collect();
 
-    Ok(Json(ActivityListResponse { activities, total }))
+    Ok(Json(ActivityListResponse {
+        activities,
+        total,
+        next_cursor,
+    }))
 }

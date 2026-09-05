@@ -11,10 +11,18 @@ use serde_json::Value;
 //
 // 履歴は操作のたびに増えるので、全件返すと長く使われたタスクほど
 // DB・レスポンス・描画のコストが上限なく伸びる。既定で先頭だけ返し、
-// `limit` / `offset` で段階的に取れることを固定する。
+// `limit` / `cursor` で段階的に取れることを固定する。
+//
+// 継ぎ目に offset を使わないのは、履歴が積まれている最中にページを継ぐと
+// 境界がずれ、同じ行が 2 度出たり抜けたりするため。
 
 async fn json_body(res: reqwest::Response) -> Value {
     res.json::<Value>().await.expect("json body")
+}
+
+/// 次のページの鍵。取り切っていれば `None`。
+fn next_cursor(body: &Value) -> Option<String> {
+    body["next_cursor"].as_str().map(|s| s.to_string())
 }
 
 fn ids(body: &Value) -> Vec<String> {
@@ -130,19 +138,20 @@ async fn activities_paging_is_stable_when_timestamps_tie() {
 
     let activities_path = format!("{tasks_path}/{task_id}/activities");
     let mut seen: Vec<String> = Vec::new();
-    let mut offset = 0;
+    let mut cursor: Option<String> = None;
     loop {
-        let page = app
-            .get_with_session(&format!("{activities_path}?limit=20&offset={offset}"))
-            .await;
+        let url = match &cursor {
+            Some(c) => format!("{activities_path}?limit=20&cursor={c}"),
+            None => format!("{activities_path}?limit=20"),
+        };
+        let page = app.get_with_session(&url).await;
         assert_eq!(page.status(), StatusCode::OK);
         let body = json_body(page).await;
-        let ids = ids(&body);
-        if ids.is_empty() {
-            break;
+        seen.extend(ids(&body));
+        match next_cursor(&body) {
+            Some(c) => cursor = Some(c),
+            None => break,
         }
-        seen.extend(ids);
-        offset += 20;
     }
 
     // タスク作成の 1 件を含む総数と一致し、同じ行を 2 回返していない
@@ -204,9 +213,10 @@ async fn activities_are_paged_and_capped() {
         "total は返した件数ではなく総数（作成の 1 件を含む）"
     );
 
-    // offset で続きが取れて、先頭のページと重ならない
+    // cursor で続きが取れて、先頭のページと重ならない
+    let cursor = next_cursor(&first_body).expect("続きがあるので next_cursor が返る");
     let second = app
-        .get_with_session(&format!("{activities_path}?offset=20"))
+        .get_with_session(&format!("{activities_path}?cursor={cursor}"))
         .await;
     assert_eq!(second.status(), StatusCode::OK);
     let second_body = json_body(second).await;
@@ -229,19 +239,110 @@ async fn activities_are_paged_and_capped() {
         "limit は 100 で切る"
     );
 
-    // 末尾は残り件数だけ返る（total を越えて取ろうとしても落ちない）
+    // 末尾は残り件数だけ返り、そこで next_cursor が消える
+    let head = app
+        .get_with_session(&format!("{activities_path}?limit=100"))
+        .await;
+    let head_body = json_body(head).await;
+    let head_cursor = next_cursor(&head_body).expect("まだ残っている");
     let tail = app
-        .get_with_session(&format!("{activities_path}?limit=100&offset=100"))
+        .get_with_session(&format!("{activities_path}?limit=100&cursor={head_cursor}"))
         .await;
     assert_eq!(tail.status(), StatusCode::OK);
-    assert_eq!(ids(&json_body(tail).await).len(), (total - 100) as usize);
+    let tail_body = json_body(tail).await;
+    assert_eq!(ids(&tail_body).len(), (total - 100) as usize);
+    assert_eq!(
+        next_cursor(&tail_body),
+        None,
+        "取り切ったら next_cursor は返さない"
+    );
+    assert_eq!(tail_body["total"].as_u64().expect("total"), total);
 
-    // 範囲外の offset は空（エラーにしない）
-    let beyond = app
-        .get_with_session(&format!("{activities_path}?offset={}", total + 10))
+    // 壊れたカーソルは 400。利用者が作れる値なので 500 にしない
+    let broken = app
+        .get_with_session(&format!("{activities_path}?cursor=not-a-cursor"))
         .await;
-    assert_eq!(beyond.status(), StatusCode::OK);
-    let beyond_body = json_body(beyond).await;
-    assert!(ids(&beyond_body).is_empty());
-    assert_eq!(beyond_body["total"].as_u64().expect("total"), total);
+    assert_eq!(broken.status(), StatusCode::BAD_REQUEST);
+}
+
+/// 読んでいる最中に履歴が積まれても、続きのページが重複も欠落もしない。
+///
+/// offset で継いでいたときは、1 ページ目を読んだ後に履歴が n 件積まれると
+/// 2 ページ目の境界が n 件ぶん後ろへずれ、境界の行が二重に出ていた。
+/// カーソルは並び順のキーそのものを持つので、前に積まれても位置が動かない。
+#[tokio::test]
+async fn activities_paging_is_not_shifted_by_rows_added_while_reading() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tasks_path = format!(
+        "/v1/tenants/{}/projects/{}/tasks",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+
+    let status_id = create_default_status(&app, tp.tenant_id, tp.project_id).await;
+    let created = app
+        .post_json_with_session(
+            &tasks_path,
+            serde_json::json!({ "title": "読んでいる最中に増える", "status_id": status_id }),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let task_id = json_body(created).await["id"]
+        .as_str()
+        .expect("task id")
+        .to_string();
+    let task_uuid = Uuid::parse_str(&task_id).expect("uuid");
+
+    // 1 ページ（20 件）では収まらない件数を積む。タスク作成の 1 件と合わせて 46 件
+    let seeded = 45;
+    seed_activities(&app, task_uuid, owner.id, seeded).await;
+
+    let activities_path = format!("{tasks_path}/{task_id}/activities");
+    let first = app
+        .get_with_session(&format!("{activities_path}?limit=20"))
+        .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = json_body(first).await;
+    let first_ids = ids(&first_body);
+    assert_eq!(first_ids.len(), 20);
+    let cursor = next_cursor(&first_body).expect("まだ残っている");
+
+    // 1 ページ目を読んだ後に、別の操作で新しい履歴が積まれる。
+    // 並びは新しい順なので、これは読み終えた側（先頭）に入る。
+    // ページサイズ（20）より多く積んで、ずれが 1 ページぶんを越えても崩れないことを見る
+    let added = 23;
+    seed_activities(&app, task_uuid, owner.id, added).await;
+
+    // カーソルで残りを読み切る
+    let mut seen = first_ids.clone();
+    let mut cursor = Some(cursor);
+    while let Some(c) = cursor {
+        let page = app
+            .get_with_session(&format!("{activities_path}?limit=20&cursor={c}"))
+            .await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let body = json_body(page).await;
+        seen.extend(ids(&body));
+        cursor = next_cursor(&body);
+    }
+
+    let unique: std::collections::HashSet<&String> = seen.iter().collect();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "後から積まれた分だけ境界がずれて同じ行が 2 度出ている"
+    );
+    // 1 ページ目より古い行は 1 件も飛ばずに出る。後から積まれた分は
+    // 読み終えた側に入るので、この読み方では出てこない
+    assert_eq!(
+        seen.len(),
+        seeded + 1,
+        "読み始めた時点の履歴を取りこぼしている"
+    );
 }

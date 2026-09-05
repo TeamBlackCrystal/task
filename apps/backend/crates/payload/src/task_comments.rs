@@ -113,8 +113,11 @@ pub struct ActivityItem {
 pub struct ListActivitiesQuery {
     #[serde(default = "default_activities_limit")]
     pub limit: u64,
-    #[serde(default)]
-    pub offset: u64,
+    /// 前のページの `next_cursor`。先頭ページでは付けない。
+    ///
+    /// `offset` を使わないのは、履歴が積まれている最中にページを継ぐと境界がずれ、
+    /// 同じ行が 2 度出たり抜けたりするため（`common::cursor`）。
+    pub cursor: Option<String>,
 }
 
 fn default_activities_limit() -> u64 {
@@ -127,8 +130,11 @@ pub const MAX_ACTIVITIES_LIMIT: u64 = 100;
 #[derive(Serialize, ToSchema)]
 pub struct ActivityListResponse {
     pub activities: Vec<ActivityItem>,
-    /// 絞り込み前の総数。呼び出し側が「まだ残っているか」を判断する
+    /// 総数。件数の表示に使う。**「まだ残っているか」の判断には使わない**
+    /// （取得中に増えるので、総数と取得済み件数の比較では終わらなくなる）
     pub total: u64,
+    /// 次のページを引く鍵。`null` なら取り切っている
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Validate, Deserialize, ToSchema, serde::Serialize)]

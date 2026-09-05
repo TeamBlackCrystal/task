@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod cursor;
 pub mod db;
 pub mod error;
 pub mod notifications;

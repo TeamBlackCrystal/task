@@ -6,11 +6,22 @@ type TaskResponse = components['schemas']['TaskResponse'];
 
 /** 1 ページ分の取得結果。TanStack の `useQueries` の要素から必要な分だけ受ける。 */
 export type TaskGroupPage = {
-  data?: { tasks: TaskResponse[]; total: number };
+  data?: { tasks: TaskResponse[]; total: number; next_cursor?: string | null };
   isLoading?: boolean;
   isError?: boolean;
   refetch?: () => unknown;
 };
+
+/**
+ * そのステータスで次に読むページの鍵。取り切っていれば `null`。
+ *
+ * 「もっと見る」はこれを積んでページを増やす。返ってきた最後のページから採るので、
+ * 取得中・失敗中のページは起点にしない。
+ */
+export function nextGroupCursor(pages: (TaskGroupPage | null | undefined)[]): string | null {
+  const settled = pages.filter((page) => !!page?.data);
+  return settled.at(-1)?.data?.next_cursor ?? null;
+}
 
 /**
  * ステータス 1 つ分のページ群を、一覧が使う塊にまとめる。
@@ -22,9 +33,9 @@ export type TaskGroupPage = {
 export function toTaskGroup(
   status: StatusResponse,
   pages: (TaskGroupPage | null | undefined)[],
-  pageSize: number,
 ): TaskGroup {
-  // ページをまたいでタスクが動くと同じ ID が 2 度出ることがあるので落とす
+  // カーソルは created_at / id で継ぐので、並びの中でタスクが動くことは無い。
+  // ただし優先度・期限で並べ替えるとキー自体が動くので、保険として ID の重複は落とす
   const seen = new Set<string>();
   const tasks = pages
     .flatMap((page) => page?.data?.tasks ?? [])
@@ -36,8 +47,6 @@ export function toTaskGroup(
 
   // total は後のページほど新しいので、返ってきた最後の値を採る
   const total = pages.reduce((acc, page) => page?.data?.total ?? acc, 0);
-  const settled = pages.filter((page) => !!page?.data);
-  const lastSettledPage = settled.at(-1)?.data?.tasks;
   const isError = pages.some((page) => !!page?.isError);
 
   return {
@@ -46,10 +55,10 @@ export function toTaskGroup(
     total,
     isLoading: pages.some((page) => !!page?.isLoading),
     isError,
-    // 最後のページが埋まっていない = 取り切った。total だけで判断すると、件数が
-    // 変動したときに減らない「もっと見る」が残る。失敗しているあいだは、穴を
-    // 飛ばして先へ進ませないように隠して再試行へ寄せる
-    hasMore: !isError && tasks.length < total && lastSettledPage?.length === pageSize,
+    // 続きの有無はサーバの next_cursor だけで決める。取得済み件数と total の比較で
+    // やると、読んでいるあいだに件数が動くだけで判定が狂う。失敗しているあいだは、
+    // 穴を飛ばして先へ進ませないように隠して再試行へ寄せる
+    hasMore: !isError && nextGroupCursor(pages) !== null,
     retry: () => {
       for (const page of pages) void page?.refetch?.();
     },
