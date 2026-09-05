@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 
 import { fetchClient, apiClient } from '@/lib/api-vue-query';
 import type { components } from '@/generated/api';
+import { ACTIVITIES_PATH } from '@/composables/useTaskActivities';
 
 const LIST_COMMENTS_PATH =
   '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}/comments' as const;
@@ -159,7 +160,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
       });
       // 作成レスポンス（TaskCommentResponse）は一覧のスレッド形と型が違い
       // user 情報も含まないため、一覧を invalidate して取り直す
-      await queryClient.invalidateQueries({ queryKey });
+      await invalidateAfterCommentMutation(queryKey);
       return true;
     } catch (error) {
       // 失敗の出し先をフォームごとに分ける: 返信の失敗を最下部の新規投稿
@@ -174,6 +175,19 @@ export function useTaskComments(params: UseTaskCommentsParams) {
     }
   }
 
+  /**
+   * コメントの一覧と履歴を取り直す。
+   *
+   * backend はコメントの追加・編集・削除でも `task_activities` を積むので、
+   * 履歴を落とさないとアクティビティ欄だけが古いまま残る。
+   */
+  function invalidateAfterCommentMutation(queryKey: readonly unknown[]) {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey }),
+      queryClient.invalidateQueries({ queryKey: ['get', ACTIVITIES_PATH] }),
+    ]);
+  }
+
   /** 編集。成功で true（呼び出し側が編集 UI を閉じてよい）、失敗で false。 */
   async function updateComment(commentId: string, body: string): Promise<boolean> {
     if (!tenantId.value || !projectId.value || !taskId.value) return false;
@@ -186,7 +200,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
         params: { path: { ...taskPathParams(), cid: commentId } },
         body: { body },
       });
-      await queryClient.invalidateQueries({ queryKey });
+      await invalidateAfterCommentMutation(queryKey);
       return true;
     } catch (error) {
       updateError.value = apiErrorMessage(error, 'コメントを更新できませんでした');
@@ -208,7 +222,7 @@ export function useTaskComments(params: UseTaskCommentsParams) {
       await deleteCommentMutation.mutateAsync({
         params: { path: { ...taskPathParams(), cid: commentId } },
       });
-      await queryClient.invalidateQueries({ queryKey });
+      await invalidateAfterCommentMutation(queryKey);
       return true;
     } catch (error) {
       deleteError.value = apiErrorMessage(error, 'コメントを削除できませんでした');

@@ -79,6 +79,25 @@ cosign verify-blob SHA256SUMS \
 sha256sum --check SHA256SUMS --ignore-missing   # macOS は shasum -a 256 --check --ignore-missing
 ```
 
+### コンテナイメージの検め方
+
+ghcr.io へ公開しているイメージ（`task-backend` / `task-frontend`、
+`.github/workflows/publish-images.yml`）にも同じ流儀で keyless 署名が付いている。
+署名は tag ではなく digest に付くが、tag を指して verify しても cosign が
+digest へ解決して検めるので、そのまま使える。
+
+こちらも [cosign](https://github.com/sigstore/cosign) の **v3 以上**が要る。
+
+```bash
+# 署名を検める。バイナリと同じく --certificate-identity-regexp と
+# --certificate-oidc-issuer を省いてはならない
+cosign verify ghcr.io/koyori-app/task-backend:0.2.0 \
+  --certificate-identity-regexp '^https://github\.com/koyori-app/task/\.github/workflows/publish-images\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+frontend は image 名を `task-frontend` に読み替える。
+
 ## ビルド
 
 `apps/backend` の Cargo ワークスペースのメンバーなので、`cargo fmt --all` /

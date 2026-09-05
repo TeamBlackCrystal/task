@@ -16,6 +16,7 @@ vi.mock('@/components/markdown/MarkdownEditor.vue', async () => ({
 }));
 
 import TaskDetailHub from '../TaskDetailHub.vue';
+import { PRIORITY_CONFIG } from '@/lib/task-display';
 
 enableAutoUnmount(afterEach);
 
@@ -37,6 +38,42 @@ const task: TaskDetail = {
   updated_at: '2026-07-16T00:00:00Z',
 };
 
+type StatusOption = components['schemas']['ProjectStatusResponse'];
+
+/** ワークフロー順（position）の 3 段。「次へ」と「完了にする」の検証で使う。 */
+const statuses: StatusOption[] = [
+  {
+    id: 'status-id',
+    name: 'Todo',
+    color: '#94a3b8',
+    position: 0,
+    is_default: true,
+    is_done_state: false,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+  {
+    id: 'status-progress',
+    name: 'In Progress',
+    color: '#3b82f6',
+    position: 1,
+    is_default: false,
+    is_done_state: false,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+  {
+    id: 'status-done',
+    name: 'Done',
+    color: '#22c55e',
+    position: 2,
+    is_default: false,
+    is_done_state: true,
+    project_id: 'project-id',
+    created_at: '2026-07-16T00:00:00Z',
+  },
+];
+
 const bugLabel: components['schemas']['LabelResponse'] = {
   id: 'label-bug',
   name: 'bug',
@@ -56,6 +93,78 @@ const featureLabel: components['schemas']['LabelResponse'] = {
 };
 
 describe('TaskDetailHub', () => {
+  /**
+   * 優先度は表示だけで変更できなかった（作成時にしか決められなかった）。
+   * 選び直しを emit する。ステータスと同じピル + メニュー（参照デザイン）なので、
+   * native select ではなくメニュー項目を押して確かめる。
+   */
+  function mountWithPriorityMenu(extra: Record<string, unknown> = {}) {
+    return mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses: [], statusId: task.status_id, ...extra },
+      global: {
+        stubs: {
+          DropdownMenu: { template: '<div><slot /></div>' },
+          DropdownMenuTrigger: { template: '<div><slot /></div>' },
+          DropdownMenuContent: { template: '<div><slot /></div>' },
+          DropdownMenuItem: { template: '<button type="button"><slot /></button>' },
+          DropdownMenuCheckboxItem: {
+            props: ['modelValue', 'disabled'],
+            emits: ['update:modelValue'],
+            template:
+              '<button type="button" data-menu-item :disabled="disabled" @click="$emit(\'update:modelValue\', true)"><slot /></button>',
+          },
+        },
+      },
+    });
+  }
+
+  it('優先度を選び直すと change:priority を emit する', async () => {
+    const wrapper = mountWithPriorityMenu();
+
+    expect(wrapper.get('button[aria-label="優先度"]').text()).toContain(
+      PRIORITY_CONFIG.Medium.label,
+    );
+
+    const items = wrapper.findAll('[data-menu-item]');
+    const high = items.find((item) => item.text().includes(PRIORITY_CONFIG.High.label));
+    expect(high).toBeDefined();
+    await high!.trigger('click');
+
+    expect(wrapper.emitted('change:priority')).toEqual([['High']]);
+  });
+
+  it('優先度の選択肢は表示できる優先度をすべて出す', () => {
+    const wrapper = mountWithPriorityMenu();
+
+    const labels = wrapper.findAll('[data-menu-item]').map((item) => item.text());
+    expect(labels).toEqual(Object.values(PRIORITY_CONFIG).map((config) => config.label));
+  });
+
+  it('更新中は優先度を触れない', () => {
+    const wrapper = mountWithPriorityMenu({ priorityUpdating: true });
+
+    expect(wrapper.get('button[aria-label="優先度"]').attributes('disabled')).toBeDefined();
+    expect(
+      wrapper
+        .findAll('[data-menu-item]')
+        .every((item) => item.attributes('disabled') !== undefined),
+    ).toBe(true);
+  });
+
+  it('優先度の更新に失敗したら理由を出す', () => {
+    const wrapper = mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        priorityError: '優先度の更新に失敗しました',
+      },
+    });
+
+    expect(wrapper.text()).toContain('優先度の更新に失敗しました');
+  });
+
   it('emits the selected soft deadline through the SET path', async () => {
     const wrapper = mount(TaskDetailHub, {
       props: {
@@ -330,7 +439,7 @@ describe('TaskDetailHub description KFM 表示', () => {
     });
 
     expect(wrapper.find('[data-task-description-html]').exists()).toBe(false);
-    expect(wrapper.text()).toContain('説明はありません');
+    expect(wrapper.text()).toContain('説明を追加');
   });
 
   it('descriptionSource が最新 description と不一致なら stale HTML を捨ててプレーン表示へ倒す', () => {
@@ -374,5 +483,77 @@ describe('TaskDetailHub v-html 経路の source 契約', () => {
     const source = readFileSync(path.join(__dirname, '../TaskDetailHub.vue'), 'utf-8');
     const bindings = source.match(/v-html="[^"]*"/g) ?? [];
     expect(bindings).toEqual(['v-html="freshDescriptionHtml"']);
+  });
+});
+
+describe('TaskDetailHub ステータスの操作', () => {
+  function mountWithStatuses(statusId: string) {
+    return mount(TaskDetailHub, {
+      props: { task, projectKey: 'TEST', statuses, statusId },
+    });
+  }
+
+  it('右矢印はワークフロー順の次のステータスへ進める', async () => {
+    const wrapper = mountWithStatuses('status-id');
+
+    await wrapper.get('button[aria-label="In Progress にする"]').trigger('click');
+
+    expect(wrapper.emitted('update:statusId')).toEqual([['status-progress']]);
+  });
+
+  it('最後のステータスでは右矢印を出さない', () => {
+    const wrapper = mountWithStatuses('status-done');
+
+    expect(
+      wrapper.findAll('button').some((b) => b.attributes('aria-label')?.endsWith('にする')),
+    ).toBe(false);
+  });
+
+  it('チェックは完了扱いのステータスへ移す', async () => {
+    const wrapper = mountWithStatuses('status-id');
+
+    await wrapper.get('button[aria-label="Done にする（完了）"]').trigger('click');
+
+    expect(wrapper.emitted('update:statusId')).toEqual([['status-done']]);
+  });
+});
+
+// 担当者は一覧の行と同じ口を使うが、飛行中と失敗をこの画面へ渡さないと
+// 「失敗しても無表示」「送信中も押せて 2 回目が無言で捨てられる」状態になる
+describe('TaskDetailHub の担当者', () => {
+  const members = [{ id: 'user-1', username: 'yupix', avatar_url: null }];
+
+  function mountWithAssignee(extra: Record<string, unknown>) {
+    return mount(TaskDetailHub, {
+      props: {
+        task,
+        projectKey: 'TEST',
+        statuses: [],
+        statusId: task.status_id,
+        members,
+        ...extra,
+      },
+    });
+  }
+
+  it('更新中はピッカーを押せない', () => {
+    const wrapper = mountWithAssignee({ assigneeUpdating: true });
+
+    const picker = wrapper.findComponent({ name: 'TaskAssigneePicker' });
+    expect(picker.exists()).toBe(true);
+    expect(picker.get('button').attributes('disabled')).toBeDefined();
+  });
+
+  it('更新の失敗をその場に出す', () => {
+    const wrapper = mountWithAssignee({ assigneeError: '更新に失敗しました' });
+
+    expect(wrapper.text()).toContain('更新に失敗しました');
+  });
+
+  it('通常は押せる', () => {
+    const wrapper = mountWithAssignee({});
+
+    const picker = wrapper.findComponent({ name: 'TaskAssigneePicker' });
+    expect(picker.get('button').attributes('disabled')).toBeUndefined();
   });
 });

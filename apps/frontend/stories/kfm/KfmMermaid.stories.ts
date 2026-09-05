@@ -12,6 +12,7 @@ import { KFM_CONTENT_CLASS } from '@/lib/remark-gfm/content-class';
 // (器 .kfm-content のスタイルは GFM サイドカー側 — 他 story と同じ二枚組＋mermaid 独自分)
 import '@/lib/remark-gfm/style.css';
 import '@/lib/rehype-starry-night/style.css';
+import '@/lib/rehype-kfm-code/style.css';
 import '@/lib/remark-kfm-mermaid/style.css';
 // 本番では +client.ts が行う client 登録を story でも同じ入口で行う (二重 define は registry 側で防止)
 import { registerKfmCustomElements } from '@/lib/markup-renderer/_client-registry';

@@ -5,6 +5,9 @@
 #     （.env.prod.example が必要な変数の一覧）
 #   - ${VAR:?...} は未設定なら起動せずエラーになる。ダミー値で本番が立ち上がるのを防ぐため、
 #     デフォルト値は付けない
+#   - イメージのタグは通常 IMAGE_TAG だけ設定すれば両方に効く。片方だけ別のタグで動かしたい
+#     ときは BACKEND_IMAGE_TAG / FRONTEND_IMAGE_TAG を設定すると、そちらが優先される
+#     （片方のイメージがまだ公開されていない状態で、もう片方だけ先に出せるようにするため）
 #   - ポートは公開しない。frontend だけ dokploy-network 経由で Traefik に出す。
 #     Dokploy の Domains タブで frontend / port 3000 にドメインを割り当てる
 
@@ -37,7 +40,7 @@ services:
 
   # マイグレーション適用（one-shot）。`up` は冪等なのでデプロイのたびに走らせてよい
   migration:
-    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/task-backend:${IMAGE_TAG:?set IMAGE_TAG}
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/task-backend:${BACKEND_IMAGE_TAG:-${IMAGE_TAG:?set IMAGE_TAG or BACKEND_IMAGE_TAG}}
     command: ["/app/run-migration.sh"]
     environment:
       DATABASE_URL: postgresql://task:${POSTGRES_PASSWORD}@db:5432/task
@@ -47,7 +50,7 @@ services:
     restart: "no"
 
   backend:
-    image: ghcr.io/${GHCR_OWNER}/task-backend:${IMAGE_TAG}
+    image: ghcr.io/${GHCR_OWNER}/task-backend:${BACKEND_IMAGE_TAG:-${IMAGE_TAG:?set IMAGE_TAG or BACKEND_IMAGE_TAG}}
     environment:
       DATABASE_URL: postgresql://task:${POSTGRES_PASSWORD}@db:5432/task
       REDIS_URL: redis://redis:6379
@@ -99,7 +102,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/${GHCR_OWNER}/task-frontend:${IMAGE_TAG}
+    image: ghcr.io/${GHCR_OWNER}/task-frontend:${FRONTEND_IMAGE_TAG:-${IMAGE_TAG:?set IMAGE_TAG or FRONTEND_IMAGE_TAG}}
     environment:
       # SSR サーバから backend へのプロキシ先（api-proxy.ts が参照）
       API_BASE: http://backend:3400

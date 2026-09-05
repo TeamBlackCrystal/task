@@ -11,7 +11,7 @@ use sea_orm::{
 };
 
 use common::error::AppError;
-use entity::{project_members, projects, tenant_members};
+use entity::{project_members, projects, tenant_members, tenants};
 
 /// テナントメンバーかどうか（オーナーは含まない）。
 pub async fn is_tenant_member<C: ConnectionTrait>(
@@ -67,6 +67,66 @@ pub async fn project_is_open_or_member<C: ConnectionTrait>(
         return Ok(false);
     };
     Ok(!project.is_personal || project.personal_owner_id == Some(user_id))
+}
+
+/// そのプロジェクトのタスクに担当者として指定できる利用者。
+///
+/// 判定規則は handler の `require_project_access` と同じ:
+/// テナントオーナーは常に可、テナントメンバーは `project_is_open_or_member` を満たせば可。
+/// 1 人ずつ問い合わせると人数分のクエリになるため、候補一覧はここで集合として返す。
+///
+/// **テナントに入れることは呼び出し側で確認済みの前提。**
+pub async fn assignable_user_ids<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    project_id: Uuid,
+) -> Result<Vec<Uuid>, AppError> {
+    let Some(tenant) = tenants::Entity::find_by_id(tenant_id).one(db).await? else {
+        return Ok(Vec::new());
+    };
+    let Some(project) = projects::Entity::find_by_id(project_id).one(db).await? else {
+        return Ok(Vec::new());
+    };
+
+    // このプロジェクトに明示指定されている利用者。空ならテナント全体へ開放されている
+    // （ただし個人プロジェクトは開放しない。project_is_open_or_member と同じ扱い）
+    let named: HashSet<Uuid> = project_members::Entity::find()
+        .filter(project_members::Column::ProjectId.eq(project_id))
+        .select_only()
+        .column(project_members::Column::UserId)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
+    let members: Vec<Uuid> = tenant_members::Entity::find()
+        .filter(tenant_members::Column::TenantId.eq(tenant_id))
+        .select_only()
+        .column(tenant_members::Column::UserId)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?;
+
+    let mut ids = Vec::with_capacity(members.len() + 1);
+    let mut seen = HashSet::new();
+    // オーナーはプロジェクト指定に関係なく可（require_project_access と同じ）
+    if seen.insert(tenant.owner_id) {
+        ids.push(tenant.owner_id);
+    }
+    for user_id in members {
+        let allowed = if named.contains(&user_id) {
+            true
+        } else if !named.is_empty() {
+            false
+        } else {
+            !project.is_personal || project.personal_owner_id == Some(user_id)
+        };
+        if allowed && seen.insert(user_id) {
+            ids.push(user_id);
+        }
+    }
+    Ok(ids)
 }
 
 /// 候補プロジェクトのうち、そのユーザーに見えるものを返す。

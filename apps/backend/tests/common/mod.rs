@@ -1179,6 +1179,17 @@ pub async fn execute_advisory_lock<C: sea_orm::ConnectionTrait>(conn: &C, key: i
         .expect("advisory lock");
 }
 
+/// テストの前提を作るための生 SQL。`?` ではなく `$N` を使う（common::db のヘルパー経由）。
+pub async fn execute_sql<C: sea_orm::ConnectionTrait>(
+    conn: &C,
+    sql: &str,
+    values: Vec<sea_orm::Value>,
+) {
+    common::db::execute_bound(conn, sql, values)
+        .await
+        .expect("execute sql");
+}
+
 pub async fn insert_tenant(db: &DatabaseConnection, owner_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     tenants::ActiveModel {

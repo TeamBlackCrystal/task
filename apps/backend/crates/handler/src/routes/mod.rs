@@ -76,4 +76,47 @@ mod tests {
             "operationId が重複しています。該当ハンドラーの #[utoipa::path] に operation_id を明示してください: {duplicates:#?}"
         );
     }
+
+    /// `#[utoipa::path]` の path は nest 位置からの**相対**パス。`routes()` 側で
+    /// `.nest("/drive", ...)` しているのに `path = "/v1/drive/share/{token}"` と絶対で書くと、
+    /// `/v1/drive/v1/drive/share/{token}` に登録されて 404 になる（#277 / #678 で実発生）。
+    ///
+    /// `utoipa_axum::routes!` は同じ path から axum のルートも導出するので、
+    /// これは生成ドキュメントだけでなく実際の登録先の検査でもある。
+    ///
+    /// 二度踏んだ型なので、エンドポイントごとの結合テストではなくここで機械的に止める。
+    #[test]
+    fn openapi_paths_are_mounted_once_under_v1() {
+        let (_, openapi) = OpenApiRouter::<crate::AppState>::new()
+            .merge(create_routes())
+            .split_for_parts();
+        let doc = serde_json::to_value(&openapi).expect("serialize openapi");
+
+        let paths: Vec<&String> = doc["paths"]
+            .as_object()
+            .expect("paths object")
+            .keys()
+            .collect();
+        // 空の文書なら以降の検査は素通りしてしまうので、まず本当に登録されていることを見る
+        assert!(!paths.is_empty(), "ルートが 1 つも登録されていません");
+
+        // 二重連結は 2 つの形で出る。nest の鎖ごと書いた `/v1/drive/v1/drive/...` と、
+        // 自分の nest 位置だけ書いた `/v1/drive/drive/...`。前者は /v1/ の回数、
+        // 後者は隣接する同一セグメントで捕まる（正当な API に隣接重複は無い）
+        let offenders: Vec<&&String> = paths
+            .iter()
+            .filter(|path| {
+                if !path.starts_with("/v1/") || path.matches("/v1/").count() != 1 {
+                    return true;
+                }
+                let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+                segments.windows(2).any(|pair| pair[0] == pair[1])
+            })
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "prefix が二重連結されているか /v1 の外に出ています。\n\
+             該当ハンドラーの #[utoipa::path] の path を nest 位置からの相対パスに直してください: {offenders:#?}"
+        );
+    }
 }

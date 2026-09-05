@@ -26,6 +26,8 @@ pub enum AppError {
     NotFound,
     #[error("forbidden")]
     Forbidden,
+    #[error("forbidden: {0}")]
+    ForbiddenDetail(String),
     #[error("conflict")]
     Conflict,
     #[error("conflict: {0}")]
@@ -73,6 +75,9 @@ impl IntoResponse for AppError {
                 }),
             )
                 .into_response(),
+            AppError::ForbiddenDetail(msg) => {
+                (StatusCode::FORBIDDEN, Json(ServerError { message: msg })).into_response()
+            }
             AppError::Conflict => (
                 StatusCode::CONFLICT,
                 Json(ServerError {

@@ -5,6 +5,8 @@ import type { ComponentPublicInstance } from 'vue';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { avatarInitials } from '@/lib/initials';
 import { formatTaskDate } from '@/lib/task-display';
 import type { CommentReply, CommentThread } from '@/composables/useTaskComments';
 
@@ -91,6 +93,17 @@ async function confirmDelete() {
 <template>
   <article class="flex flex-col gap-1" data-task-comment :data-comment-id="comment.id">
     <header class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+      <!-- 投稿者のアイコン。avatar_url が無いユーザーは頭文字で描く -->
+      <Avatar class="size-6">
+        <AvatarImage
+          v-if="comment.user.avatar_url"
+          :src="comment.user.avatar_url"
+          :alt="comment.user.name"
+        />
+        <AvatarFallback class="bg-muted text-[10px] text-muted-foreground">
+          {{ avatarInitials(comment.user.name) }}
+        </AvatarFallback>
+      </Avatar>
       <span class="font-medium text-foreground">{{ comment.user.name }}</span>
       <span>{{ formatTaskDate(comment.created_at) }}</span>
       <!-- backend が作成時に created_at と updated_at へ同一の now を入れるため、

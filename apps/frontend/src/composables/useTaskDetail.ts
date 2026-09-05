@@ -8,6 +8,7 @@ import { useResolvedTenantId } from '@/composables/useResolvedTenantId';
 import { fetchClient, apiClient, TASK_SEARCH_PATH } from '@/lib/api-vue-query';
 import { clampProgressPct, localDateInputToIso, taskListHref } from '@/lib/task-display';
 import type { components } from '@/generated/api';
+import { ACTIVITIES_PATH } from '@/composables/useTaskActivities';
 
 const GET_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks/{id}' as const;
 const LIST_STATUSES_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/statuses' as const;
@@ -16,7 +17,7 @@ const LIST_LABELS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/labels' 
 
 type TaskDetail = components['schemas']['TaskDetailResponse'];
 type UpdateTaskRequest = components['schemas']['UpdateTaskRequest'];
-export type MutatingField = EditableField | 'status_id' | 'labels';
+export type MutatingField = EditableField | 'status_id' | 'labels' | 'priority';
 
 /**
  * コードポイント順の文字列比較。
@@ -84,6 +85,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
   } = useResolvedProjectId(tenantId, projectKey);
 
   const statusError = ref<string | null>(null);
+  const priorityError = ref<string | null>(null);
   const labelsError = ref<string | null>(null);
   const deleteError = ref<string | null>(null);
   const fieldErrors = ref<Partial<Record<EditableField, string>>>({});
@@ -190,14 +192,35 @@ export function useTaskDetail(params: UseTaskDetailParams) {
   });
 
   const statusUpdating = computed(() => pendingFieldRevisions.value.status_id !== undefined);
+  const priorityUpdating = computed(() => pendingFieldRevisions.value.priority !== undefined);
   const labelsUpdating = computed(() => pendingFieldRevisions.value.labels !== undefined);
 
   const updateTaskMutation = apiClient.useMutation('put', GET_TASK_PATH);
 
   const listHref = computed(() => taskListHref(tenantDisplayId.value, projectKey.value));
 
-  /** 通常一覧と検索結果の両方を古い内容のまま残さないための invalidate。 */
-  function invalidateTaskListCaches() {
+  /**
+   * 更新後に古い内容のまま残るキャッシュを取り直す。
+   *
+   * 通常一覧と検索結果のほか、履歴も落とす。backend は更新のたびに
+   * `task_activities` を積むので、ここで取り直さないとアクティビティ欄だけが
+   * 古いまま残る（画面上は更新できているので気づきにくい）。
+   */
+  function invalidateAfterTaskMutation() {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['get', LIST_TASKS_PATH] }),
+      queryClient.invalidateQueries({ queryKey: ['get', TASK_SEARCH_PATH] }),
+      queryClient.invalidateQueries({ queryKey: ['get', ACTIVITIES_PATH] }),
+    ]);
+  }
+
+  /**
+   * 削除後。履歴はタスクごと消えるので取り直さない。
+   *
+   * `invalidateQueries` は表示中のクエリの再取得を待つため、ここで履歴を混ぜると
+   * 「消したタスクの履歴を取り終わるまで一覧へ戻れない」ことになる（遷移が遅れる）。
+   */
+  function invalidateAfterTaskDelete() {
     return Promise.all([
       queryClient.invalidateQueries({ queryKey: ['get', LIST_TASKS_PATH] }),
       queryClient.invalidateQueries({ queryKey: ['get', TASK_SEARCH_PATH] }),
@@ -208,7 +231,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     onSuccess: async () => {
       deleteError.value = null;
       queryClient.removeQueries({ queryKey: taskQueryKey.value, exact: true });
-      await invalidateTaskListCaches();
+      await invalidateAfterTaskDelete();
       onAfterDelete(listHref.value);
     },
     onError: () => {
@@ -230,6 +253,10 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       statusError.value = 'ステータスの更新に失敗しました';
       const currentStatusId = taskQuery.data.value?.status_id;
       if (currentStatusId) selectedStatusId.value = currentStatusId;
+      return;
+    }
+    if (field === 'priority') {
+      priorityError.value = '優先度の更新に失敗しました';
       return;
     }
     if (field === 'labels') {
@@ -269,6 +296,8 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     if (field === 'status_id') {
       statusError.value = null;
       if (data.status_id) selectedStatusId.value = data.status_id;
+    } else if (field === 'priority') {
+      priorityError.value = null;
     } else if (field === 'labels') {
       labelsError.value = null;
     } else {
@@ -287,6 +316,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     optimisticTask.value = { ...optimisticTask.value, ...optimistic };
     pendingFieldRevisions.value = { ...pendingFieldRevisions.value, [field]: revision };
     if (field === 'status_id') statusError.value = null;
+    else if (field === 'priority') priorityError.value = null;
     else if (field === 'labels') labelsError.value = null;
     else fieldErrors.value = { ...fieldErrors.value, [field]: undefined };
 
@@ -307,7 +337,7 @@ export function useTaskDetail(params: UseTaskDetailParams) {
       })
       .then((data: TaskDetail) => {
         applyMutationSuccess(field, revision, data, queryKey);
-        void invalidateTaskListCaches();
+        void invalidateAfterTaskMutation();
         params.onAfterFieldSaved?.(field);
       })
       .catch(() => {
@@ -327,6 +357,12 @@ export function useTaskDetail(params: UseTaskDetailParams) {
 
     selectedStatusId.value = nextStatusId;
     mutateTask({ status_id: nextStatusId }, { status_id: nextStatusId }, 'status_id');
+  }
+
+  function onPriorityChange(nextPriority: TaskDetail['priority']) {
+    const current = taskQuery.data.value;
+    if (!current || nextPriority === current.priority) return;
+    mutateTask({ priority: nextPriority }, { priority: nextPriority }, 'priority');
   }
 
   function onSaveTitle(value: string) {
@@ -461,6 +497,9 @@ export function useTaskDetail(params: UseTaskDetailParams) {
     selectedStatusId,
     statusUpdating,
     statusError,
+    priorityUpdating,
+    priorityError,
+    onPriorityChange,
     labelsUpdating,
     labelsError,
     fieldUpdating,

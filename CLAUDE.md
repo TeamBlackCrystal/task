@@ -79,7 +79,7 @@ cargo test --workspace --lib
 新しい地雷を足すときに既存の項目を見直し、回帰ガード（CI・型・lint・固定テスト）で踏めなくなったものは消す。
 
 - **SeaORM の生 SQL に `?` プレースホルダを書かない。** `Statement::from_sql_and_values` は SQL を無変換で sqlx に渡すため、Postgres では実行時構文エラーになる。`common::db` のヘルパー（`table_exists` / `column_exists` / `execute_bound` / `query_one_bool`）か `$N` 直書きを使う。この類のバグは過去に3箇所で見つかっている（#272 / #277）
-- **`#[utoipa::path]` の path は nest 位置からの相対パス。** routes 側で同じパスを `.nest()` すると二重連結された URL に登録されて 404 になる（#277 で実発生）。既存ハンドラーの登録方法に合わせること
+- **`#[utoipa::path]` の path は nest 位置からの相対パス。** routes 側で同じパスを `.nest()` すると二重連結された URL に登録されて 404 になる（#277 / #678 で実発生）。既存ハンドラーの登録方法に合わせること。二重連結そのものは `routes/mod.rs` の `openapi_paths_are_mounted_once_under_v1` が落とす（`/v1/` の回数と隣接する同一セグメントを見る）が、重複しない形の間違った絶対パスは通るので、登録方法を合わせる原則は残る
 - **apalis のジョブペイロードは Postgres（apalis.jobs）に平文で永続化される。** トークン等の機微情報を載せない（Redis のみに保持する）。job クレートの「シリアライズ後キー集合」固定テストが回帰ガード。再送競合は `issued_at` 世代（Unix ミリ秒）を process 時に生成し、`email_verification::store_token` の世代比較（Lua）で後勝ち解決する
 - **ワーカーに `AppState` を渡さない**（job → handler の循環になる）。必要な依存は `JobState` にフィールドを足す
 - 増分ビルドの計測に `cargo build -p <crate>` を使わない。feature 解決がワークスペース全体と変わり依存を作り直すため、数字が実態と乖離する
