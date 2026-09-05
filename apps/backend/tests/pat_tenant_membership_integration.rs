@@ -7,7 +7,7 @@ use entity::tenants;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait};
 use uuid::Uuid;
 
-/// PAT が「認証は通る（401 でない）のに読み口が 403」になるテナント所属の不備（cmd_8）の
+/// PAT が「認証は通る（401 でない）のに読み口が 403」になるテナント所属の不備の
 /// 再現と回帰。
 ///
 /// `has_tenant_access`（handler/src/extractors.rs）は tenants.owner_id の一致（オーナー近道）
