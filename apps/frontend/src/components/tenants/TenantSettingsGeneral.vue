@@ -4,6 +4,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { navigate } from 'vike/client/router';
 
 import TenantIconPicker from '@/components/tenants/TenantIconPicker.vue';
+import { DEFAULT_TENANT_EMOJI } from '@/components/tenants/tenant-icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,7 +47,7 @@ const draft = reactive({
   name: props.tenant.name,
   description: props.tenant.description,
   iconUrl: props.tenant.icon_url,
-  emoji: '🗂️',
+  emoji: props.tenant.icon_emoji ?? DEFAULT_TENANT_EMOJI,
 });
 
 /** テナントを切り替えたら編集中の値も差し替える（前のテナントの入力を持ち越さない）。 */
@@ -56,14 +57,25 @@ watch(
     draft.name = tenant.name;
     draft.description = tenant.description;
     draft.iconUrl = tenant.icon_url;
+    draft.emoji = tenant.icon_emoji ?? DEFAULT_TENANT_EMOJI;
   },
+);
+
+/**
+ * 絵文字は未設定（NULL）のとき既定値を表示するので、「表示されている値と同じ」なら
+ * 変更として扱わない。名前だけ直した保存で既定の絵文字を焼き付けないためにも、
+ * 変わったときだけ body に載せる。
+ */
+const isEmojiChanged = computed(
+  () => draft.emoji !== (props.tenant.icon_emoji ?? DEFAULT_TENANT_EMOJI),
 );
 
 const isDirty = computed(
   () =>
     draft.name !== props.tenant.name ||
     draft.description !== props.tenant.description ||
-    draft.iconUrl !== props.tenant.icon_url,
+    draft.iconUrl !== props.tenant.icon_url ||
+    isEmojiChanged.value,
 );
 
 const canSave = computed(
@@ -76,6 +88,7 @@ function discard() {
   draft.name = props.tenant.name;
   draft.description = props.tenant.description;
   draft.iconUrl = props.tenant.icon_url;
+  draft.emoji = props.tenant.icon_emoji ?? DEFAULT_TENANT_EMOJI;
   submitError.value = null;
 }
 
@@ -89,6 +102,7 @@ async function save() {
         name: draft.name.trim(),
         description: draft.description,
         icon_url: draft.iconUrl,
+        ...(isEmojiChanged.value ? { icon_emoji: draft.emoji } : {}),
       },
     });
     await queryClient.invalidateQueries({ queryKey: ['get', LIST_TENANTS_PATH] });

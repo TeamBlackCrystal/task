@@ -338,6 +338,7 @@ async fn oauth_callback_requires_2fa_setup_for_tenant_member() {
         name: Set("Require 2FA Tenant".into()),
         description: Set(String::new()),
         icon_url: Set(String::new()),
+        icon_emoji: Set(None),
         owner_id: Set(owner.id),
         drive_quota_bytes: Set(None),
         require_2fa: Set(true),

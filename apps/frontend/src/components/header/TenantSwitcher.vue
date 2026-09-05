@@ -105,6 +105,9 @@ const membersHref = computed(() =>
             alt=""
             class="size-full object-cover"
           />
+          <span v-else-if="activeTenant?.icon_emoji" class="text-sm leading-none">{{
+            activeTenant.icon_emoji
+          }}</span>
           <PhBuildings v-else class="size-3.5 text-muted-foreground" />
         </span>
         <span class="truncate font-medium">{{ triggerLabel }}</span>
@@ -124,6 +127,9 @@ const membersHref = computed(() =>
             alt=""
             class="size-full object-cover"
           />
+          <span v-else-if="activeTenant.icon_emoji" class="text-base leading-none">{{
+            activeTenant.icon_emoji
+          }}</span>
           <PhBuildings v-else class="size-4 text-muted-foreground" />
         </span>
         <span class="min-w-0 flex-1 leading-snug">
@@ -177,6 +183,9 @@ const membersHref = computed(() =>
             alt=""
             class="size-full object-cover"
           />
+          <span v-else-if="tenant.icon_emoji" class="text-xs leading-none">{{
+            tenant.icon_emoji
+          }}</span>
           <PhBuildings v-else class="size-3 text-muted-foreground" />
         </span>
         <span class="min-w-0 flex-1 truncate">{{ tenant.name }}</span>

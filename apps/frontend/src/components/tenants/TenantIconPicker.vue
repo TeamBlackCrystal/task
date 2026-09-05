@@ -7,34 +7,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
-
-/** デザイン準拠の選択肢。 */
-const EMOJI_CHOICES = [
-  '🗂️',
-  '📦',
-  '🚀',
-  '🛠️',
-  '🧩',
-  '📐',
-  '💡',
-  '🔭',
-  '🏢',
-  '🏗️',
-  '🧪',
-  '📊',
-  '🎯',
-  '🗺️',
-  '⚙️',
-  '🧭',
-  '📎',
-  '🖇️',
-  '🔧',
-  '🪄',
-  '🧱',
-  '🗃️',
-  '📁',
-  '🔩',
-];
+import { TENANT_EMOJI_CHOICES } from '@/components/tenants/tenant-icon';
 
 const props = defineProps<{
   /** 画像 URL。空なら絵文字を出す */
@@ -88,7 +61,7 @@ const emit = defineEmits<{
       </div>
       <div class="grid grid-cols-8 gap-0.5 px-1 pb-1">
         <button
-          v-for="choice in EMOJI_CHOICES"
+          v-for="choice in TENANT_EMOJI_CHOICES"
           :key="choice"
           type="button"
           :aria-label="`アイコン ${choice}`"

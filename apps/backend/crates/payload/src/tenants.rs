@@ -13,6 +13,8 @@ pub struct TenantResponse {
     pub name: String,
     pub description: String,
     pub icon_url: String,
+    #[schema(nullable)]
+    pub icon_emoji: Option<String>,
     #[schema(value_type = String, format = "uuid")]
     pub owner_id: Uuid,
     #[schema(nullable)]
@@ -28,6 +30,7 @@ impl From<tenants::Model> for TenantResponse {
             name: model.name,
             description: model.description,
             icon_url: model.icon_url,
+            icon_emoji: model.icon_emoji,
             owner_id: model.owner_id,
             drive_quota_bytes: model.drive_quota_bytes,
             require_2fa: model.require_2fa,
@@ -56,4 +59,7 @@ pub struct UpdateTenantRequest {
     /// data URL を受け付ける場合も DB 行と一覧レスポンスを膨らませない上限を設ける。
     #[validate(length(max = 700_000))]
     pub icon_url: Option<String>,
+    /// 画像を持たないテナントのアイコン。projects.icon_emoji と同じ上限。
+    #[validate(length(max = 8))]
+    pub icon_emoji: Option<String>,
 }

@@ -42,10 +42,13 @@ type MockOptions = {
 };
 
 let fetchSpy: ReturnType<typeof fn> | null = null;
+/** PUT の body。mock 側が Request を読み切るので、送った中身はここに控える。 */
+let putBodies: unknown[] = [];
 
 function mockFetch(overrides: MockOptions = {}) {
   return () => {
     const original = globalThis.fetch;
+    putBodies = [];
     fetchSpy = fn().mockImplementation(async (req: Request | string) => {
       const url = typeof req === 'string' ? req : req.url;
       const method = typeof req === 'string' ? 'GET' : req.method;
@@ -62,6 +65,7 @@ function mockFetch(overrides: MockOptions = {}) {
         if (overrides.rejectWrite) return jsonResponse({ message: 'error' }, overrides.rejectWrite);
         if (method === 'DELETE') return new Response(null, { status: 204 });
         const body = await (req as Request).json();
+        if (method === 'PUT') putBodies.push(body);
         return jsonResponse({ ...sampleTenant, ...body });
       }
       return jsonResponse([]);
@@ -159,6 +163,32 @@ export const SaveBarAppearsOnEdit: Story = {
       .find((req) => req.method === 'PUT');
     await expect(put).toBeTruthy();
     await expect(put!.url).toContain(`/v1/tenants/${TENANT_UUID}`);
+  },
+};
+
+/**
+ * 絵文字は選んでも保存対象に入っておらず、画面を離れると黙って消えていた。
+ * 保存バーが出ること、PUT の body に載ることの両方を固定する。
+ */
+export const EmojiSelectionIsSaved: Story = {
+  name: '絵文字を選ぶと保存バーが出る → PUT に icon_emoji が載る',
+  beforeEach: mockFetch(),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // ピッカーの中身は DropdownMenuPortal で canvas の外に出る
+    const page = within(canvasElement.ownerDocument.body);
+    const user = userEvent.setup();
+
+    await user.click(await canvas.findByRole('button', { name: 'テナントアイコンを変更' }));
+    await user.click(await page.findByRole('button', { name: 'アイコン 🚀' }));
+    // 選択肢は素の button なのでメニューは開いたまま。閉じないと背後が aria-hidden で触れない
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(page.queryByText('絵文字を選択')).not.toBeInTheDocument());
+
+    await expect(canvas.findByText('保存されていない変更があります')).resolves.toBeInTheDocument();
+    await user.click(canvas.getByRole('button', { name: '変更を保存' }));
+
+    await expect(putBodies.at(-1)).toMatchObject({ icon_emoji: '🚀' });
   },
 };
 
