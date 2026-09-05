@@ -218,7 +218,12 @@ export function useTaskRowMutations(params: TaskRowMutationsParams) {
         body: { body },
       });
       if (error) throw error;
-      await invalidateLists();
+      // 一覧・履歴に加えてコメント一覧も落とす。詳細（useTaskComments）と同じ
+      // リソースへ書くので、ここで落とさないと行から足したコメントが詳細に出ない
+      await Promise.all([
+        invalidateLists(),
+        queryClient.invalidateQueries({ queryKey: ['get', COMMENTS_PATH] }),
+      ]);
       return true;
     } catch {
       errors.value = { ...errors.value, [taskId]: 'コメントを追加できませんでした' };

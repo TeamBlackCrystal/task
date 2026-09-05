@@ -5,6 +5,7 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import type { paths } from '@/generated/api';
 import { useTaskRowMutations } from '../useTaskRowMutations';
 import { useTaskActivities } from '../useTaskActivities';
+import { useTaskComments } from '../useTaskComments';
 
 // vi.mock の factory から参照するため hoisted に置く
 const { control, requestLog, fetchMock } = vi.hoisted(() => {
@@ -33,7 +34,8 @@ const { control, requestLog, fetchMock } = vi.hoisted(() => {
     requestLog.push(entry);
 
     if (method === 'GET') {
-      if (url.includes('/activities')) return jsonResponse({ activities: [] });
+      if (url.includes('/activities')) return jsonResponse({ activities: [], total: 0 });
+      if (url.includes('/comments')) return jsonResponse({ comments: [] });
       return jsonResponse({ tasks: [], total: 0 });
     }
 
@@ -73,14 +75,16 @@ describe('useTaskRowMutations', () => {
   let mutations: ReturnType<typeof useTaskRowMutations>;
 
   /**
-   * 履歴も一緒にマウントする。invalidate は表示中のクエリしか取り直さないので、
-   * 「行から更新したら履歴も取り直す」の配線はこの形でしか確かめられない。
+   * 履歴とコメント一覧も一緒にマウントする。invalidate は表示中のクエリしか
+   * 取り直さないので、「行から更新したら詳細側も取り直す」の配線はこの形でしか
+   * 確かめられない。
    */
   function mountHost() {
     const Host = defineComponent({
       setup() {
         mutations = useTaskRowMutations({ tenantId: 'tenant-1', projectId: 'project-1' });
         useTaskActivities({ tenantId: 'tenant-1', projectId: 'project-1', taskId: 'task-1' });
+        useTaskComments({ tenantId: 'tenant-1', projectId: 'project-1', taskId: 'task-1' });
         return () => null;
       },
     });
@@ -91,6 +95,10 @@ describe('useTaskRowMutations', () => {
     return requestLog.filter(
       (entry) => entry.method === 'GET' && entry.url.includes('/activities'),
     );
+  }
+
+  function commentRequests() {
+    return requestLog.filter((entry) => entry.method === 'GET' && entry.url.includes('/comments'));
   }
 
   beforeEach(() => {
@@ -180,6 +188,20 @@ describe('useTaskRowMutations', () => {
     await flushPromises();
 
     expect(activityRequests().length).toBeGreaterThan(before);
+  });
+
+  // 行と詳細（useTaskComments）が同じコメント一覧へ書くので、行から投稿したときも
+  // コメント一覧を落とさないと、詳細を開いたまま足したコメントが出てこない
+  it('コメント追加のあとにコメント一覧を取り直す', async () => {
+    mountHost();
+    await flushPromises();
+    const before = commentRequests().length;
+    expect(before).toBeGreaterThan(0);
+
+    await expect(mutations.addComment('task-1', 'コメント')).resolves.toBe(true);
+    await flushPromises();
+
+    expect(commentRequests().length).toBeGreaterThan(before);
   });
 
   it('作成の失敗はグループごとのエラーに入る', async () => {
