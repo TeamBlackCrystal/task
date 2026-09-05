@@ -15,9 +15,12 @@ use uuid::Uuid;
 /// ここで固定する契約（セッション・PAT 共通）:
 /// 1. 名指しされた自分のプロジェクトへは 200（修正前は 403 — 赤）
 /// 2. 明示指定の無い他プロジェクトへは 403（「メンバー未指定＝開放」はテナントメンバー限り）
-/// 3. テナント全体の口（テナント取得・プロジェクト一覧）は従来どおり 403
-/// 4. テナント一覧に membership=Guest の印付きで出る（修正前は出ない — 赤）
+/// 3. テナント全体の口のうち、プロジェクト一覧（`GET …/projects`）と My Tasks（`GET …/users/me/tasks`）は
+///    己が明示 member の project に絞って 200。その他の tenant-wide（テナント取得など）は 403
+/// 4. テナント一覧に membership=Guest の印付きで出る（修正前は出ない — 赤）。
+///    客分への応答ではテナント設定欄（owner_id / drive_quota_bytes / require_2fa）は null
 /// 5. 無関係な利用者は従来どおり入れない（権限を広げていない対照）
+/// 6. require_2fa テナントの 2FA 強制は客分にも及ぶ（修正前は漏れた — 赤）
 async fn insert_second_project(db: &DatabaseConnection, tenant_id: Uuid) -> Uuid {
     let id = Uuid::new_v4();
     let suffix = &id.to_string()[..8];
