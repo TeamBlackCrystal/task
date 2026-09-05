@@ -6,7 +6,7 @@ import type { TenantUuid } from '@/lib/api-ids';
 import type { components } from '@/generated/api';
 
 const LIST_TENANTS_PATH = '/v1/tenants' as const;
-type TenantResponse = components['schemas']['TenantResponse'];
+type TenantResponse = components['schemas']['TenantListItemResponse'];
 
 /** Route param (display_id) を GET /v1/tenants で UUID に解決する。 */
 export function useResolvedTenantId(tenantDisplayId: MaybeRefOrGetter<string>) {

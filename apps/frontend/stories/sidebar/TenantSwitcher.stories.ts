@@ -16,6 +16,7 @@ const tenant = (id: string, name: string, displayId: string): Tenant => ({
   icon_url: '',
   owner_id: ownerId,
   require_2fa: false,
+  membership: 'Owner' as const,
 });
 
 const primaryTenant = tenant('00000000-0000-4000-8000-000000000010', 'Acme', 'acme');

@@ -229,6 +229,109 @@ async fn session_guest_passes_only_named_project_and_is_marked_in_list() {
     app.cleanup_user(s.owner.id).await;
 }
 
+/// 客分への一覧応答はテナント設定の欄（owner_id / drive_quota_bytes / require_2fa）を
+/// 返さない（null）。Owner / Member には従来どおり値が入る。
+#[tokio::test]
+async fn guest_list_item_hides_tenant_settings() {
+    let mut app = TestApp::new().await;
+    let s = setup_guest(&mut app).await;
+
+    // stranger をテナントメンバーへ追加して Member の対照にする
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let added = app
+        .post_json_with_session(
+            &format!("/v1/tenants/{}/members", s.tenant_id),
+            serde_json::json!({ "user_id": s.stranger.id, "role": "Member" }),
+        )
+        .await;
+    assert_eq!(added.status(), StatusCode::CREATED, "対照の Member を用意");
+
+    let find = |body: Value, tenant_id: Uuid| -> Value {
+        let wanted = tenant_id.to_string();
+        body.as_array()
+            .expect("tenant list must be an array")
+            .iter()
+            .find(|t| t["id"].as_str() == Some(wanted.as_str()))
+            .cloned()
+            .expect("tenant must be listed")
+    };
+
+    // 客分: 三欄が null（欄は在るが値を返さない）
+    app.reset_session_client();
+    app.login_session(&s.guest.email, &s.guest.password).await;
+    let res = app.get_with_session("/v1/tenants").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let item = find(res.json().await.expect("list json"), s.tenant_id);
+    assert_eq!(item["membership"], "Guest");
+    assert!(
+        item["owner_id"].is_null(),
+        "客分に owner_id を返さない: {item}"
+    );
+    assert!(
+        item["drive_quota_bytes"].is_null(),
+        "客分に drive_quota_bytes を返さない: {item}"
+    );
+    assert!(
+        item["require_2fa"].is_null(),
+        "客分に require_2fa を返さない: {item}"
+    );
+    // 一覧の表示に使う欄は残る
+    assert!(item["display_id"].is_string());
+    assert!(item["name"].is_string());
+    assert!(item["description"].is_string());
+    assert!(item["icon_url"].is_string());
+
+    // Owner: 従来どおり値が入る
+    app.reset_session_client();
+    app.login_session(&s.owner.email, &s.owner.password).await;
+    let item = find(
+        app.get_with_session("/v1/tenants")
+            .await
+            .json()
+            .await
+            .expect("list json"),
+        s.tenant_id,
+    );
+    assert_eq!(item["membership"], "Owner");
+    assert_eq!(
+        item["owner_id"].as_str(),
+        Some(s.owner.id.to_string().as_str()),
+        "Owner には owner_id が入る"
+    );
+    assert!(
+        item["require_2fa"].is_boolean(),
+        "Owner には require_2fa が入る"
+    );
+
+    // Member: 従来どおり値が入る
+    app.reset_session_client();
+    app.login_session(&s.stranger.email, &s.stranger.password)
+        .await;
+    let item = find(
+        app.get_with_session("/v1/tenants")
+            .await
+            .json()
+            .await
+            .expect("list json"),
+        s.tenant_id,
+    );
+    assert_eq!(item["membership"], "Member");
+    assert_eq!(
+        item["owner_id"].as_str(),
+        Some(s.owner.id.to_string().as_str()),
+        "Member には owner_id が入る"
+    );
+    assert!(
+        item["require_2fa"].is_boolean(),
+        "Member には require_2fa が入る"
+    );
+
+    app.cleanup_user(s.guest.id).await;
+    app.cleanup_user(s.stranger.id).await;
+    app.cleanup_user(s.owner.id).await;
+}
+
 /// PAT の客分: セッションと同じ扱い（バインド・scope の層は変えない）。
 #[tokio::test]
 async fn pat_guest_passes_only_named_project_and_is_marked_in_list() {

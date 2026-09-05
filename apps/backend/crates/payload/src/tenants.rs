@@ -80,26 +80,37 @@ pub struct TenantListItemResponse {
     pub name: String,
     pub description: String,
     pub icon_url: String,
-    #[schema(value_type = String, format = "uuid")]
-    pub owner_id: Uuid,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
+    #[schema(value_type = Option<String>, format = "uuid", nullable)]
+    pub owner_id: Option<Uuid>,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
     #[schema(nullable)]
     pub drive_quota_bytes: Option<i64>,
-    pub require_2fa: bool,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
+    #[schema(nullable)]
+    pub require_2fa: Option<bool>,
     /// この利用者から見た関わり方（Owner / Member / Guest）
     pub membership: TenantMembershipKind,
 }
 
 impl TenantListItemResponse {
     pub fn from_parts(model: tenants::Model, membership: TenantMembershipKind) -> Self {
+        // 客分にはテナント設定の欄を返さない（一覧の表示に要る display_id / name /
+        // description / icon_url は残す）
+        let is_guest = membership == TenantMembershipKind::Guest;
         Self {
             id: model.id,
             display_id: model.display_id,
             name: model.name,
             description: model.description,
             icon_url: model.icon_url,
-            owner_id: model.owner_id,
-            drive_quota_bytes: model.drive_quota_bytes,
-            require_2fa: model.require_2fa,
+            owner_id: (!is_guest).then_some(model.owner_id),
+            drive_quota_bytes: if is_guest {
+                None
+            } else {
+                model.drive_quota_bytes
+            },
+            require_2fa: (!is_guest).then_some(model.require_2fa),
             membership,
         }
     }

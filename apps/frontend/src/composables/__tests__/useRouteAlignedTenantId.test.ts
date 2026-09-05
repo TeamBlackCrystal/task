@@ -12,6 +12,7 @@ const tenantA: Tenant = {
   icon_url: '',
   owner_id: '00000000-0000-0000-0000-000000000002',
   require_2fa: false,
+  membership: 'Owner' as const,
 };
 
 const tenantB: Tenant = {
@@ -22,6 +23,7 @@ const tenantB: Tenant = {
   icon_url: '',
   owner_id: '00000000-0000-0000-0000-000000000003',
   require_2fa: false,
+  membership: 'Owner' as const,
 };
 
 describe('resolveTenantIdFromRoute', () => {

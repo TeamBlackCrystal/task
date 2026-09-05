@@ -155,6 +155,7 @@ Drive にはファイル ID だけで引ける経路がある（`GET /v1/drive/f
 `GET /v1/tenants` は `TenantListItemResponse`（`TenantResponse` の全欄 + `membership`）を返す。
 `membership` は `TenantMembershipKind` で、`TenantRole` と同じ流儀の PascalCase 文字列
 （`Owner` / `Member` / `Guest`）。取得・作成・更新の口は従来どおり `TenantResponse` を返す。
+客分にはテナント設定の欄（`owner_id` / `drive_quota_bytes` / `require_2fa`）を返さない（null）。
 
 メンバー系レスポンス（`TenantMemberResponse` / `ProjectMemberResponse`）には表示用の
 `user`（`UserSummary`: id / username / avatar_url）を同梱する。メンバー管理 UI（#317）が
