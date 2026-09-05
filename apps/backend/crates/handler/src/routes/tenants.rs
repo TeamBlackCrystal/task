@@ -40,6 +40,12 @@ pub fn routes() -> OpenApiRouter<AppState> {
                     crate::routes::reviews::finding_routes(),
                 )
                 .nest(
+                    "/{project_id}/assignable-users",
+                    OpenApiRouter::<AppState>::new().routes(routes!(
+                        crate::handlers::project_members::list_assignable_users
+                    )),
+                )
+                .nest(
                     "/{project_id}/members",
                     OpenApiRouter::<AppState>::new()
                         .routes(routes!(crate::handlers::project_members::list_members))

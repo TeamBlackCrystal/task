@@ -12,7 +12,11 @@ import { computed, watch, type Ref } from 'vue';
  * （選択タスクの `?selected=` が既にこの形）。localStorage だと URL を共有したときに
  * 相手と違う画面になり、タブごとに別の状態を持てない。
  */
+/** 一覧の表示形式。既定はステータスごとに並べる List。 */
+export type TaskListView = 'list' | 'table';
+
 export type TaskListUrlState = {
+  view: TaskListView;
   /** 1 始まり。URL に出るので人が読める形にする（内部の pageIndex は 0 始まり） */
   page: number;
   /** 確定済みの検索語（デバウンス後に投げているもの） */
@@ -22,6 +26,7 @@ export type TaskListUrlState = {
 };
 
 export const DEFAULT_TASK_LIST_URL_STATE: TaskListUrlState = {
+  view: 'list',
   page: 1,
   q: '',
   labelId: null,
@@ -76,6 +81,8 @@ export function parseTaskListUrlState(
   search: Record<string, string | undefined> | undefined,
 ): TaskListUrlState {
   return {
+    // 未知の値は既定の List へ倒す（表示形式が消えるより安全）
+    view: search?.view === 'table' ? 'table' : DEFAULT_TASK_LIST_URL_STATE.view,
     page: parsePage(search?.page),
     q: search?.q?.trim() ?? '',
     labelId: search?.label || null,
@@ -91,6 +98,7 @@ export function parseTaskListUrlState(
 export function applyTaskListUrlState(url: URL, state: TaskListUrlState): URL {
   const next = new URL(url.href);
   const entries: [string, string][] = [
+    ['view', state.view === DEFAULT_TASK_LIST_URL_STATE.view ? '' : state.view],
     ['page', state.page > 1 ? String(state.page) : ''],
     ['q', state.q],
     ['label', state.labelId ?? ''],
@@ -123,6 +131,7 @@ export function clampPage(page: number, total: number, pageSize: number): number
  */
 export function useTaskListUrlSync(params: {
   selectedTaskId: Ref<string | null>;
+  view: Ref<TaskListView>;
   pagination: Ref<{ pageIndex: number; pageSize: number }>;
   submittedSearchQuery: Ref<string>;
   selectedLabelId: Ref<string | null>;
@@ -136,11 +145,19 @@ export function useTaskListUrlSync(params: {
    * `?page=9` が 1 ページ目へ戻らず、空のページを出したままになる。
    */
   taskTotal: Readonly<Ref<number | null>>;
-  isSearchActive: Readonly<Ref<boolean>>;
+  /**
+   * ページャが一覧を駆動しているか（Table 表示かつ検索していない）。
+   *
+   * List 表示と検索中は Table 用の一覧を取らない = 件数を持たないので、丸めを
+   * 走らせると URL の `page` を 1 に潰してしまう（Table へ戻したときに失われる）。
+   */
+  isPagerActive: Readonly<Ref<boolean>>;
 }) {
-  const { selectedTaskId, pagination, submittedSearchQuery, selectedLabelId, sorting } = params;
+  const { selectedTaskId, view, pagination, submittedSearchQuery, selectedLabelId, sorting } =
+    params;
 
   const listState = computed<TaskListUrlState>(() => ({
+    view: view.value,
     page: pagination.value.pageIndex + 1,
     q: submittedSearchQuery.value,
     labelId: selectedLabelId.value,
@@ -157,12 +174,12 @@ export function useTaskListUrlSync(params: {
     window.history.replaceState(window.history.state, '', url);
   });
 
-  // 検索中はページャを使わない（常に先頭から一定件数）ので丸めの対象外。
+  // ページャを使っていない表示（List・検索）は丸めの対象外。
   // immediate にするのは、キャッシュ由来の件数や 0 件の一覧でも初回に検査するため
   watch(
-    [params.taskTotal, params.isSearchActive],
-    ([total, searching]) => {
-      if (searching) return;
+    [params.taskTotal, params.isPagerActive],
+    ([total, pagerActive]) => {
+      if (!pagerActive) return;
       // 未取得のあいだは待つ（0 件と区別する）
       if (total === null) return;
       const clamped = clampPage(pagination.value.pageIndex + 1, total, pagination.value.pageSize);

@@ -1,20 +1,37 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
+import TaskActivityFeed from '@/components/tasks/TaskActivityFeed.vue';
+import TaskComments from '@/components/tasks/TaskComments.vue';
 import TaskDetailHub from '@/components/tasks/TaskDetailHub.vue';
 import { Button } from '@/components/ui/button';
+import { useAssignableUsersQuery } from '@/lib/api-vue-query';
+import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
+import { useTaskActivities } from '@/composables/useTaskActivities';
+import { useTaskComments } from '@/composables/useTaskComments';
 import { useRenderedDescription } from '@/composables/useRenderedDescription';
 import { useTaskDetail } from '@/composables/useTaskDetail';
+import { useMeQuery } from '@/lib/api-vue-query';
 
-const props = defineProps<{
-  /** ルートの tenant セグメント（表示ID） */
-  tenantDisplayId: string;
-  /** プロジェクトの key */
-  projectKey: string;
-  /** タスク識別子（URL と同じ seq key 形式。例: "ENG-42"） */
-  taskId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** ルートの tenant セグメント（表示ID） */
+    tenantDisplayId: string;
+    /** プロジェクトの key */
+    projectKey: string;
+    /** タスク識別子（URL と同じ seq key 形式。例: "ENG-42"） */
+    taskId: string;
+    /**
+     * 詳細の並び。分割ビューは幅が狭いので 1 カラム（`pane`）、
+     * オーバーレイは広いので詳細ページと同じ 3 カラム（`page`）にする。
+     */
+    layout?: 'page' | 'pane';
+    /** 器が閉じる手段を持つ場合（オーバーレイの × など）は自前の閉じるボタンを出さない */
+    showCloseButton?: boolean;
+  }>(),
+  { layout: 'pane', showCloseButton: true },
+);
 
 const emit = defineEmits<{
   close: [];
@@ -27,6 +44,8 @@ function closeDeleteDialog() {
 }
 
 const {
+  tenantId,
+  projectId,
   displayTask,
   statuses,
   projectLabels,
@@ -66,6 +85,81 @@ const {
   },
 });
 
+// アクティビティ（コメント）。詳細ページと同じ composable を使い、
+// オーバーレイでも本文と同じ画面でやり取りできるようにする
+const {
+  threads,
+  commentsLoading,
+  commentsError,
+  refetchComments,
+  submitPending,
+  submitError,
+  replyError,
+  replyErrorThreadId,
+  updatingCommentId,
+  updateError,
+  updateErrorCommentId,
+  deletingCommentId,
+  deleteError: commentDeleteError,
+  deleteErrorCommentId,
+  clearReplyError,
+  clearUpdateError,
+  clearDeleteError,
+  submitComment,
+  updateComment,
+  deleteComment,
+} = useTaskComments({
+  tenantId,
+  projectId,
+  taskId: computed(() => props.taskId),
+});
+
+// 履歴はコメントと別の口。片方が落ちてももう片方は読み書きできる
+const {
+  activities,
+  activitiesLoading,
+  activitiesError,
+  hasMoreActivities,
+  activitiesFetchingMore,
+  loadMoreActivities,
+  refetchActivities,
+} = useTaskActivities({
+  tenantId,
+  projectId,
+  taskId: computed(() => props.taskId),
+});
+
+// 担当者の割り当て。詳細でも一覧の行と同じ口（専用の POST/DELETE）を使う
+const membersQuery = useAssignableUsersQuery(tenantId, projectId);
+const members = computed(() => membersQuery.data.value ?? []);
+
+// 候補の取得状態はピッカーへ渡す（取得中・失敗を「候補 0 人」と混ぜない）
+const membersState = computed(() => ({
+  loading: membersQuery.isLoading.value,
+  error: membersQuery.isError.value,
+  onRetry: () => void membersQuery.refetch(),
+}));
+const rowMutations = useTaskRowMutations({ tenantId, projectId });
+
+function onToggleAssignee(userId: string, checked: boolean) {
+  const task = displayTask.value;
+  if (!task) return;
+  void rowMutations.toggleAssignee(task, userId, checked);
+}
+
+// 担当者の更新は行と同じ口を使うので、飛行中と失敗をこの画面にも出す
+// （出さないと失敗が無表示、送信中も押せて 2 回目が無言で捨てられる）
+const assigneeUpdating = computed(() => {
+  const id = displayTask.value?.id;
+  return !!id && rowMutations.pending.value[id] === 'assignees';
+});
+const assigneeError = computed(() => {
+  const id = displayTask.value?.id;
+  return id ? (rowMutations.errors.value[id] ?? null) : null;
+});
+
+const meQuery = useMeQuery();
+const currentUserId = computed(() => meQuery.data.value?.id ?? null);
 /**
  * 説明の KFM 描画。詳細ページは server data hook が HTML を渡してくれるが、
  * このペインは選択がクライアント操作なので data hook が追従できない。描画は
@@ -93,9 +187,13 @@ function onDeleteDialogCancel(event: Event) {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
+    <!--
+      横の余白はここで付けない。アクティビティ列の境界線と入力欄の帯を
+      器の端まで通すため、余白は本文・列のそれぞれが持つ（TaskDetailHub）。
+    -->
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
       <TaskDetailHub
-        layout="pane"
+        :layout="layout"
         :task="displayTask"
         :project-key="projectKey"
         :statuses="statuses"
@@ -124,11 +222,54 @@ function onDeleteDialogCancel(event: Event) {
         @save:soft_deadline="onSaveSoftDeadline"
         @save:hard_deadline="onSaveHardDeadline"
         @save:label_ids="onSaveLabels"
+        :members="members"
+        :assignee-updating="assigneeUpdating"
+        :assignee-error="assigneeError"
+        :members-state="membersState"
+        @toggle:assignee="onToggleAssignee"
         :delete-disabled="deletePending"
         @delete-request="openDeleteDialog"
       >
+        <template #sidebar>
+          <TaskComments
+            :threads="threads"
+            :loading="commentsLoading"
+            :list-error="commentsError"
+            :on-retry="refetchComments"
+            :current-user-id="currentUserId"
+            :submit-pending="submitPending"
+            :submit-error="submitError"
+            :reply-error="replyError"
+            :reply-error-thread-id="replyErrorThreadId"
+            :updating-comment-id="updatingCommentId"
+            :update-error="updateError"
+            :update-error-comment-id="updateErrorCommentId"
+            :deleting-comment-id="deletingCommentId"
+            :delete-error="commentDeleteError"
+            :delete-error-comment-id="deleteErrorCommentId"
+            :on-submit="submitComment"
+            :on-update="updateComment"
+            :on-delete="deleteComment"
+            :on-clear-reply-error="clearReplyError"
+            :on-clear-update-error="clearUpdateError"
+            :on-clear-delete-error="clearDeleteError"
+          >
+            <template #before-list>
+              <TaskActivityFeed
+                :activities="activities"
+                :loading="activitiesLoading"
+                :error="activitiesError"
+                :on-retry="refetchActivities"
+                :has-more="hasMoreActivities"
+                :fetching-more="activitiesFetchingMore"
+                :on-load-more="loadMoreActivities"
+              />
+            </template>
+          </TaskComments>
+        </template>
         <template #header-actions>
           <Button
+            v-if="showCloseButton"
             type="button"
             variant="ghost"
             size="icon"

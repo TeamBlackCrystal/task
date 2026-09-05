@@ -10,7 +10,7 @@ use sea_orm::prelude::Uuid;
 use sea_orm::sea_query::LockType;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QuerySelect, TransactionTrait,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 
 use crate::AppState;
@@ -23,6 +23,60 @@ use entity::{
     project_members, projects, scopes::Scope, task_watchers, tasks, tenant_members, tenants, users,
 };
 use payload::project_members::*;
+use payload::users::UserSummary;
+use service::access::assignable_user_ids;
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/",
+    operation_id = "list_assignable_users",
+    tag = "Project Members",
+    summary = "担当者に指定できる利用者一覧",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("project_id" = Uuid, Path, description = "プロジェクトID"),
+    ),
+    responses(
+        (status = 200, description = "担当者候補", body = [UserSummary]),
+        CrudErrors,
+    )
+)]
+/// タスクの担当者に指定できる利用者。
+///
+/// メンバー一覧（`list_members`）とは別に置く。あちらはメンバー管理の口で
+/// プロジェクト管理者しか読めないが、担当者の割り当ては `WriteTask` があれば
+/// できるため、候補だけ取れずに 403 になる。返す集合も違う:
+/// メンバーを 1 人も指定していない共有プロジェクトはテナント全体へ開放されるので、
+/// `project_members` の行ではなく `assignable_user_ids` の判定で返す。
+///
+/// **スコープは割り当て API（`add_assignee` / `remove_assignee`）と同じ `WriteTask`。**
+/// これは担当者を編集するための候補一覧で、読むだけの主体に見せる情報ではない。
+/// `ReadTask` で通すと、read-only の PAT でも「そのプロジェクトで担当者にできる
+/// 利用者全員」の名前とアイコン URL を列挙できてしまう。メンバー未指定の共有
+/// プロジェクトではテナント全体が返るので、既存タスクを読むだけでは分からない
+/// 利用者まで公開範囲が広がる。
+pub async fn list_assignable_users(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<UserSummary>>, AppError> {
+    auth.require_scope(Scope::WriteTask)?;
+    // プロジェクト単位のアクセス可否はここで見る（担当者を触れる人が読める）
+    auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
+        .await?;
+
+    let ids = assignable_user_ids(&state.db, tenant_id, project_id).await?;
+    if ids.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    let users = users::Entity::find()
+        .filter(users::Column::Id.is_in(ids))
+        .order_by_asc(users::Column::Username)
+        .all(&state.db)
+        .await?;
+    Ok(Json(users.into_iter().map(UserSummary::from).collect()))
+}
 
 async fn get_project_in_tenant(
     state: &AppState,

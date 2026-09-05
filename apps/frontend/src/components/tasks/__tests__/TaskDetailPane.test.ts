@@ -68,12 +68,16 @@ import TaskDetailPane from '../TaskDetailPane.vue';
 
 enableAutoUnmount(afterEach);
 
+/** 説明の KFM 描画はサーバへ投げる。宛先はここだけで持つ。 */
+const RENDER_DESCRIPTION_PATH = '/internal/render-description';
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 let queryClient: QueryClient;
 
+// ペインはアクティビティ（コメント）も説明の KFM 描画も自分で取りに行くので QueryClient が要る
 function mountPane() {
   return mount(TaskDetailPane, {
     props: {
@@ -124,7 +128,7 @@ describe('TaskDetailPane', () => {
     it('サーバの描画結果を v-html で出す（素の markdown を出さない）', async () => {
       task.description = '# 見出し';
       const fetchMock = vi.fn(
-        async (_url: string, _init: RequestInit) =>
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
           new Response(JSON.stringify({ html: '<h1>見出し</h1>' }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
@@ -140,10 +144,11 @@ describe('TaskDetailPane', () => {
       // 記法がそのまま見えていたのが直したい症状
       expect(rendered.text()).not.toContain('# 見出し');
 
-      // 描画元はタスク UUID と本文。scope の組み立てはサーバ側に閉じる
-      const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('/internal/render-description');
-      expect(JSON.parse(init.body as string)).toEqual({
+      // 描画元はタスク UUID と本文。scope の組み立てはサーバ側に閉じる。
+      // ペインはコメント・履歴・担当者も取りに行くので、順番ではなく宛先で拾う
+      const call = fetchMock.mock.calls.find(([input]) => input === RENDER_DESCRIPTION_PATH);
+      expect(call).toBeTruthy();
+      expect(JSON.parse(call![1]!.body as string)).toEqual({
         taskId: 'task-id',
         description: '# 見出し',
       });
@@ -164,13 +169,16 @@ describe('TaskDetailPane', () => {
     });
 
     it('説明が無いタスクでは描画を呼ばない', async () => {
-      const fetchMock = vi.fn();
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL) => new Response('[]', { status: 200 }),
+      );
       vi.stubGlobal('fetch', fetchMock);
 
       mountPane();
       await flushPromises();
 
-      expect(fetchMock).not.toHaveBeenCalled();
+      // 他のクエリは飛ぶので、描画の宛先だけを見る
+      expect(fetchMock.mock.calls.some(([input]) => input === RENDER_DESCRIPTION_PATH)).toBe(false);
     });
   });
 
