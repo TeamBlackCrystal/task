@@ -306,4 +306,58 @@ describe('KfmCodeElement (client 層・コピーボタン)', () => {
     );
     consoleError.mockRestore();
   });
+
+  it('コピー成功表示中に remove → append しても再接続後は初期状態のまま (タイマー進行でも変わらぬ)', async () => {
+    vi.useFakeTimers();
+    stubClipboard(vi.fn(async () => undefined));
+    const element = mount(['const x = 1;']);
+    buttonOf(element).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(element.dataset.kfmCodeCopy).toBe('copied');
+    expect(iconKindOf(buttonOf(element))).toBe('check');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピーしました');
+
+    element.remove();
+    document.body.append(element);
+
+    expect(element.dataset.kfmCodeCopy).toBeUndefined();
+    expect(iconKindOf(buttonOf(element))).toBe('copy');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピー');
+    expect(buttonOf(element).title).toBe('コピー');
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(element.dataset.kfmCodeCopy).toBeUndefined();
+    expect(iconKindOf(buttonOf(element))).toBe('copy');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピー');
+  });
+
+  it('コピー失敗表示中に remove → append しても再接続後は初期状態のまま (タイマー進行でも変わらぬ)', async () => {
+    vi.useFakeTimers();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stubClipboard(
+      vi.fn(async () => {
+        throw new Error('denied');
+      }),
+    );
+    const element = mount(['const x = 1;']);
+    buttonOf(element).click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(element.dataset.kfmCodeCopy).toBe('failed');
+    expect(iconKindOf(buttonOf(element))).toBe('x');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピーできませんでした');
+
+    element.remove();
+    document.body.append(element);
+
+    expect(element.dataset.kfmCodeCopy).toBeUndefined();
+    expect(iconKindOf(buttonOf(element))).toBe('copy');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピー');
+    expect(buttonOf(element).title).toBe('コピー');
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(element.dataset.kfmCodeCopy).toBeUndefined();
+    expect(iconKindOf(buttonOf(element))).toBe('copy');
+    expect(buttonOf(element).getAttribute('aria-label')).toBe('コピー');
+    consoleError.mockRestore();
+  });
 });

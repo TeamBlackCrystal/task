@@ -96,10 +96,15 @@ function applyButtonFace(button: HTMLButtonElement, icon: IconName, label: strin
 export function createKfmCodeElement(): CustomElementConstructor {
   return class KfmCodeElement extends HTMLElement {
     #resetTimer: ReturnType<typeof setTimeout> | undefined;
+    #copyButton: HTMLButtonElement | undefined;
 
     connectedCallback(): void {
       // 再接続・HMR で二重にボタンを足さない (light DOM に残るため存在で判定)
-      if (this.querySelector(`:scope > .${KFM_CODE_COPY_CLASS}`) !== null) return;
+      const existing = this.querySelector<HTMLButtonElement>(`:scope > .${KFM_CODE_COPY_CLASS}`);
+      if (existing !== null) {
+        this.#copyButton = existing;
+        return;
+      }
       const button = document.createElement('button');
       button.type = 'button';
       button.className = KFM_CODE_COPY_CLASS;
@@ -107,6 +112,7 @@ export function createKfmCodeElement(): CustomElementConstructor {
       button.addEventListener('click', () => {
         void this.#copy(button);
       });
+      this.#copyButton = button;
       this.prepend(button);
     }
 
@@ -116,6 +122,15 @@ export function createKfmCodeElement(): CustomElementConstructor {
         clearTimeout(this.#resetTimer);
         this.#resetTimer = undefined;
       }
+      const button = this.#copyButton;
+      if (button !== undefined) {
+        this.#resetCopyFace(button);
+      }
+    }
+
+    #resetCopyFace(button: HTMLButtonElement): void {
+      delete this.dataset.kfmCodeCopy;
+      applyButtonFace(button, 'copy', COPY_LABEL);
     }
 
     async #copy(button: HTMLButtonElement): Promise<void> {
@@ -143,8 +158,7 @@ export function createKfmCodeElement(): CustomElementConstructor {
       if (this.#resetTimer !== undefined) clearTimeout(this.#resetTimer);
       this.#resetTimer = setTimeout(() => {
         this.#resetTimer = undefined;
-        delete this.dataset.kfmCodeCopy;
-        applyButtonFace(button, 'copy', COPY_LABEL);
+        this.#resetCopyFace(button);
       }, RESET_DELAY_MS);
     }
   };
