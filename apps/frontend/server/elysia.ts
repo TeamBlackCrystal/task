@@ -1,5 +1,6 @@
 import { apiProxyPlugin } from '#/middlewares/api-proxy';
 import { prehydrationQueryGuard } from '#/middlewares/prehydration-query-guard';
+import { renderDescriptionPlugin } from '#/middlewares/render-description';
 import { settingInjector } from '#/middlewares/setting-injector';
 import { staticPlugin } from '@elysiajs/static';
 import vike from '@vikejs/elysia';
@@ -43,6 +44,8 @@ export function getApp() {
       }),
     },
   );
+
+  app.use(renderDescriptionPlugin);
 
   app.use(apiProxyPlugin);
 

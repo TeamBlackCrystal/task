@@ -76,6 +76,45 @@ export function useProjectsQuery(tenantId: MaybeRefOrGetter<TenantUuid | null | 
   );
 }
 
+const ASSIGNABLE_USERS_PATH =
+  '/v1/tenants/{tenant_id}/projects/{project_id}/assignable-users' as const;
+
+/**
+ * タスクの担当者に指定できる利用者。
+ *
+ * メンバー一覧（`/members`）は使わない。あちらはメンバー管理の口で
+ * プロジェクト管理者しか読めず、担当者を触れる人が候補だけ 403 になる。
+ * メンバー指定のない共有プロジェクトはテナント全体へ開放されるため、返る集合も違う。
+ */
+export function useAssignableUsersQuery(
+  // 表示用 ID をそのまま渡させない（api-path-params の規則）。解決済みの UUID を受ける
+  tenantId: MaybeRefOrGetter<TenantUuid | null | undefined>,
+  projectId: MaybeRefOrGetter<ProjectUuid | null | undefined>,
+) {
+  return useQuery(
+    computed(() => {
+      const tenantUuid = toValue(tenantId);
+      const projectUuid = toValue(projectId);
+      // 非 null は enabled で担保する（未解決のうちは問い合わせない）
+      const params = {
+        params: { path: { tenant_id: tenantUuid!, project_id: projectUuid! } },
+      };
+      return {
+        queryKey: ['get', ASSIGNABLE_USERS_PATH, params],
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
+          const { data, error } = await fetchClient.GET(ASSIGNABLE_USERS_PATH, {
+            ...params,
+            signal,
+          });
+          if (error) throw error;
+          return data;
+        },
+        enabled: !!tenantUuid && !!projectUuid,
+      };
+    }),
+  );
+}
+
 export function useMeQuery(options?: { enabled?: MaybeRefOrGetter<boolean> }) {
   return apiClient.useQuery('get', '/v1/auth/me', undefined, {
     staleTime: AUTH_ME_STALE_TIME_MS,

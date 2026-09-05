@@ -27,6 +27,10 @@
  * - コードブロック着色の見た目も同方式: 消費側で `@/lib/rehype-starry-night/style.css` を
  *   明示 import する (実体は @wooorm/starry-night の light シート固定 ＋ .dark ブリッジ。
  *   選定理由は同 CSS のコメントを参照)。
+ * - コードブロックの枠 (帯・行番号・横スクロール) も同方式: 消費側で
+ *   `@/lib/rehype-kfm-code/style.css` を starry-night の style.css と同じ場所で
+ *   明示 import する (二枚組)。コピーボタンは client 専用 entry の custom element 登録
+ *   (_client-registry) が担う。
  *
  * renderDescription はモジュールトップレベル singleton = プロセス全体 (SSR では全
  * リクエスト・全 tenant) で共有される。L1 キャッシュが full-text キーであることが
@@ -35,6 +39,7 @@
  * 本ファイルは composition root であり、プラグイン (remark 層 ＋ sanitize スキーマ) を
  * コアへ注入する。コア実装 (_renderer / _sanitize / _cache) はプラグインを import しない。
  */
+import { rehypeKfmCode } from '@/lib/rehype-kfm-code';
 import { remarkGfm } from '@/lib/remark-gfm';
 import { remarkKfmMermaid } from '@/lib/remark-kfm-mermaid';
 import { remarkKoyoriAlerts } from '@/lib/remark-koyori-alerts';
@@ -97,7 +102,9 @@ export const renderDescription = createRenderer({
       // rehype 層 (starry-night / 将来の language-* 拡張) は mermaid フェンスを見ない。
       remarkPlugins: [remarkGfm, remarkKoyoriAlerts, remarkKfmMermaid],
       // GitHub 同様のコードブロック着色。rehype 層 (remark-rehype の後段) に挿す。
-      rehypePlugins: [rehypeStarryNight],
+      // rehypeKfmCode は着色済みの子を行分割して <kfm-code> で包むため、必ず
+      // starry-night の後ろ (行分割は着色より後でしか成立しない)。
+      rehypePlugins: [rehypeStarryNight, rehypeKfmCode],
     },
     // Phase 2 seam: kfm profile はここへ remark / rehype 層を足す (コアは不変)。
   },

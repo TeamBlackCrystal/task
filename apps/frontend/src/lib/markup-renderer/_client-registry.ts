@@ -10,6 +10,8 @@
  * ブラウザが upgrade する (Vue 標準挙動)。constructor は factory で遅延させ、
  * HTMLElement が無い環境でモジュール評価が落ちないようにする。
  */
+import { KFM_CODE_TAG } from '../rehype-kfm-code/_tag';
+import { createKfmCodeElement } from '../rehype-kfm-code/element';
 import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
 import { createKfmMermaidElement } from '../remark-kfm-mermaid/element';
 
@@ -24,6 +26,7 @@ export type KfmCustomElementDefinition = readonly [
 // ⚠ ここから静的 import してよいのは軽量シェル (element.ts) のみ。重量物 (mermaid 本体等)
 // は要素側の dynamic import に閉じる (+client.ts が本ファイルを同期ロードするため)。
 const KFM_CUSTOM_ELEMENTS: readonly KfmCustomElementDefinition[] = [
+  [KFM_CODE_TAG, createKfmCodeElement],
   [KFM_MERMAID_TAG, createKfmMermaidElement],
 ];
 

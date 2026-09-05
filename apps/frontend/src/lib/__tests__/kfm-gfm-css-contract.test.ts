@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { KFM_CODE_TAG } from '../rehype-kfm-code/_tag';
 import { KFM_MERMAID_TAG } from '../remark-kfm-mermaid/_tag';
 import { KFM_CONTENT_CLASS } from '../remark-gfm/content-class';
 
@@ -30,6 +31,15 @@ const EMITTED_NAMESPACE_SCOPED_PLUGINS = new Map<
   ],
   // mermaid のサイドカーは自身が emit する kfm-mermaid 要素を直に指すため器を要さない。
   ['remark-kfm-mermaid', { selectorToken: new RegExp(`(?:^|[\\s>])${KFM_MERMAID_TAG}(?![\\w-])`) }],
+  [
+    // kfm-code のサイドカーも自身が emit する kfm-code 要素と行 span (.pl-line) を直に指す。
+    // theme ブリッジ (:root / .dark) は --kfm-code-* の宣言のみ許す
+    'rehype-kfm-code',
+    {
+      selectorToken: new RegExp(`(?:^|[\\s>])${KFM_CODE_TAG}(?![\\w-])|\\.pl-line(?![\\w-])`),
+      ownVariablePrefix: '--kfm-code-',
+    },
+  ],
 ]);
 const CONTAINER_SCOPED_CSS_PATHS = SIDECAR_CSS_PATHS.filter((cssPath) =>
   CONTAINER_SCOPED_PLUGINS.has(path.basename(path.dirname(cssPath))),

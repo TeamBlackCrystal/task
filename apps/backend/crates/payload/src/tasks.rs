@@ -184,8 +184,16 @@ pub struct ListTasksQuery {
     pub sort: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: u64,
+    /// ページ番号で飛ぶ一覧（表形式）が使う。続きを読み足す用途には `cursor` を使う
     #[serde(default)]
     pub offset: u64,
+    /// 前のページの `next_cursor`。先頭ページでは付けない。
+    ///
+    /// `offset` と同時には指定できない（400）。取得のあいだにタスクが増減すると
+    /// `offset` の境界がずれ、境界の行がどちらのページにも出なくなるため、
+    /// 続きを読み足す一覧はこちらを使う（`common::cursor`）。
+    /// カーソルは `sort` ごとに別物なので、並び替えを変えたら先頭から取り直す
+    pub cursor: Option<String>,
 }
 
 fn default_limit() -> u64 {
@@ -195,7 +203,13 @@ fn default_limit() -> u64 {
 #[derive(Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskResponse>,
+    /// 絞り込み後の総数。件数の表示とページ番号の算出に使う。
+    /// **「まだ残っているか」の判断には使わない**（取得中に動くので終わらなくなる）
     pub total: u64,
+    /// 次のページを引く鍵。`null` なら取り切っている。
+    /// `cursor` を渡していない要求でも返すので、先頭ページから継いでいける
+    #[schema(required, nullable)]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, serde::Deserialize)]

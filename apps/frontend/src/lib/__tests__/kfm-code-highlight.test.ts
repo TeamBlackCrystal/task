@@ -37,9 +37,11 @@ describe('renderDescription (コードブロック着色)', () => {
 
   it('未知言語フェンスは素のコードブロックへ落ち、内容はエスケープされたまま', async () => {
     const html = await renderDescription('```definitelynotalang\n<b>&\n```');
-    // language-* class は残る (gfmSanitizeSchema の既存パターン) が、ハイライトはされない
+    // language-* class は残る (gfmSanitizeSchema の既存パターン) が、ハイライトはされない。
+    // rehype-kfm-code の行 span (pl-line) は言語不明でも載るため、「ハイライトされない」は
+    // pl-line 以外の pl-* トークンの不在で主張する
     expect(html).toContain('language-definitelynotalang');
-    expect(html).not.toContain('pl-');
+    expect(html).not.toMatch(/class="pl-(?!line")/);
     // 中身は要素化されず、エスケープ済みテキストのまま (<b> がタグとして出ない)
     expect(html).not.toContain('<b');
     expect(html).toMatch(/&(lt|#x3C);b/);

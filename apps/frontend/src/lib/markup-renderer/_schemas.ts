@@ -9,6 +9,7 @@
  * story の probe は GFM と alerts の二つのままで、probe が本番より狭い許可集合を
  * 検査していた。ここを単一ソースにすれば、プラグインを足した時点で両方が動く。
  */
+import { kfmCodeSanitizeSchema } from '@/lib/rehype-kfm-code/schema';
 import { starryNightSanitizeSchema } from '@/lib/rehype-starry-night/schema';
 import { gfmSanitizeSchema } from '@/lib/remark-gfm';
 import { kfmMermaidSanitizeSchema } from '@/lib/remark-kfm-mermaid';
@@ -20,5 +21,6 @@ export const kfmSanitizeSchemas: readonly SanitizeSchema[] = [
   gfmSanitizeSchema,
   koyoriAlertsSanitizeSchema,
   starryNightSanitizeSchema,
+  kfmCodeSanitizeSchema,
   kfmMermaidSanitizeSchema,
 ];
