@@ -110,10 +110,22 @@ watch(
 async function submitDraft() {
   const body = newDraft.value.trim();
   if (!body || props.submitPending) return;
-  const posted = openThreadId.value
-    ? await props.onSubmit(body, openThreadId.value)
-    : await props.onSubmit(body);
-  if (posted) newDraft.value = '';
+  // 送信先と下書きの置き場は**開始時に固定する**。送信中も「コメント一覧へ戻る」は
+  // 押せるし、スレッドが消えれば watch が一覧へ戻すので、await の後に
+  // openThreadId を読み直すと別の下書きを消すことになる
+  const threadId = openThreadId.value;
+  const key = threadId ?? DRAFT_LIST_KEY;
+  const sent = drafts.value[key] ?? '';
+
+  const posted = threadId ? await props.onSubmit(body, threadId) : await props.onSubmit(body);
+  if (!posted) return;
+
+  // 送った内容がまだ置いてあるときだけ消す。一度離れて同じスレッドへ戻り、
+  // 別の下書きを書き始めていたら、それは送信済みの本文ではないので残す
+  if (drafts.value[key] !== sent) return;
+  const rest = { ...drafts.value };
+  delete rest[key];
+  drafts.value = rest;
 }
 
 function showThread(threadId: string) {

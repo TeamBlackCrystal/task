@@ -136,6 +136,81 @@ describe('TaskComments', () => {
     ).toBe('');
   });
 
+  // 送信中も「コメント一覧へ戻る」は押せる。await の後に openThreadId を読み直すと、
+  // 消す先が返信ではなく一覧の下書きになり、利用者の入力が消える
+  it('返信の送信中に一覧へ戻っても、消えるのは返信の下書きだけ', async () => {
+    let resolveSubmit: ((posted: boolean) => void) | undefined;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const wrapper = mountComments({ threads: [thread('c-1', '親コメント')], onSubmit });
+
+    // 先に一覧側の下書きを書いておく
+    await wrapper.get('textarea[aria-label="コメントを入力"]').setValue('一覧の書きかけ');
+
+    // スレッドを開いて返信を送る（まだ解決させない）
+    const replyOpenButton = wrapper.findAll('button').find((button) => button.text() === '返信');
+    await replyOpenButton!.trigger('click');
+    await wrapper.get('textarea[aria-label="返信を入力"]').setValue('返信します');
+    await wrapper.get('form').trigger('submit');
+
+    // 送信中に一覧へ戻る
+    await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+    resolveSubmit!(true);
+    await flushPromises();
+
+    // 一覧の下書きは残る
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="コメントを入力"]').element.value,
+    ).toBe('一覧の書きかけ');
+
+    // 送信済みの返信の下書きは消えている
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === '返信')!
+      .trigger('click');
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]').element.value,
+    ).toBe('');
+  });
+
+  // 同じスレッドへ戻って書き直した下書きも、送信済みの本文ではないので残す
+  it('送信中に離れて同じスレッドへ戻り書き直したら、その下書きは消さない', async () => {
+    let resolveSubmit: ((posted: boolean) => void) | undefined;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const wrapper = mountComments({ threads: [thread('c-1', '親コメント')], onSubmit });
+
+    const openThread = async () =>
+      wrapper
+        .findAll('button')
+        .find((button) => button.text() === '返信')!
+        .trigger('click');
+
+    await openThread();
+    await wrapper.get('textarea[aria-label="返信を入力"]').setValue('返信します');
+    await wrapper.get('form').trigger('submit');
+
+    // 一覧へ戻り、同じスレッドを開き直して別の下書きを書く
+    await wrapper.get('button[aria-label="コメント一覧へ戻る"]').trigger('click');
+    await openThread();
+    await wrapper.get('textarea[aria-label="返信を入力"]').setValue('書き直した返信');
+
+    resolveSubmit!(true);
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="返信を入力"]').element.value,
+    ).toBe('書き直した返信');
+  });
+
   it('編集は onUpdate をコメント ID と新本文で呼ぶ', async () => {
     const onUpdate = vi.fn(async () => true);
     const wrapper = mountComments({

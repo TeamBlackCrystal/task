@@ -118,6 +118,15 @@ async function openDraftDeadline() {
   focusDraft(draftDeadlineRef.value);
 }
 
+/**
+ * 下書きの世代。開き直し・キャンセルのたびに進める。
+ *
+ * 下書きは全グループで 1 組の ref を共有しているので、作成の await のあいだに
+ * キャンセルされたり別のグループ（あるいは同じグループ）で書き始められたら、
+ * 手元の下書きはもうその作成のものではない。世代が変わっていたら触らない。
+ */
+let draftGeneration = 0;
+
 function resetDraft() {
   draftTitle.value = '';
   draftAssigneeIds.value = [];
@@ -128,6 +137,7 @@ function resetDraft() {
 }
 
 async function startAdding(statusId: string) {
+  draftGeneration += 1;
   addingStatusId.value = statusId;
   resetDraft();
   await nextTick();
@@ -135,6 +145,7 @@ async function startAdding(statusId: string) {
 }
 
 function cancelAdding() {
+  draftGeneration += 1;
   addingStatusId.value = null;
   resetDraft();
 }
@@ -145,6 +156,7 @@ async function commitAdding(statusId: string) {
     cancelAdding();
     return;
   }
+  const generation = draftGeneration;
   const created = await props.onCreate({
     title,
     statusId,
@@ -155,6 +167,8 @@ async function commitAdding(statusId: string) {
   });
   // 失敗したら入力を残す（消すと、何が失われたのか分からないまま打ち直しになる）
   if (!created) return;
+  // 待っているあいだに下書きが別のものへ入れ替わっていたら消さない
+  if (draftGeneration !== generation) return;
   // 続けて足せるように入力欄は開いたままにし、中身だけ空にする
   resetDraft();
 }

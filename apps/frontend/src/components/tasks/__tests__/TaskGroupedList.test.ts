@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { enableAutoUnmount, mount } from '@vue/test-utils';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
 import TaskGroupedList from '@/components/tasks/TaskGroupedList.vue';
@@ -48,12 +48,19 @@ const group: TaskGroup = {
   loadMore: () => {},
 };
 
+const doingStatus: StatusResponse = { ...status, id: 'status-doing', name: 'Doing', position: 1 };
+const doingGroup: TaskGroup = { ...group, status: doingStatus };
+
 /** 作成の受け口。成否を返す契約なので、既定は成功にする。 */
-function mountList(onCreate = vi.fn(async (_input: CreateTaskInput) => true)) {
+function mountList(
+  onCreate = vi.fn(async (_input: CreateTaskInput) => true),
+  groups: TaskGroup[] = [group],
+  statuses: StatusResponse[] = [status],
+) {
   const wrapper = mount(TaskGroupedList, {
     props: {
-      groups: [group],
-      statuses: [status],
+      groups,
+      statuses,
       projectLabels: [bug],
       members,
       pending: {},
@@ -66,8 +73,19 @@ function mountList(onCreate = vi.fn(async (_input: CreateTaskInput) => true)) {
   return { wrapper, onCreate };
 }
 
-async function openAddRow(wrapper: ReturnType<typeof mountList>['wrapper']) {
-  const addButton = wrapper.findAll('button').find((b) => b.text() === 'タスクを追加');
+/** グループは `section` 単位。同じ文言のボタンが並ぶので、対象の節の中から探す。 */
+function sectionOf(wrapper: ReturnType<typeof mountList>['wrapper'], statusName: string) {
+  const section = wrapper
+    .findAll('section')
+    .find((s) => s.find(`[aria-label="${statusName} を折りたたむ"]`).exists());
+  expect(section).toBeDefined();
+  return section!;
+}
+
+async function openAddRow(wrapper: ReturnType<typeof mountList>['wrapper'], statusName = 'Todo') {
+  const addButton = sectionOf(wrapper, statusName)
+    .findAll('button')
+    .find((b) => b.text() === 'タスクを追加');
   expect(addButton).toBeDefined();
   await addButton!.trigger('click');
   await nextTick();
@@ -167,6 +185,67 @@ describe('TaskGroupedList のタスク追加', () => {
     expect(
       wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]').element.value,
     ).toBe('失敗するタスク');
+  });
+
+  // 下書きは全グループで 1 組を共有している。作成中も「キャンセル」と他グループの
+  // 「タスクを追加」は押せるので、完了時に無条件でリセットすると別の下書きが消える
+  it('作成中に別グループで書き始めたら、そちらの下書きを消さない', async () => {
+    let resolveCreate: ((created: boolean) => void) | undefined;
+    const onCreate = vi.fn(
+      (_input: CreateTaskInput) =>
+        new Promise<boolean>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { wrapper } = mountList(onCreate, [group, doingGroup], [status, doingStatus]);
+
+    await openAddRow(wrapper, 'Todo');
+    await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('Todo のタスク');
+    const save = sectionOf(wrapper, 'Todo')
+      .findAll('button')
+      .find((b) => b.text().includes('保存'));
+    await save!.trigger('click');
+
+    // 保存中に別グループへ切り替えて書き始める
+    await openAddRow(wrapper, 'Doing');
+    await wrapper.get('input[aria-label="Doing にタスクを追加"]').setValue('Doing の書きかけ');
+
+    resolveCreate!(true);
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLInputElement>('input[aria-label="Doing にタスクを追加"]').element.value,
+    ).toBe('Doing の書きかけ');
+  });
+
+  // 同じグループを開き直した場合も、下書きはもうその作成のものではない
+  it('作成中にキャンセルして同じグループで書き直したら、その下書きを消さない', async () => {
+    let resolveCreate: ((created: boolean) => void) | undefined;
+    const onCreate = vi.fn(
+      (_input: CreateTaskInput) =>
+        new Promise<boolean>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { wrapper } = mountList(onCreate);
+
+    await openAddRow(wrapper);
+    await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('1 件目');
+    const save = wrapper.findAll('button').find((b) => b.text().includes('保存'));
+    await save!.trigger('click');
+
+    // 保存中にキャンセルし、開き直して別の下書きを書く
+    const cancel = wrapper.findAll('button').find((b) => b.text().includes('キャンセル'));
+    await cancel!.trigger('click');
+    await openAddRow(wrapper);
+    await wrapper.get('input[aria-label="Todo にタスクを追加"]').setValue('書き直した 1 件目');
+
+    resolveCreate!(true);
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLInputElement>('input[aria-label="Todo にタスクを追加"]').element.value,
+    ).toBe('書き直した 1 件目');
   });
 
   it('ページの取得に失敗したら再試行を出す', async () => {
