@@ -60,8 +60,8 @@ importers:
         specifier: 'catalog:'
         version: 1.2.3
       '@lucide/vue':
-        specifier: 1.31.0
-        version: 1.31.0(vue@3.5.41(typescript@6.0.3))
+        specifier: 1.41.0
+        version: 1.41.0(vue@3.5.41(typescript@6.0.3))
       '@phosphor-icons/vue':
         specifier: 2.2.1
         version: 2.2.1(vue@3.5.41(typescript@6.0.3))
@@ -1340,8 +1340,8 @@ packages:
   '@lezer/markdown@1.7.2':
     resolution: {integrity: sha512-iTkYvoVcKt3WkeL7qUDyXHONZEwLio4wj8KTNi2dnjQEXBZKMV63BpQrPqfsM+OkvuRbiSTAcycYAsQzLhRNoQ==}
 
-  '@lucide/vue@1.31.0':
-    resolution: {integrity: sha512-NtjEHhcAa7umPh40wrRmlESJqNGdnpc7LziBKFnW3fmlrW0g2xMCDpdWU7WeEHRSl3xOpxbqiFTLKxoK3CoVCg==}
+  '@lucide/vue@1.41.0':
+    resolution: {integrity: sha512-ciHtudHTeqMDzJKPI36AGboypCk8Jz3qFin3oU0nJfPc5MwXmqLXIEQvXE+yI6Sz5SnxVqREgm8rVN4KdDlnVQ==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -4970,16 +4970,6 @@ packages:
       crossws:
         optional: true
 
-  h3@2.0.1-rc.26:
-    resolution: {integrity: sha512-GDxlvDsKxgjRvG5UBRJYyGJTMWLV30CJ4cV+e7QCTgftDHihrvio1fVPbNembhEr6J4WNm8IWy3fookgyTweLw==}
-    engines: {node: '>=20.11.1'}
-    hasBin: true
-    peerDependencies:
-      crossws: ^0.4.9
-    peerDependenciesMeta:
-      crossws:
-        optional: true
-
   h3@2.0.1-rc.31:
     resolution: {integrity: sha512-AG7qZzF99a0BSYoXT3evJgIhwSIUKow7R+hwkLRZS06WJ9nbSb7QXUDgs1ByBjp6svTvl++N/GKA7I9YPz9cQQ==}
     engines: {node: '>=20.11.1'}
@@ -6531,9 +6521,6 @@ packages:
   rou3@0.8.1:
     resolution: {integrity: sha512-ePa+XGk00/3HuCqrEnK3LxJW7I0SdNg6EFzKUJG73hMAdDcOUC/i/aSz7LSDwLrGr33kal/rqOGydzwl6U7zBA==}
 
-  rou3@0.9.1:
-    resolution: {integrity: sha512-z/sSmzvtwMDDnxsPVhfWMuG6F6mbmhFDXoVqLmMfbpDD9qfV3GDmSQpf0+W296/ZDIpW2wcMmBfpVFzcnOi/nA==}
-
   rou3@0.9.2:
     resolution: {integrity: sha512-3SOzvaAg8rkHrXtRjpCvCvbyO5to9oOO27Z/XqHEYXfMRVSw/qMIVdmaOk9W2lcRLtR6dlqTjo9hDeJk70QBYQ==}
 
@@ -7516,9 +7503,6 @@ packages:
   zigpty@0.2.1:
     resolution: {integrity: sha512-MR9JqJx2wf5f4wz8zpx050AlqrmWeIW+1h0SO5iEyhG3HFRjY5luC3szS2ux2EGuPjE5OU9ZAuiCBeMWBTrqZw==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
-
   zod@4.5.4:
     resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
 
@@ -8089,10 +8073,10 @@ snapshots:
 
   '@devframes/json-render@0.8.2(@devframes/hub@0.8.2(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5)))(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5))':
     dependencies:
-      '@json-render/core': 0.19.0(zod@4.4.3)
+      '@json-render/core': 0.19.0(zod@4.5.4)
       devframe: 0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5)
       nostics: 1.2.0
-      zod: 4.4.3
+      zod: 4.5.4
     optionalDependencies:
       '@devframes/hub': 0.8.2(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5))
     optional: true
@@ -8664,9 +8648,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@json-render/core@0.19.0(zod@4.4.3)':
+  '@json-render/core@0.19.0(zod@4.5.4)':
     dependencies:
-      zod: 4.4.3
+      zod: 4.5.4
     optional: true
 
   '@json-render/core@0.20.0(zod@4.5.4)':
@@ -8713,7 +8697,7 @@ snapshots:
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
 
-  '@lucide/vue@1.31.0(vue@3.5.41(typescript@6.0.3))':
+  '@lucide/vue@1.41.0(vue@3.5.41(typescript@6.0.3))':
     dependencies:
       vue: 3.5.41(typescript@6.0.3)
 
@@ -8731,12 +8715,12 @@ snapshots:
 
   '@modelcontextprotocol/core@2.0.0':
     dependencies:
-      zod: 4.4.3
+      zod: 4.5.4
 
   '@modelcontextprotocol/server@2.0.0':
     dependencies:
       '@modelcontextprotocol/core': 2.0.0
-      zod: 4.4.3
+      zod: 4.5.4
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
@@ -10333,6 +10317,7 @@ snapshots:
       - '@modelcontextprotocol/client'
       - '@modelcontextprotocol/server'
       - cac
+      - ocache
       - srvx
     optional: true
 
@@ -11556,10 +11541,10 @@ snapshots:
   devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5):
     dependencies:
       '@standard-schema/spec': 1.1.0
-      birpc: 4.0.0
-      crossws: 0.4.10(srvx@0.12.5)
+      birpc: 4.2.0
+      crossws: 0.4.12(srvx@0.12.5)
       destr: 2.0.5
-      h3: 2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5))
+      h3: 2.0.1-rc.31(crossws@0.4.12(srvx@0.12.5))
       mrmime: 2.0.1
       nostics: 1.2.0
       pathe: 2.0.3
@@ -11568,6 +11553,7 @@ snapshots:
       '@modelcontextprotocol/server': 2.0.0
       cac: 7.0.0
     transitivePeerDependencies:
+      - ocache
       - srvx
     optional: true
 
@@ -12000,14 +11986,6 @@ snapshots:
       srvx: 0.11.17
     optionalDependencies:
       crossws: 0.4.10(srvx@0.12.5)
-
-  h3@2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5)):
-    dependencies:
-      rou3: 0.9.1
-      srvx: 0.12.5
-    optionalDependencies:
-      crossws: 0.4.10(srvx@0.12.5)
-    optional: true
 
   h3@2.0.1-rc.31(crossws@0.4.10(srvx@0.12.5)):
     dependencies:
@@ -14116,9 +14094,6 @@ snapshots:
 
   rou3@0.8.1: {}
 
-  rou3@0.9.1:
-    optional: true
-
   rou3@0.9.2: {}
 
   roughjs@4.6.6:
@@ -15219,8 +15194,6 @@ snapshots:
       '@yuku-parser/binding-win32-x64': 0.5.48
 
   zigpty@0.2.1: {}
-
-  zod@4.4.3: {}
 
   zod@4.5.4: {}
 
