@@ -65,6 +65,30 @@
 .kfm-content a {
   color: #0969da;
   text-decoration: underline;
+  /* 長い URL は単語境界を持たないため、折り返さないと器を突き抜ける */
+  overflow-wrap: anywhere;
+}
+
+/* コードブロックは折り返さず横スクロールにする。
+   これが無いと <pre> の既定 (white-space: pre・overflow: visible) のまま長い行が
+   器を突き抜け、器の min-content 幅を押し広げてページ全体が横に伸びる
+   (grid/flex の子は既定 min-width: auto のため。スクロールコンテナにすると
+   min-content 寄与が 0 になり、押し広げが止まる)。
+   コードの行を勝手に折ると桁の対応が崩れて読めなくなるので、折り返しではなく
+   スクロールにする (GitHub と同じ方針)。 */
+.kfm-content pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* インラインコードは識別子が単語境界を持たないので折り返す。
+   ブロック内の code は上のスクロールに任せるため折り返さない。 */
+.kfm-content code {
+  overflow-wrap: anywhere;
+}
+
+.kfm-content pre code {
+  overflow-wrap: normal;
 }
 
 .kfm-content del {

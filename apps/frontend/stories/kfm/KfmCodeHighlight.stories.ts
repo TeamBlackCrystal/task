@@ -143,18 +143,21 @@ export const UnknownLanguage: Story = {
 };
 
 export const LongLine: Story = {
-  name: '横に長い行（横溢れ）',
+  name: '横に長い行（横スクロール）',
   args: { html: longLineHtml },
-  // 横溢れを絵にするため、狭い親 (max-w-md) に閉じ込めて描画する (cmd_670 の表と同形)
+  // 溢れの止まり方を絵にするため、狭い親 (max-w-md) に閉じ込めて描画する (cmd_670 の表と同形)。
+  // 親は grid の子 = 既定 min-width: auto で、pre が押し広げると器ごと横に伸びる形を再現する。
   render: (args: KfmStoryArgs) => ({
     setup: () => ({ args }),
-    template: `<div class="max-w-md"><div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div>`,
+    template:
+      `<div class="grid grid-cols-1"><div class="max-w-md" data-long-line-frame>` +
+      `<div class="${KFM_CONTENT_CLASS}" v-html="args.html" /></div></div>`,
   }),
   parameters: {
     docs: {
       description: {
         story:
-          '壊れたら: 長い 1 行の pre が狭い親をどうはみ出すか (折返し/突き抜け) が変わったら、pre の overflow 方針か消費側スタイルの変化。',
+          '壊れたら: 長い 1 行の pre が狭い親をどうはみ出すか (横スクロール/突き抜け) が変わったら、pre の overflow 方針か消費側スタイルの変化。',
       },
     },
   },
@@ -163,8 +166,14 @@ export const LongLine: Story = {
     const pre = canvasElement.querySelector('pre');
     await expect(pre).not.toBeNull();
     if (!(pre instanceof HTMLElement)) throw new Error('LongLine story に pre が無い');
-    // Story 名や説明だけでなく、狭い器に対する実寸で横溢れを主張する。
+    // Story 名や説明だけでなく、狭い器に対する実寸で主張する。
+    // 1. 中身は器より広い (= 長い行が折り返されていない。折り返すとコードの桁が崩れる)
     await expect(pre.scrollWidth).toBeGreaterThan(pre.clientWidth);
+    // 2. その溢れは pre の中の横スクロールに閉じ、器を押し広げない (TASK-147 の回帰ガード)
+    const frame = canvasElement.querySelector('[data-long-line-frame]');
+    if (!(frame instanceof HTMLElement)) throw new Error('LongLine story に器が無い');
+    await expect(pre.clientWidth).toBeLessThanOrEqual(frame.clientWidth);
+    await expect(frame.scrollWidth).toBeLessThanOrEqual(frame.clientWidth);
   },
 };
 
