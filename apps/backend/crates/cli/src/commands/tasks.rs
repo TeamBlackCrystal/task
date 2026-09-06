@@ -219,7 +219,12 @@ pub async fn run(context: &Context, command: TasksCommand, output: OutputOptions
                 Some(status) => Some(resolve_status_id(api, project.id, &status).await?),
                 None => None,
             };
-            let resolved = resolve_fields(api, &project, &fields).await?;
+            let mut resolved = resolve_fields(api, &project, &fields).await?;
+            // 全員解除は「0 人へ置き換える」。--assignee は値なしを受けられないので、
+            // 専用の解除がないと担当者を空にできない
+            if clears.clear_assignees {
+                resolved.assignees = Some(Vec::new());
+            }
             // ラベルの差分更新（--add-label / --remove-label）と担当者の置き換えは
             // 「今付いているもの」が要る。どちらも指定が無いなら詳細は引かない
             let merges_labels = !fields.add_labels.is_empty() || !fields.remove_labels.is_empty();
@@ -424,6 +429,7 @@ impl TaskClearArgs {
             clear_parent: false,
             clear_milestone: false,
             clear_sprint: false,
+            clear_assignees: false,
         }
     }
 }

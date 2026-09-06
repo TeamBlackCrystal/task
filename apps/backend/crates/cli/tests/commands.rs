@@ -335,6 +335,70 @@ async fn tasks_update_does_not_change_assignees_when_task_update_is_rejected() {
     }));
 }
 
+/// `--clear-assignees` は担当者を 0 人へ置き換える。
+///
+/// `--assignee` は値なしを受けられないので、専用の解除が無いと今の担当者を
+/// 全員外す手段が無い。今付いている全員へ DELETE が飛ぶことを見る。
+#[tokio::test]
+async fn tasks_update_clears_every_assignee() {
+    let harness = harness().await;
+    mount_project_lookup(&harness).await;
+    let mut detail = task_detail_json();
+    detail["assignees"] = json!([
+        {
+            "role": "assignee",
+            "user": { "id": ALICE_ID, "username": "alice", "avatar_url": null }
+        },
+        {
+            "role": "assignee",
+            "user": { "id": BOB_ID, "username": "bob", "avatar_url": null }
+        }
+    ]);
+    Mock::given(method("GET"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(detail))
+        // 更新前の担当者を読むときと、解除後の最終状態を読み直すときの 2 回
+        .expect(2)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(project_path("tasks/APP-7")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(task_detail_json()))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(project_path(&format!(
+            "tasks/APP-7/assignees/{ALICE_ID}"
+        ))))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(project_path(&format!(
+            "tasks/APP-7/assignees/{BOB_ID}"
+        ))))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&harness.server)
+        .await;
+
+    let code = harness
+        .run(&["task", "tasks", "update", "APP-7", "--clear-assignees"])
+        .await
+        .unwrap();
+
+    assert_eq!(code, 0);
+    let requests = harness.server.received_requests().await.unwrap();
+    // 誰も足していないこと（解除だけの操作で POST は出ない）
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.method.as_str() != "POST")
+    );
+}
+
 #[tokio::test]
 async fn tasks_update_rolls_back_assignees_when_the_sync_fails_part_way_through() {
     let harness = harness().await;

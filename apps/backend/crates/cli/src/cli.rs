@@ -254,10 +254,10 @@ pub enum TasksCommand {
 /// 作成と更新で同じ綴りにする項目。片方だけ増えると使う側が覚え直しになる。
 #[derive(Debug, clap::Args)]
 pub struct TaskFieldArgs {
-    /// Soft deadline (RFC 3339, or YYYY-MM-DD for end of that day in UTC)
+    /// Soft deadline (RFC 3339, or YYYY-MM-DD for the start of that day in UTC)
     #[arg(long)]
     pub soft_deadline: Option<String>,
-    /// Hard deadline (RFC 3339, or YYYY-MM-DD for end of that day in UTC)
+    /// Hard deadline (RFC 3339, or YYYY-MM-DD for the start of that day in UTC)
     #[arg(long)]
     pub hard_deadline: Option<String>,
     /// Estimate in minutes (1 or more)
@@ -313,6 +313,9 @@ pub struct TaskClearArgs {
     /// Detach from the sprint
     #[arg(long, conflicts_with = "sprint")]
     pub clear_sprint: bool,
+    /// Remove every assignee
+    #[arg(long, conflicts_with = "assignees")]
+    pub clear_assignees: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -543,6 +546,31 @@ mod tests {
         );
         assert!(
             Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--description", "new"])
+                .is_ok()
+        );
+    }
+
+    /// 担当者の解除も値の指定と混ぜられない。混ざると「置き換え」と「全員外す」の
+    /// どちらが勝つかが綴りから読めなくなる。
+    #[test]
+    fn rejects_clearing_and_setting_assignees_together() {
+        assert!(
+            Cli::try_parse_from([
+                "task",
+                "tasks",
+                "update",
+                "APP-1",
+                "--assignee",
+                "alice",
+                "--clear-assignees",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--clear-assignees"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--assignee", "alice"])
                 .is_ok()
         );
     }
