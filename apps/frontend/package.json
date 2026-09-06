@@ -51,7 +51,7 @@
     "elysia": "1.4.30",
     "isomorphic-dompurify": "3.22.0",
     "lru-cache": "11.5.2",
-    "mermaid": "11.16.1",
+    "mermaid": "11.17.2",
     "openapi-fetch": "0.17.0",
     "pinia": "3.0.4",
     "pinia-plugin-persistedstate": "4.7.1",
