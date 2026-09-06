@@ -71,6 +71,17 @@ describe('TaskListSortHeader', () => {
     expect(wrapper.emitted('update:sorting')).toEqual([[[]]]);
   });
 
+  it.each([
+    [false, 'タスクを名前の降順に反転', true],
+    [true, 'タスクを名前の昇順に反転', false],
+  ])('表示中の矢印を押すと並びを反転する', async (desc, label, expectedDesc) => {
+    const wrapper = mountHeader([{ id: 'title', desc }]);
+
+    await wrapper.get(`button[aria-label="${label}"]`).trigger('click');
+
+    expect(wrapper.emitted('update:sorting')).toEqual([[[{ id: 'title', desc: expectedDesc }]]]);
+  });
+
   it('別の列が有効なときはクリア操作を無効にする', () => {
     const wrapper = mountHeader([{ id: 'priority', desc: false }]);
 
