@@ -70,6 +70,9 @@ pub struct ListFilesResponse {
 pub struct UpdateFileRequest {
     #[validate(length(min = 1))]
     pub name: Option<String>,
+    /// `null` でルート（フォルダなし）へ移動。フィールド省略時は変更なし。
+    #[serde(default, deserialize_with = "crate::nullable::deserialize_some")]
+    #[schema(value_type = String, format = "uuid", nullable)]
     pub folder_id: Option<Option<Uuid>>,
 }
 

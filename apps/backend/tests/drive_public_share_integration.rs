@@ -1,3 +1,9 @@
+// Drive の行を作るテストは、backfill のテスト（`drive_project_id_backfill_integration`）が
+// 実行前に `TRUNCATE drive_files, drive_folders CASCADE` を流すのと同じ鍵で直列化する。
+// backfill の SQL はテナントを跨いで全行を見るので、あちらは Drive を空にしてからでないと
+// 他のファイルの残骸で落ちる。鍵を共有しないと、その TRUNCATE がこちらの実行中の行を
+// 巻き添えにする（CASCADE は drive_folder_shares と task_attachments にも及ぶ）。
+
 mod common;
 
 use axum::http::StatusCode;
@@ -78,6 +84,7 @@ async fn insert_public_share(
 
 /// 仕様の URL でフォルダメタデータとファイル一覧が引ける（認証不要）。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn public_share_endpoints_live_at_the_documented_paths() {
     let app = TestApp::new().await;
 
@@ -134,6 +141,7 @@ async fn public_share_endpoints_live_at_the_documented_paths() {
 
 /// 二重 prefix の URL は登録されていない（直したことの裏返しを固定する）。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn the_double_prefixed_path_is_gone() {
     let app = TestApp::new().await;
 
@@ -159,6 +167,7 @@ async fn the_double_prefixed_path_is_gone() {
 
 /// 存在しないトークンは 404。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn unknown_token_is_not_found() {
     let app = TestApp::new().await;
 
@@ -177,6 +186,7 @@ async fn unknown_token_is_not_found() {
 
 /// 期限切れトークンは 410 Gone（仕様 §8.3）。期限ちょうど手前は通ることも見る。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn expired_token_is_gone_but_a_live_one_still_works() {
     let app = TestApp::new().await;
 

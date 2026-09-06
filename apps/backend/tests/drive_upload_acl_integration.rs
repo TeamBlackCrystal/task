@@ -1,3 +1,9 @@
+// Drive の行を作るテストは、backfill のテスト（`drive_project_id_backfill_integration`）が
+// 実行前に `TRUNCATE drive_files, drive_folders CASCADE` を流すのと同じ鍵で直列化する。
+// backfill の SQL はテナントを跨いで全行を見るので、あちらは Drive を空にしてからでないと
+// 他のファイルの残骸で落ちる。鍵を共有しないと、その TRUNCATE がこちらの実行中の行を
+// 巻き添えにする（CASCADE は drive_folder_shares と task_attachments にも及ぶ）。
+
 mod common;
 
 use axum::http::StatusCode;
@@ -90,6 +96,7 @@ async fn upload_status(app: &TestApp, tenant_id: Uuid, folder_id: Uuid) -> Statu
 /// プロジェクト B のフォルダへのアップロードは、B の非メンバーには 403。
 /// メンバーには 201。プロジェクトファイルの読み取り/更新/削除と同じ ACL を作成にも適用する。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn upload_into_project_folder_enforces_membership() {
     let mut app = TestApp::new().await;
 

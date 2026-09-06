@@ -22972,7 +22972,8 @@
         "properties": {
           "folder_id": {
             "type": ["string", "null"],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "`null` でルート（フォルダなし）へ移動。フィールド省略時は変更なし。"
           },
           "name": {
             "type": ["string", "null"]
@@ -22995,7 +22996,6 @@
       },
       "UpdateFolderRequest": {
         "type": "object",
-        "required": ["parent_id"],
         "properties": {
           "name": {
             "type": ["string", "null"]

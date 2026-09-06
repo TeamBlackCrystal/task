@@ -1172,6 +1172,13 @@ pub async fn insert_personal_token_for_test(
     token
 }
 
+/// アドバイザリロックを握る（`service::drive::lock_tenant_drive` と同じ鍵で押さえる用）。
+pub async fn execute_advisory_lock<C: sea_orm::ConnectionTrait>(conn: &C, key: i64) {
+    common::db::execute_bound(conn, "SELECT pg_advisory_xact_lock(?)", vec![key.into()])
+        .await
+        .expect("advisory lock");
+}
+
 /// テストの前提を作るための生 SQL。`?` ではなく `$N` を使う（common::db のヘルパー経由）。
 pub async fn execute_sql<C: sea_orm::ConnectionTrait>(
     conn: &C,

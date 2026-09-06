@@ -24,9 +24,13 @@ use payload::drive_folders::*;
 use rand::RngExt;
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
+    QueryFilter, TransactionTrait,
 };
-use service::drive::is_tenant_owner;
+use service::drive::{
+    can_access_project, is_project_root_folder, is_tenant_owner, lock_tenant_drive,
+    sync_subtree_project_id,
+};
 
 const SHARE_TOKEN_LEN: usize = 32;
 const SHARE_TOKEN_CHARSET: &[u8] =
@@ -52,14 +56,14 @@ fn is_share_expired(expires_at: Option<&sea_orm::prelude::DateTimeWithTimeZone>)
 
 // --- DB helpers ---
 
-async fn get_folder_in_tenant(
-    state: &AppState,
+async fn get_folder_in_tenant<C: ConnectionTrait>(
+    conn: &C,
     tenant_id: Uuid,
     folder_id: Uuid,
 ) -> Result<drive_folders::Model, AppError> {
     drive_folders::Entity::find_by_id(folder_id)
         .filter(drive_folders::Column::TenantId.eq(tenant_id))
-        .one(&state.db)
+        .one(conn)
         .await?
         .ok_or(AppError::NotFound)
 }
@@ -78,13 +82,36 @@ async fn require_folder_share_admin(
     Err(AppError::Forbidden)
 }
 
-async fn validate_parent_folder(
-    state: &AppState,
+/// プロジェクトフォルダの書き込み（作成・移動・削除）を許すか。
+///
+/// 一般フォルダ（`project_id` なし）はテナント所属で足りる。プロジェクトフォルダは
+/// オーナーかそのプロジェクトに入れる人だけに許す（共有受信者は読み取り専用。
+/// drive_files の upload / authorize_file_write と同方針）。
+async fn require_folder_project_write<C: ConnectionTrait>(
+    conn: &C,
+    tenant_id: Uuid,
+    project_id: Option<Uuid>,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    if is_tenant_owner(conn, tenant_id, user_id).await? {
+        return Ok(());
+    }
+    if can_access_project(conn, tenant_id, project_id, user_id).await? {
+        return Ok(());
+    }
+    Err(AppError::Forbidden)
+}
+
+async fn validate_parent_folder<C: ConnectionTrait>(
+    conn: &C,
     tenant_id: Uuid,
     parent_id: Uuid,
     exclude_folder_id: Option<Uuid>,
 ) -> Result<(), AppError> {
-    get_folder_in_tenant(state, tenant_id, parent_id).await?;
+    get_folder_in_tenant(conn, tenant_id, parent_id).await?;
     if let Some(folder_id) = exclude_folder_id {
         if parent_id == folder_id {
             return Err(AppError::BadRequest);
@@ -95,7 +122,7 @@ async fn validate_parent_folder(
                 return Err(AppError::BadRequest);
             }
             current = drive_folders::Entity::find_by_id(id)
-                .one(&state.db)
+                .one(conn)
                 .await?
                 .and_then(|f| f.parent_id);
         }
@@ -103,17 +130,20 @@ async fn validate_parent_folder(
     Ok(())
 }
 
-async fn folder_has_children(state: &AppState, folder_id: Uuid) -> Result<bool, AppError> {
+async fn folder_has_children<C: ConnectionTrait>(
+    conn: &C,
+    folder_id: Uuid,
+) -> Result<bool, AppError> {
     let subfolder_count = drive_folders::Entity::find()
         .filter(drive_folders::Column::ParentId.eq(folder_id))
-        .count(&state.db)
+        .count(conn)
         .await?;
     if subfolder_count > 0 {
         return Ok(true);
     }
     let file_count = drive_files::Entity::find()
         .filter(drive_files::Column::FolderId.eq(folder_id))
-        .count(&state.db)
+        .count(conn)
         .await?;
     Ok(file_count > 0)
 }
@@ -218,20 +248,34 @@ pub async fn create_folder(
 ) -> Result<(StatusCode, Json<DriveFolderResponse>), AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    if let Some(parent_id) = payload.parent_id {
-        validate_parent_folder(&state, tenant_id, parent_id, None).await?;
-    }
+    // 親の project_id を継承する。継承しないと、プロジェクトフォルダの下に作った
+    // フォルダとその中のファイルがテナント一般ファイル扱いになり、プロジェクトの
+    // 非メンバーから見えてしまう（配信の認可は project_id で判定するため）。
+    //
+    // 親の読みと挿入は同一トランザクション、かつテナントの Drive をロックしてから行う。
+    // 親が別プロジェクトへ移動している最中に読むと、移動前の project_id を継承した
+    // 行が同期の後から挿入され、直したはずの漏れが再発する。
+    let txn = state.db.begin().await?;
+    lock_tenant_drive(&txn, tenant_id).await?;
+    let parent_project_id = if let Some(parent_id) = payload.parent_id {
+        validate_parent_folder(&txn, tenant_id, parent_id, None).await?;
+        let parent = get_folder_in_tenant(&txn, tenant_id, parent_id).await?;
+        require_folder_project_write(&txn, tenant_id, parent.project_id, auth.user_id).await?;
+        parent.project_id
+    } else {
+        None
+    };
     let folder = drive_folders::ActiveModel {
         id: Set(Uuid::new_v4()),
         name: Set(payload.name),
         parent_id: Set(payload.parent_id),
         tenant_id: Set(tenant_id),
-        // project_id: NULL for manual folders (project folders are auto-created in create_project)
-        project_id: Set(None),
+        project_id: Set(parent_project_id),
         created_by: Set(auth.user_id),
         created_at: Set(Default::default()),
     };
-    let model = folder.insert(&state.db).await?;
+    let model = folder.insert(&txn).await?;
+    txn.commit().await?;
     Ok((StatusCode::CREATED, Json(model.into())))
 }
 
@@ -259,8 +303,9 @@ pub async fn update_folder(
 ) -> Result<Json<DriveFolderResponse>, AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state, tenant_id, folder_id).await?;
     if payload.name.is_none() && payload.parent_id.is_none() {
+        // 変更が無いなら読むだけ。ロックを取る必要も無い
+        let folder = get_folder_in_tenant(&state.db, tenant_id, folder_id).await?;
         return Ok(Json(folder.into()));
     }
     if let Some(name) = &payload.name
@@ -268,11 +313,40 @@ pub async fn update_folder(
     {
         return Err(AppError::BadRequest);
     }
-    if let Some(parent_id) = &payload.parent_id
-        && let Some(pid) = parent_id
-    {
-        validate_parent_folder(&state, tenant_id, *pid, Some(folder_id)).await?;
+
+    // 読みも ACL 検査も書き込みと同じトランザクションに入れ、テナントの Drive を
+    // ロックしてから始める。ロックの外で読むと、移動元・移動先の project_id が
+    // 読んだ後に変わったり、配下の同期を集めた後に子が挿入されたりして、
+    // 直したはずの ACL 漏れが再発する
+    let txn = state.db.begin().await?;
+    lock_tenant_drive(&txn, tenant_id).await?;
+
+    let folder = get_folder_in_tenant(&txn, tenant_id, folder_id).await?;
+
+    // 移動元の ACL。プロジェクトフォルダを動かせるのはそのプロジェクトに入れる人だけ
+    require_folder_project_write(&txn, tenant_id, folder.project_id, auth.user_id).await?;
+
+    let is_move = payload
+        .parent_id
+        .is_some_and(|parent_id| parent_id != folder.parent_id);
+
+    // 自動生成のプロジェクトルートフォルダは動かさない。動かすとプロジェクトと
+    // ドライブの 1 対 1 が壊れ、配下の project_id を戻す手立ても無くなる
+    if is_move && is_project_root_folder(&folder) {
+        return Err(AppError::Conflict);
     }
+
+    // 移動先の ACL と、移動によって配下が属することになる project_id
+    let destination_project_id = if let Some(Some(pid)) = payload.parent_id {
+        validate_parent_folder(&txn, tenant_id, pid, Some(folder_id)).await?;
+        let parent = get_folder_in_tenant(&txn, tenant_id, pid).await?;
+        require_folder_project_write(&txn, tenant_id, parent.project_id, auth.user_id).await?;
+        parent.project_id
+    } else {
+        None
+    };
+
+    let previous_project_id = folder.project_id;
     let mut active: drive_folders::ActiveModel = folder.into();
     if let Some(name) = payload.name {
         active.name = Set(name);
@@ -280,8 +354,24 @@ pub async fn update_folder(
     if let Some(parent_id) = payload.parent_id {
         active.parent_id = Set(parent_id);
     }
-    let model = active.update(&state.db).await?;
-    Ok(Json(model.into()))
+
+    if !is_move {
+        let model = active.update(&txn).await?;
+        txn.commit().await?;
+        return Ok(Json(model.into()));
+    }
+
+    // 移動と配下の project_id 同期は同一トランザクションで行う。片方だけ通ると
+    // 「プロジェクトファイルなのに別プロジェクトの配下」という状態が残る
+    active.project_id = Set(destination_project_id);
+    let model = active.update(&txn).await?;
+    if destination_project_id != previous_project_id {
+        sync_subtree_project_id(&txn, model.id, destination_project_id).await?;
+    }
+    // 同期後の値で返す（sync_subtree_project_id は update_many なので model に載らない）
+    let refreshed = get_folder_in_tenant(&txn, tenant_id, model.id).await?;
+    txn.commit().await?;
+    Ok(Json(refreshed.into()))
 }
 
 #[utoipa::path(
@@ -306,13 +396,27 @@ pub async fn delete_folder(
 ) -> Result<StatusCode, AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state, tenant_id, folder_id).await?;
-    if folder_has_children(&state, folder_id).await? {
+    // 子の有無を読んでから消すまでの間に、その子として新しいフォルダを挿入されうる。
+    // drive_folders.parent_id は ON DELETE SET NULL なので、割り込まれた子は
+    // parent_id = NULL かつ project_id = Some のままドライブ直下へ出る。これは
+    // 自動生成のプロジェクトルートと同じ形で、以後は更新も削除も 409 で拒まれ、
+    // API から片付けられなくなる（drive_files と違い、この表には受け止める CHECK が無い）。
+    // 作成・移動と同じテナントロックの下で、確認から削除までを一続きにする。
+    let txn = state.db.begin().await?;
+    lock_tenant_drive(&txn, tenant_id).await?;
+    let folder = get_folder_in_tenant(&txn, tenant_id, folder_id).await?;
+    require_folder_project_write(&txn, tenant_id, folder.project_id, auth.user_id).await?;
+    // プロジェクトルートフォルダは空でも消さない。破棄はプロジェクト削除の CASCADE に任せる
+    if is_project_root_folder(&folder) {
+        return Err(AppError::Conflict);
+    }
+    if folder_has_children(&txn, folder_id).await? {
         return Err(AppError::Conflict);
     }
     drive_folders::Entity::delete_by_id(folder.id)
-        .exec(&state.db)
+        .exec(&txn)
         .await?;
+    txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -340,7 +444,7 @@ pub async fn list_shares(
 ) -> Result<Json<Vec<DriveFolderShareResponse>>, AppError> {
     auth.require_scope(Scope::ReadDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state, tenant_id, folder_id).await?;
+    let folder = get_folder_in_tenant(&state.db, tenant_id, folder_id).await?;
     require_folder_share_admin(&state, &folder, auth.user_id).await?;
     let shares = drive_folder_shares::Entity::find()
         .filter(drive_folder_shares::Column::FolderId.eq(folder_id))
@@ -373,7 +477,7 @@ pub async fn create_share(
 ) -> Result<(StatusCode, Json<DriveFolderShareResponse>), AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state, tenant_id, folder_id).await?;
+    let folder = get_folder_in_tenant(&state.db, tenant_id, folder_id).await?;
     require_folder_share_admin(&state, &folder, auth.user_id).await?;
 
     let permission = parse_share_permission(&payload.permission)?;
@@ -429,7 +533,7 @@ pub async fn delete_share(
 ) -> Result<StatusCode, AppError> {
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
-    let folder = get_folder_in_tenant(&state, tenant_id, folder_id).await?;
+    let folder = get_folder_in_tenant(&state.db, tenant_id, folder_id).await?;
     require_folder_share_admin(&state, &folder, auth.user_id).await?;
     let share = get_share_in_folder(&state, folder_id, share_id).await?;
     drive_folder_shares::Entity::delete_by_id(share.id)
