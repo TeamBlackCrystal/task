@@ -23,7 +23,7 @@ thiserror = "2.0.10"
 tracing = "0.1"
 url = "2.5"
 utoipa = { version = "5.4.0", features = ["uuid", "chrono", "time"] }
-validator = { version = "0.20.0", features = ["derive"] }
+validator = { version = "0.21.0", features = ["derive"] }
 
 [package]
 name = "backend"
