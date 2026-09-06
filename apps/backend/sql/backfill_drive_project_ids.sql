@@ -30,8 +30,13 @@
 -- 階層から project_id を導けない。
 --
 -- 階層の深さでは打ち切らない。API に深さの上限は無く、途中で止めると残りが NULL のまま
--- 「成功」してしまう。循環は validate_parent_folder が作らせないが、万一混ざっても
--- 無限に辿らないよう CYCLE 句で検出し、更新せず失敗させる。
+-- 「成功」してしまう。循環は validate_parent_folder が作らせないが、万一混ざっていたら
+-- 更新せず失敗させる。
+--
+-- **循環の検出は伝播用の CTE とは別に行う。** 伝播側は project_id が NULL の子だけを
+-- 辿るので、循環して起点へ戻る最後の一歩（起点は非 NULL）を踏めず、CYCLE 句が立たない。
+-- 全フォルダを起点に parent_id を親方向へ辿る CTE を別に置き、そちらで検出する。
+-- 全ノードが NULL の循環も、循環内のフォルダ自身が起点になるので拾える。
 
 -- 1) 循環と境界の食い違いを検出する。1 件でもあれば例外で止める（更新は次の文なので、
 --    ここで止まれば何も書き換わらない）
@@ -42,7 +47,16 @@ DECLARE
     conflict_count bigint;
     conflict_sample text;
 BEGIN
-    WITH RECURSIVE subtree AS (
+    WITH RECURSIVE ancestors AS (
+        -- 循環の検出。全フォルダを起点に親方向へ辿る
+        SELECT id AS start_id, id, parent_id
+          FROM drive_folders
+        UNION ALL
+        SELECT ancestors.start_id, parent.id, parent.parent_id
+          FROM drive_folders AS parent
+          JOIN ancestors ON ancestors.parent_id = parent.id
+    ) CYCLE id SET is_cycle USING path,
+    subtree AS (
         SELECT id, project_id
           FROM drive_folders
          WHERE project_id IS NOT NULL
@@ -55,8 +69,9 @@ BEGIN
          WHERE child.project_id IS NULL
     ) CYCLE id SET is_cycle USING path,
     problems AS (
-        SELECT 'cycle' AS kind, id
-          FROM subtree
+        -- is_cycle が立った行の id は、経路に 2 度出てきたフォルダ（＝循環の一部）
+        SELECT DISTINCT 'cycle' AS kind, id
+          FROM ancestors
          WHERE is_cycle
         UNION ALL
         SELECT 'drive_folders', child.id

@@ -142,10 +142,28 @@ async fn set_folder_parent(app: &TestApp, folder_id: Uuid, parent_id: Option<Uui
     active.update(&app.state.db).await.expect("update folder");
 }
 
+/// Drive を空にしてから TestApp を返す。
+///
+/// backfill はテナントを跨いで全行を見るので、他のテストファイルが残した行まで
+/// 判定に入る。実際 CI では drive_folder_boundary_integration が残した
+/// 「プロジェクトツリーに混ざった別プロジェクトのファイル」で、このファイルの
+/// 最初のテストが例外で落ちた。自分が作った状態だけを見るように、毎回空にする。
+/// 同じ理由でこのファイルのテストは `file_serial` で直列化する（統合テストは
+/// `--test-threads=1` で流す前提だが、並列に流されても互いを消し合わないようにする）。
+async fn new_app() -> TestApp {
+    let app = TestApp::new().await;
+    app.state
+        .db
+        .execute_unprepared("TRUNCATE TABLE drive_files, drive_folders CASCADE")
+        .await
+        .expect("truncate drive tables");
+    app
+}
+
 /// 作った Drive の行を消す。
 ///
-/// backfill はテナントを跨いで全行を見るので、例外で止める形のデータを残すと
-/// 後続のテストがその残骸で落ちる。検証を済ませたら自分の行は片付ける。
+/// このファイルのテストは `new_app` で空から始めるが、例外で止める形のデータを
+/// 残すと他のテストファイルの一覧や集計に混ざる。検証を済ませたら片付ける。
 async fn cleanup(app: &TestApp, files: &[Uuid], folders: &[Uuid]) {
     for file in files {
         drive_files::Entity::delete_by_id(*file)
@@ -175,8 +193,9 @@ async fn run_backfill(app: &TestApp) {
 
 /// プロジェクトルート配下は、何段下でもルートの `project_id` に揃う。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_propagates_the_project_down_the_whole_subtree() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -237,8 +256,9 @@ async fn backfill_propagates_the_project_down_the_whole_subtree() {
 /// 一般ツリーの配下に `project_id` を持つ行は、階層より厳しい判定になるだけで
 /// 漏れる向きではない。NULL へ落とすと非メンバーへ開いてしまうので backfill の対象外。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_leaves_rows_outside_project_roots_alone() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -282,8 +302,9 @@ async fn backfill_leaves_rows_outside_project_roots_alone() {
 
 /// 別プロジェクトのツリーが混ざっても、それぞれのルートの値になる。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_keeps_projects_separate() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -312,8 +333,9 @@ async fn backfill_keeps_projects_separate() {
 /// A のルートと配下のファイルが B のものになり、A のファイルが B のメンバーへ公開され、
 /// A のメンバーはアクセスを失う。backfill が新しい漏れを作ってはいけない。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -356,8 +378,9 @@ async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
 
 /// 2 回流しても結果が変わらない（デプロイのたびに適用されても壊れない）。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_is_idempotent() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -389,8 +412,9 @@ async fn backfill_is_idempotent() {
 /// プロジェクトルートが残りうる。ドライブ直下だけを起点にすると、その配下の NULL の
 /// 子孫が修復されないまま「成功」し、プロジェクト非メンバーから見え続ける。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_repairs_a_project_root_moved_under_a_plain_folder() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -450,8 +474,9 @@ async fn backfill_repairs_a_project_root_moved_under_a_plain_folder() {
 /// API に深さの上限は無いので、途中で止めると残りが NULL のまま「成功」する。
 /// 実装の打ち切り値（かつては 64）をまたぐ深さで確かめる。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_reaches_folders_deeper_than_any_recursion_cutoff() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -488,8 +513,9 @@ async fn backfill_reaches_folders_deeper_than_any_recursion_cutoff() {
 /// フォルダだけを止めてファイルを黙って上書きすると、そのファイルが別プロジェクトの
 /// メンバーへ公開される。フォルダと同じ向きの漏れなので、同じ扱いにする。
 #[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
 async fn backfill_refuses_to_absorb_a_foreign_file_inside_a_project_tree() {
-    let app = TestApp::new().await;
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
@@ -523,19 +549,23 @@ async fn backfill_refuses_to_absorb_a_foreign_file_inside_a_project_tree() {
     assert_eq!(child_file_after, None);
 }
 
-/// 親子が循環していても終わる。
+/// 親子が循環していたら、何も書き換えずに失敗させる。
 ///
-/// 深さで打ち切るのをやめたので、循環を辿り続けると止まらなくなる。`CYCLE` 句が
-/// それを防ぐ。循環の入口にあたるフォルダの配下は通常どおり揃う。
+/// 深さで打ち切るのをやめたので、循環は検出して止めるしかない。伝播用の CTE は
+/// project_id が NULL の子だけを辿るため、循環して起点へ戻る最後の一歩を踏めず、
+/// そちらの `CYCLE` 句では立たない。検出は全フォルダから親を辿る別の CTE が担う。
 #[tokio::test]
-async fn backfill_terminates_on_a_cycle_in_the_folder_tree() {
-    let app = TestApp::new().await;
+#[serial_test::file_serial(drive_backfill)]
+async fn backfill_refuses_to_run_when_a_project_tree_has_a_cycle() {
+    let app = new_app().await;
 
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
 
+    // 循環が無ければ揃うはずのツリー
     let root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
     let child = insert_folder(&app, tp.tenant_id, owner.id, Some(root), None).await;
+    let child_file = insert_file(&app, tp.tenant_id, Some(child), owner.id).await;
 
     // validate_parent_folder が作らせない形を直接組む。
     // 起点（project_id を持つ）とその子が互いを親にしている
@@ -543,18 +573,59 @@ async fn backfill_terminates_on_a_cycle_in_the_folder_tree() {
     let cyclic_child = insert_folder(&app, tp.tenant_id, owner.id, Some(cyclic_root), None).await;
     set_folder_parent(&app, cyclic_root, Some(cyclic_child)).await;
 
-    tokio::time::timeout(std::time::Duration::from_secs(60), run_backfill(&app))
-        .await
-        .expect("backfill が循環で終わらなくなっている");
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        app.state.db.execute_unprepared(BACKFILL_SQL),
+    )
+    .await
+    .expect("backfill が循環で終わらなくなっている");
 
     let child_after = folder_project_id(&app, child).await;
+    let child_file_after = file_project_id(&app, child_file).await;
     let cyclic_child_after = folder_project_id(&app, cyclic_child).await;
-    cleanup(&app, &[], &[cyclic_root, cyclic_child]).await;
+    cleanup(
+        &app,
+        &[child_file],
+        &[child, root, cyclic_root, cyclic_child],
+    )
+    .await;
 
-    assert_eq!(child_after, Some(tp.project_id));
-    assert_eq!(
-        cyclic_child_after,
-        Some(tp.project_id),
-        "循環の入口の子は通常どおり継承する"
-    );
+    assert!(result.is_err(), "循環を含むデータのまま流さない");
+    assert_eq!(child_after, None, "止まったときは何も書き換えない");
+    assert_eq!(child_file_after, None);
+    assert_eq!(cyclic_child_after, None);
+}
+
+/// project_id を持たないフォルダだけの循環も検出する。
+///
+/// 伝播用の CTE は project_id を持つフォルダからしか始まらないので、この形には
+/// 起点が無く、そちらからは存在にすら気づけない。
+#[tokio::test]
+#[serial_test::file_serial(drive_backfill)]
+async fn backfill_refuses_to_run_when_a_plain_subtree_has_a_cycle() {
+    let app = new_app().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
+    let child = insert_folder(&app, tp.tenant_id, owner.id, Some(root), None).await;
+
+    // project_id を持たない 2 つが互いを親にしている
+    let first = insert_folder(&app, tp.tenant_id, owner.id, None, None).await;
+    let second = insert_folder(&app, tp.tenant_id, owner.id, Some(first), None).await;
+    set_folder_parent(&app, first, Some(second)).await;
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        app.state.db.execute_unprepared(BACKFILL_SQL),
+    )
+    .await
+    .expect("backfill が循環で終わらなくなっている");
+
+    let child_after = folder_project_id(&app, child).await;
+    cleanup(&app, &[], &[child, root, first, second]).await;
+
+    assert!(result.is_err(), "起点の無い循環も見つける");
+    assert_eq!(child_after, None, "止まったときは何も書き換えない");
 }
