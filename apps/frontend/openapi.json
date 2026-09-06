@@ -10648,16 +10648,6 @@
               }
             }
           },
-          "400": {
-            "description": "テナントメンバーでない利用者は追加できません",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ServerError"
-                }
-              }
-            }
-          },
           "401": {
             "description": "ログインまたはセッションが必要です",
             "content": {

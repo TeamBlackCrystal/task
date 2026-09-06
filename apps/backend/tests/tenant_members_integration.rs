@@ -98,15 +98,40 @@ async fn tenant_members_gate_tenant_and_project_access() {
         "/v1/tenants/{}/projects/{}/members",
         tp.tenant_id, tp.project_id
     );
-    // テナントに居ない人はプロジェクトメンバーにできない
-    // （「プロジェクトには居るがテナントには入れない」不整合を作らせない）
-    let rejected = app
+    // テナントに居ない人も、プロジェクトへ直接招ける（明示 ACE はテナント所属と独立）。
+    // 招かれた人はその場で project-only の客分になり、そのプロジェクトにだけ入れる
+    let invited = app
         .post_json_with_session(
             &project_members_path,
             serde_json::json!({ "user_id": outsider.id, "role": "Member" }),
         )
         .await;
-    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invited.status(),
+        StatusCode::CREATED,
+        "テナント外でも直接招ける"
+    );
+    app.reset_session_client();
+    app.login_session(&outsider.email, &outsider.password).await;
+    assert_eq!(
+        app.get_with_session(&project_path).await.status(),
+        StatusCode::OK,
+        "招かれたプロジェクトには客分として入れる"
+    );
+    assert_eq!(
+        app.get_with_session(&tenant_path).await.status(),
+        StatusCode::FORBIDDEN,
+        "テナント全体の口は閉じたまま"
+    );
+    // 以降の絞り込みの検証に影響しないよう、招いた行は外しておく
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.delete_with_session(&format!("{project_members_path}/{}", outsider.id))
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
 
     // テナントメンバーを 1 人プロジェクトに指定する
     let assignee = app.insert_user(false, false).await;
