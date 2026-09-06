@@ -44,11 +44,10 @@ pub struct UpdateTenantMemberRequest {
     pub role: TenantRole,
 }
 
-/// テナント除名の後もその人に残る、プロジェクト単位の明示 ACE。
+/// その人が持つ、プロジェクト単位の明示 ACE。
 /// テナント所属（継承）を外しても明示 ACE は独立して残り、持ち主は客分としてそのプロジェクトに入り続ける。
-/// 管理者が「除名したのにまだ入れる」と驚かないよう、除名の応答で名指しして返す。
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RemainingExplicitProject {
+pub struct ExplicitProjectAce {
     #[schema(value_type = String, format = "uuid")]
     pub project_id: Uuid,
     pub key: String,
@@ -56,10 +55,15 @@ pub struct RemainingExplicitProject {
     pub role: ProjectRole,
 }
 
+/// その人がこのテナントで持つ明示 ACE の一覧。
+/// テナント除名の前に「除名しても、この人はこれらのプロジェクトに入り続ける」と確かめるために使う。
+/// 管理者が「除名したのにまだ入れる」と驚かないためのもので、除名の後に呼んでも同じ内容を返す。
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct RemoveTenantMemberResponse {
-    /// 除名の後も残る明示 ACE。
-    /// 空なら、この人はもうこのテナントのどこにも入れない。
+pub struct ExplicitProjectsResponse {
+    /// 呼び出し側から見えるプロジェクトの明示 ACE。
     /// 閉め出したい場合は、ここに挙がったプロジェクトのメンバーからも外す。
-    pub remaining_explicit_projects: Vec<RemainingExplicitProject>,
+    pub explicit_projects: Vec<ExplicitProjectAce>,
+    /// 呼び出し側には見えないプロジェクトに残る明示 ACE の件数。
+    /// 非公開プロジェクトの名前や key を、そのプロジェクトに入れない人へ出さないために数だけ返す。
+    pub hidden_count: u64,
 }

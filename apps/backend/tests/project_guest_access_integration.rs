@@ -127,14 +127,19 @@ async fn setup_guest(app: &mut TestApp) -> GuestSetup {
         .await;
     assert_eq!(
         removed.status(),
-        StatusCode::OK,
+        StatusCode::NO_CONTENT,
         "guest をテナントから除名（明示 ACE の行は残る）"
     );
-    let removed_body: Value = removed.json().await.expect("remove member json");
+    let remaining: Value = app
+        .get_with_session(&format!("{members_path}/{}/explicit-projects", guest.id))
+        .await
+        .json()
+        .await
+        .expect("explicit projects json");
     assert_eq!(
-        project_ids_of_remaining(&removed_body),
+        project_ids_of_explicit(&remaining),
         vec![tp.project_id],
-        "除名の応答が、残る明示 ACE のプロジェクトを名指しする"
+        "除名の後も、残る明示 ACE のプロジェクトを名指しできる"
     );
 
     GuestSetup {
@@ -166,11 +171,11 @@ async fn membership_of(res: reqwest::Response, tenant_id: Uuid) -> Option<String
 }
 
 /// プロジェクト一覧レスポンスから id を取り出す。
-/// 除名応答 `remaining_explicit_projects` の project_id を key 順（応答順）に取り出す
-fn project_ids_of_remaining(body: &Value) -> Vec<Uuid> {
-    body["remaining_explicit_projects"]
+/// `explicit-projects` 応答の project_id を key 順（応答順）に取り出す
+fn project_ids_of_explicit(body: &Value) -> Vec<Uuid> {
+    body["explicit_projects"]
         .as_array()
-        .expect("remaining_explicit_projects must be an array")
+        .expect("explicit_projects must be an array")
         .iter()
         .map(|p| {
             p["project_id"]
@@ -648,7 +653,7 @@ async fn guest_cannot_disable_totp_under_require_2fa() {
     let removed = app
         .delete_with_session(&format!("{members_path}/{}", guest2.id))
         .await;
-    assert_eq!(removed.status(), StatusCode::OK);
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
     let policy = app
         .post_json_with_session(
             &format!("/v1/tenants/{}/require-2fa", s.tenant_id),

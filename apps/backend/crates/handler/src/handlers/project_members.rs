@@ -309,10 +309,17 @@ pub async fn add_member(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    // テナント所属の確認と insert を、テナント除名と同じロックの内側で行う。
+    // 外すと、確認が「まだ居る」を読んだ後・書く前に除名が通り、除名済みの人へ
+    // 明示 ACE（客分の口）を新しく作れてしまう。除名の側で「何が残るか」を確かめても、
+    // その後に増えた行は見えない（`lock_membership_changes` の doc）
+    let txn = state.db.begin().await?;
+    lock_membership_changes(&txn, tenant_id).await?;
+
     // プロジェクトメンバーはテナントメンバーの絞り込みなので、テナントに居ない人は入れない。
     // ここを許すと「プロジェクトには居るがテナントには入れない」不整合な状態ができる（#568）
     if !is_tenant_owner(&state.db, tenant_id, payload.user_id).await?
-        && !is_tenant_member(&state.db, tenant_id, payload.user_id).await?
+        && !is_tenant_member(&txn, tenant_id, payload.user_id).await?
     {
         return Err(AppError::BadRequest);
     }
@@ -320,7 +327,7 @@ pub async fn add_member(
     let existing = project_members::Entity::find()
         .filter(project_members::Column::ProjectId.eq(project_id))
         .filter(project_members::Column::UserId.eq(payload.user_id))
-        .one(&state.db)
+        .one(&txn)
         .await?;
     if existing.is_some() {
         return Err(AppError::Conflict);
@@ -332,7 +339,8 @@ pub async fn add_member(
         user_id: Set(payload.user_id),
         role: Set(payload.role),
     };
-    let model = member.insert(&state.db).await?;
+    let model = member.insert(&txn).await?;
+    txn.commit().await?;
     Ok((
         StatusCode::CREATED,
         Json(ProjectMemberResponse::from_parts(model, user)),

@@ -299,7 +299,7 @@ async fn removing_a_tenant_member_waits_for_the_membership_lock() {
     // 対照: ロックが空いていれば除名は通る（過剰に塞いでいない）
     assert_eq!(
         app.delete_with_session(&bob_tenant_path).await.status(),
-        StatusCode::OK,
+        StatusCode::NO_CONTENT,
         "ロックが空いていれば除名できる"
     );
 
@@ -368,7 +368,7 @@ async fn an_owner_can_still_manage_a_project_whose_admins_all_left() {
         app.delete_with_session(&format!("{tenant_members_path}/{}", bob.id))
             .await
             .status(),
-        StatusCode::OK,
+        StatusCode::NO_CONTENT,
         "単独 Admin でもテナントからは外せる（オフボーディングを止めない）"
     );
 
@@ -413,5 +413,76 @@ async fn an_owner_can_still_manage_a_project_whose_admins_all_left() {
 
     app.cleanup_user(owner.id).await;
     app.cleanup_user(alice.id).await;
+    app.cleanup_user(bob.id).await;
+}
+
+/// プロジェクトメンバーの追加も、テナント除名と同じロックの内側で行う。
+///
+/// 追加は「テナントに居るか」を確かめてから insert する。ロックの外にいると、
+/// 確かめた後・insert の前に除名が通り、除名済みの人へ明示 ACE（客分の口）を
+/// 新しく作れてしまう。除名の側で残る ACE を確かめても、その後に増えた行は見えない。
+///
+/// 実時間の競合は再現が安定しないので、テナント行を掴んだまま追加を投げて
+/// **待たされること**を見る。追加が同じロックを取らなければ素通りして落ちる。
+#[tokio::test]
+async fn adding_a_project_member_waits_for_the_membership_lock() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let bob = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let tenant_members_path = format!("/v1/tenants/{}/members", tp.tenant_id);
+    let project_members_path = format!(
+        "/v1/tenants/{}/projects/{}/members",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    assert_eq!(
+        app.post_json_with_session(
+            &tenant_members_path,
+            serde_json::json!({ "user_id": bob.id, "role": "Member" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    let add_bob = serde_json::json!({ "user_id": bob.id, "role": "Member" });
+
+    // 除名側が取るのと同じロックを、テストが先に握る
+    let txn = app.state.db.begin().await.expect("begin");
+    txn.query_one_raw(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT id FROM tenants WHERE id = $1 FOR UPDATE",
+        [tp.tenant_id.into()],
+    ))
+    .await
+    .expect("lock tenant row");
+
+    let blocked = tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        app.post_json_with_session(&project_members_path, add_bob.clone()),
+    )
+    .await;
+    assert!(
+        blocked.is_err(),
+        "ロックを握っている間、追加は待たされる（同じロックを取らないと素通りする）"
+    );
+
+    txn.rollback().await.expect("rollback");
+
+    // 対照: ロックが空いていれば追加は通る（過剰に塞いでいない）
+    assert_eq!(
+        app.post_json_with_session(&project_members_path, add_bob)
+            .await
+            .status(),
+        StatusCode::CREATED,
+        "ロックが空いていれば追加できる"
+    );
+
+    app.cleanup_user(owner.id).await;
     app.cleanup_user(bob.id).await;
 }

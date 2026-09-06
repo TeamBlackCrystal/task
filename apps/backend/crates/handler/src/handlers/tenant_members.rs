@@ -6,8 +6,7 @@ use axum::{
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
 };
 
 use crate::AppState;
@@ -22,6 +21,7 @@ use entity::{
     users,
 };
 use payload::tenant_members::*;
+use service::access::visible_project_ids;
 use service::db::is_postgres_unique_violation;
 
 async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -219,7 +219,7 @@ pub async fn update_member(
         ("user_id" = Uuid, Path, description = "ユーザーID"),
     ),
     responses(
-        (status = 200, description = "削除しました。除名の後も残るプロジェクト単位の明示 ACE を同梱する。", body = RemoveTenantMemberResponse),
+        (status = 204, description = "削除しました"),
         CrudErrors,
     )
 )]
@@ -227,7 +227,7 @@ pub async fn remove_member(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<RemoveTenantMemberResponse>, AppError> {
+) -> Result<StatusCode, AppError> {
     auth.require_scope(Scope::AdminTenant)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
@@ -253,45 +253,83 @@ pub async fn remove_member(
     // project-only の客分になり、名指しされたプロジェクトの中だけ引き続き入れる。
     // 副次的に、その人しか指定されていなかったプロジェクトがメンバー 0 人になって
     // 「メンバー未指定＝テナント全体に開放」へ戻ることも防ぎ、再参加時は元の割り当てが戻る。
+    // 残る明示 ACE は `list_explicit_projects` で除名の前後どちらでも確かめられる。
     // 通知の宛先はテナントに居る人だけに絞られる（`service::access`。客分には飛ばない）
     tenant_members::Entity::delete_by_id(member.id)
         .exec(&txn)
         .await?;
-
-    // 「除名したのにまだ入れる」と管理者が驚かぬよう、残る明示 ACE を名指しして返す。
-    // 同じ txn で読む。commit 後に読むと、その間の project member 操作が混ざる
-    let remaining_explicit_projects = remaining_explicit_projects(&txn, tenant_id, user_id).await?;
     txn.commit().await?;
 
-    Ok(Json(RemoveTenantMemberResponse {
-        remaining_explicit_projects,
-    }))
+    Ok(StatusCode::NO_CONTENT)
 }
 
-/// このテナント配下で、その人に残っている明示 ACE（`project_members` の行）を集める。
-/// 他テナントのプロジェクトの行は、このテナントの除名とは無関係なので含めない
-async fn remaining_explicit_projects<C: ConnectionTrait>(
-    db: &C,
-    tenant_id: Uuid,
-    user_id: Uuid,
-) -> Result<Vec<RemainingExplicitProject>, AppError> {
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/{user_id}/explicit-projects",
+    tag = "Tenant Members",
+    summary = "テナントメンバーが持つプロジェクト単位の明示 ACE",
+    description = "テナント除名の前に「除名しても、この人はこれらのプロジェクトに入り続ける」と確かめるための口。除名の後に呼んでも同じ内容を返す。",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("user_id" = Uuid, Path, description = "ユーザーID"),
+    ),
+    responses(
+        (status = 200, description = "明示 ACE の一覧", body = ExplicitProjectsResponse),
+        CrudErrors,
+    )
+)]
+pub async fn list_explicit_projects(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ExplicitProjectsResponse>, AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    // 除名と同じ相手（オーナーとテナント Admin）にだけ見せる。
+    // 対象がテナントに居るかは問わない。除名した後に「まだ何が残っているか」を確かめる用途があるため
+    require_tenant_admin(&state, tenant_id, auth.user_id).await?;
+
     let rows = project_members_entity::Entity::find()
         .filter(project_members_entity::Column::UserId.eq(user_id))
         .find_also_related(projects::Entity)
-        .all(db)
+        .all(&state.db)
         .await?;
-    let mut out: Vec<RemainingExplicitProject> = rows
+    let mut aces: Vec<(project_members_entity::Model, projects::Model)> = rows
         .into_iter()
-        .filter_map(|(m, p)| {
-            let p = p?;
-            (p.tenant_id == tenant_id).then_some(RemainingExplicitProject {
+        .filter_map(|(m, p)| p.filter(|p| p.tenant_id == tenant_id).map(|p| (m, p)))
+        .collect();
+
+    // 非公開プロジェクトの名前や key を、そのプロジェクトに入れない人へ出さない。
+    // テナント Admin でもプロジェクトの閲覧は `list_projects` と同じ境界で絞られるので、
+    // ここも同じ判定（`visible_project_ids`）を通す。オーナーは全プロジェクトに入れる
+    let visible = if is_tenant_owner(&state.db, tenant_id, auth.user_id).await? {
+        aces.iter().map(|(_, p)| p.id).collect()
+    } else {
+        visible_project_ids(
+            &state.db,
+            aces.iter().map(|(_, p)| p.id).collect(),
+            auth.user_id,
+        )
+        .await?
+    };
+    let hidden_count = aces
+        .iter()
+        .filter(|(_, p)| !visible.contains(&p.id))
+        .count() as u64;
+    aces.retain(|(_, p)| visible.contains(&p.id));
+    aces.sort_by(|a, b| a.1.key.cmp(&b.1.key));
+
+    Ok(Json(ExplicitProjectsResponse {
+        explicit_projects: aces
+            .into_iter()
+            .map(|(m, p)| ExplicitProjectAce {
                 project_id: p.id,
                 key: p.key,
                 name: p.name,
                 role: m.role,
             })
-        })
-        .collect();
-    out.sort_by(|a, b| a.key.cmp(&b.key));
-    Ok(out)
+            .collect(),
+        hidden_count,
+    }))
 }
