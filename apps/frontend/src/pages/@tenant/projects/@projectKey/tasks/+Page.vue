@@ -380,10 +380,12 @@ const fetchedProjectLabels = computed(() => labelsQuery.data.value ?? null);
 const projectLabels = computed(() => fetchedProjectLabels.value ?? []);
 
 // ---- クエリ④: 担当者候補（List 表示の行から割り当てる）----
+// 担当者の候補が要るのは List 表示のピッカーと作成モーダル。どちらも出ていなければ
+// 取りに行かない（Table 表示でモーダルを閉じたままなら問い合わせは発生しない）
+const needsAssignableUsers = computed(() => isListView.value || isCreateDialogOpen.value);
 const membersQuery = useAssignableUsersQuery(
-  // 担当者の割り当ては List 表示でしか出さないので、Table のときは取りに行かない
-  () => (isListView.value ? tenantId.value : null),
-  () => (isListView.value ? projectId.value : null),
+  () => (needsAssignableUsers.value ? tenantId.value : null),
+  () => (needsAssignableUsers.value ? projectId.value : null),
 );
 
 const projectMembers = computed(() => membersQuery.data.value ?? []);
@@ -980,8 +982,12 @@ const table = useVueTable({
             :labels="labelsQuery.data.value"
             :labels-loading="labelsQuery.isLoading.value"
             :labels-error="labelsQuery.isError.value && !projectLabels.length"
+            :members="membersQuery.data.value"
+            :members-loading="membersQuery.isLoading.value"
+            :members-error="membersQuery.isError.value && !projectMembers.length"
             @created="onTaskCreated"
             @retry-labels="labelsQuery.refetch()"
+            @retry-members="membersQuery.refetch()"
           />
 
           <!--

@@ -34,7 +34,12 @@ const CREATE_TASK_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' a
 type Priority = components['schemas']['TaskPriority'];
 type Status = components['schemas']['ProjectStatusResponse'];
 type LabelOption = components['schemas']['LabelResponse'];
+/** 担当者の候補。`assignable-users` が返すのはメンバー行ではなく利用者そのもの */
+type MemberOption = components['schemas']['UserSummary'];
 type CreatedTask = components['schemas']['TaskDetailResponse'];
+
+/** 担当者に付ける役割。詳細から付けるときと同じ値にする（docs/features/tasks/1.core.md）。 */
+const ASSIGNEE_ROLE = 'primary';
 
 const priorityOptions = Object.entries(PRIORITY_CONFIG) as [
   Priority,
@@ -52,12 +57,23 @@ const props = defineProps<{
   labelsLoading?: boolean;
   /** ラベル一覧が手元に無いときだけ true にすること（使えるキャッシュがあれば false） */
   labelsError?: boolean;
+  /**
+   * 担当者に選べる利用者。undefined は未取得（ロード中・エラー）。正常な 0 人は空配列で渡すこと。
+   *
+   * 取得先は `assignable-users`。`members` は管理者しか読めないので、担当者を付けられる
+   * 権限（WriteTask）しか持たない利用者では候補が引けない
+   */
+  members?: MemberOption[];
+  membersLoading?: boolean;
+  /** 候補が手元に無いときだけ true にすること（使えるキャッシュがあれば false。labelsError と同じ約束） */
+  membersError?: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
   created: [task: CreatedTask];
   retryLabels: [];
+  retryMembers: [];
 }>();
 
 const queryClient = useQueryClient();
@@ -68,6 +84,7 @@ const softDeadline = ref('');
 const hardDeadline = ref('');
 const priority = ref<Priority>('Medium');
 const selectedLabelIds = ref<string[]>([]);
+const selectedAssigneeIds = ref<string[]>([]);
 const validationMessage = ref<string | null>(null);
 const requestError = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
@@ -105,6 +122,16 @@ watch(
   },
 );
 
+// 候補の正常取得後、外れた ID を選択から落とす（ラベルと同じ理由）
+watch(
+  () => props.members,
+  (members) => {
+    if (!members) return;
+    const ids = new Set(members.map((user) => user.id));
+    selectedAssigneeIds.value = selectedAssigneeIds.value.filter((id) => ids.has(id));
+  },
+);
+
 // 閉じたら入力と結果表示を捨てる。
 //
 // onOpenChange 側だけで捨てていたときは、作成に成功して親が open を false にする
@@ -125,6 +152,12 @@ function onOpenChange(value: boolean) {
   emit('update:open', value);
 }
 
+function toggleAssignee(userId: string) {
+  selectedAssigneeIds.value = selectedAssigneeIds.value.includes(userId)
+    ? selectedAssigneeIds.value.filter((id) => id !== userId)
+    : [...selectedAssigneeIds.value, userId];
+}
+
 function toggleLabel(labelId: string) {
   selectedLabelIds.value = selectedLabelIds.value.includes(labelId)
     ? selectedLabelIds.value.filter((id) => id !== labelId)
@@ -139,6 +172,7 @@ function resetForm() {
   hardDeadline.value = '';
   priority.value = 'Medium';
   selectedLabelIds.value = [];
+  selectedAssigneeIds.value = [];
   validationMessage.value = null;
   requestError.value = null;
   successMessage.value = null;
@@ -171,6 +205,13 @@ async function submit() {
   if (softDeadline.value) body.soft_deadline = toIsoDate(softDeadline.value);
   if (hardDeadline.value) body.hard_deadline = toIsoDate(hardDeadline.value);
   if (selectedLabelIds.value.length) body.label_ids = selectedLabelIds.value;
+  // role は仕様書が使っている primary に揃える（役割を使い分ける UI はまだ無い）
+  if (selectedAssigneeIds.value.length) {
+    body.assignees = selectedAssigneeIds.value.map((user_id) => ({
+      user_id,
+      role: ASSIGNEE_ROLE,
+    }));
+  }
 
   try {
     const created = await createMutation.mutateAsync({
@@ -278,6 +319,39 @@ async function submit() {
             </SelectContent>
           </Select>
           <input type="hidden" name="priority" :value="priority" />
+        </div>
+
+        <div
+          v-if="membersLoading || membersError || members?.length"
+          class="space-y-1.5"
+          role="group"
+          aria-labelledby="task-assignees-label"
+        >
+          <Label id="task-assignees-label">担当者</Label>
+          <p v-if="membersLoading" class="text-xs text-muted-foreground">メンバーを読み込み中...</p>
+          <div v-else-if="membersError" class="flex items-center gap-2">
+            <p role="alert" class="text-xs text-destructive">メンバーの取得に失敗しました</p>
+            <Button type="button" variant="outline" size="sm" @click="emit('retryMembers')">
+              再試行
+            </Button>
+          </div>
+          <div v-else class="flex flex-wrap gap-1.5">
+            <button
+              v-for="user in members"
+              :key="user.id"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors"
+              :aria-pressed="selectedAssigneeIds.includes(user.id)"
+              :class="
+                selectedAssigneeIds.includes(user.id)
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-muted/40'
+              "
+              @click="toggleAssignee(user.id)"
+            >
+              {{ user.username }}
+            </button>
+          </div>
         </div>
 
         <div
