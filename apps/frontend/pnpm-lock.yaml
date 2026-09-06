@@ -181,8 +181,8 @@ importers:
         version: 3.5.41(typescript@6.0.3)
     devDependencies:
       '@argos-ci/cli':
-        specifier: 6.6.1
-        version: 6.6.1(@types/node@24.13.3)(supports-color@10.2.2)
+        specifier: 6.9.2
+        version: 6.9.2(@types/node@24.13.3)(supports-color@10.2.2)
       '@argos-ci/playwright':
         specifier: 7.4.7
         version: 7.4.7(@types/node@24.13.3)(supports-color@10.2.2)
@@ -306,10 +306,6 @@ packages:
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
 
-  '@argos-ci/api-client@0.28.0':
-    resolution: {integrity: sha512-VQjt/WohF49NNXVGBNctMAqHV+mTBL+gE2oa+Sxg7cRdjGY01JO4nBqy0mhNWJ0VUuGsWohyhzrQYHhx35L7PA==}
-    engines: {node: '>=22.0.0'}
-
   '@argos-ci/api-client@0.31.0':
     resolution: {integrity: sha512-7EdoiHRc4BvuDxp6/8CbkehCMu5bFYEJPjssYFvOR5FqCq50hT9+GxDuQ4pULpbXUZOVl1vhZ4b8ed4fe7rVCQ==}
     engines: {node: '>=22.0.0'}
@@ -318,17 +314,17 @@ packages:
     resolution: {integrity: sha512-8qWtsOXG752VTAI6iPeHZyMKLSqN9jqdAqZZMk0Q4+j5WSPX76K5a3feV8nBlSqpr1O4RP2/GWYVoxkGdzJr3w==}
     engines: {node: '>=22.0.0'}
 
-  '@argos-ci/cli@6.6.1':
-    resolution: {integrity: sha512-f3C3pQSbpb+Y7ETyCavkgcP8OF5b08KKxOAlPdBZ0UmGp8pGKe9XQrisinEnZQ0W/KTPHJ5eUFUFnEd5RcoVAQ==}
+  '@argos-ci/cli@6.9.2':
+    resolution: {integrity: sha512-R4HzhgsV2xBd+j3QkOGU1JvThzUiGiY3Etithmu1FBsu/BJ8YT2E/Kf+8kUAW60sJYxl69YaXwGtXhlxBE+K1w==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@argos-ci/core@6.7.2':
-    resolution: {integrity: sha512-/hKfytEru+xebSt4OctjuIHwOPWFwchsDGR/Odcaszbf6sUcxMzu3IrSj/PDC0FD/hYiUCDTPDsYPfxf564sMg==}
-    engines: {node: '>=22.0.0'}
-
   '@argos-ci/core@6.8.2':
     resolution: {integrity: sha512-EX0m1QsXqRk0+FyJlw0YBfjIbbSCaxAqvGxYrHH0NoBjUouLsMODnjO8jAbkCPZRPIqVu390vOLyK/W+USkNWA==}
+    engines: {node: '>=22.0.0'}
+
+  '@argos-ci/core@6.8.3':
+    resolution: {integrity: sha512-nMg7oiEJQnno1N4oZ6/iF1c/bQ49Ig3ZJEJr8yUxrSFlWDj9DS3jMlO88D93lMVeIJ/403D+jH+TxhvSfrCGBQ==}
     engines: {node: '>=22.0.0'}
 
   '@argos-ci/playwright@7.4.7':
@@ -337,6 +333,10 @@ packages:
 
   '@argos-ci/util@4.1.0':
     resolution: {integrity: sha512-vLCtjTl94IcEjSUaQJSfENjud8fZNsjYS4WugNvGKX0VUZhR+RYRTAyVALWz3n82Kylil0amGnXa7VoG0IJpgA==}
+    engines: {node: '>=22.0.0'}
+
+  '@argos-ci/util@4.2.0':
+    resolution: {integrity: sha512-HZCNwbJqoaL3pwhnEXH+HJYUPeOMv7rWyCrQaT6IcKZCrdYGOFkG72uXbDvoa84y/FvVSWPV2ja2Ryv0I8ViUg==}
     engines: {node: '>=22.0.0'}
 
   '@ark/schema@0.56.2':
@@ -3286,6 +3286,10 @@ packages:
     peerDependencies:
       valibot: ^1.4.0
 
+  '@vercel/detect-agent@1.2.5':
+    resolution: {integrity: sha512-0krENrjuitlW8s6TJu0MlqCevyCU7K7JK63jZAf7xZ6n17tx+vUEwzHT3sTxawtwZxaW21hu+oFUpoOrm49FsQ==}
+    engines: {node: '>=14'}
+
   '@vikejs/elysia@0.2.1':
     resolution: {integrity: sha512-qiWmKDIq3g7pLG07LRO4z0Hc03q6SRBHm1UbGfjpvtiYrrihblo2H6KsP3WvEuYdtkty4GqTdWP9S3iBENZcXA==}
     peerDependencies:
@@ -4970,16 +4974,6 @@ packages:
       crossws:
         optional: true
 
-  h3@2.0.1-rc.26:
-    resolution: {integrity: sha512-GDxlvDsKxgjRvG5UBRJYyGJTMWLV30CJ4cV+e7QCTgftDHihrvio1fVPbNembhEr6J4WNm8IWy3fookgyTweLw==}
-    engines: {node: '>=20.11.1'}
-    hasBin: true
-    peerDependencies:
-      crossws: ^0.4.9
-    peerDependenciesMeta:
-      crossws:
-        optional: true
-
   h3@2.0.1-rc.31:
     resolution: {integrity: sha512-AG7qZzF99a0BSYoXT3evJgIhwSIUKow7R+hwkLRZS06WJ9nbSb7QXUDgs1ByBjp6svTvl++N/GKA7I9YPz9cQQ==}
     engines: {node: '>=20.11.1'}
@@ -6531,9 +6525,6 @@ packages:
   rou3@0.8.1:
     resolution: {integrity: sha512-ePa+XGk00/3HuCqrEnK3LxJW7I0SdNg6EFzKUJG73hMAdDcOUC/i/aSz7LSDwLrGr33kal/rqOGydzwl6U7zBA==}
 
-  rou3@0.9.1:
-    resolution: {integrity: sha512-z/sSmzvtwMDDnxsPVhfWMuG6F6mbmhFDXoVqLmMfbpDD9qfV3GDmSQpf0+W296/ZDIpW2wcMmBfpVFzcnOi/nA==}
-
   rou3@0.9.2:
     resolution: {integrity: sha512-3SOzvaAg8rkHrXtRjpCvCvbyO5to9oOO27Z/XqHEYXfMRVSw/qMIVdmaOk9W2lcRLtR6dlqTjo9hDeJk70QBYQ==}
 
@@ -7516,9 +7507,6 @@ packages:
   zigpty@0.2.1:
     resolution: {integrity: sha512-MR9JqJx2wf5f4wz8zpx050AlqrmWeIW+1h0SO5iEyhG3HFRjY5luC3szS2ux2EGuPjE5OU9ZAuiCBeMWBTrqZw==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
-
   zod@4.5.4:
     resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
 
@@ -7534,14 +7522,6 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.3.0
 
-  '@argos-ci/api-client@0.28.0(supports-color@10.2.2)':
-    dependencies:
-      debug: 4.4.3(supports-color@10.2.2)
-      openapi-fetch: 0.17.0
-      p-retry: 8.0.0
-    transitivePeerDependencies:
-      - supports-color
-
   '@argos-ci/api-client@0.31.0(supports-color@10.2.2)':
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
@@ -7552,10 +7532,11 @@ snapshots:
 
   '@argos-ci/browser@6.4.5': {}
 
-  '@argos-ci/cli@6.6.1(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/cli@6.9.2(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
-      '@argos-ci/api-client': 0.28.0(supports-color@10.2.2)
-      '@argos-ci/core': 6.7.2(@types/node@24.13.3)(supports-color@10.2.2)
+      '@argos-ci/api-client': 0.31.0(supports-color@10.2.2)
+      '@argos-ci/core': 6.8.3(@types/node@24.13.3)(supports-color@10.2.2)
+      '@vercel/detect-agent': 1.2.5
       commander: 15.0.0
       open: 11.0.0
       ora: 9.4.1
@@ -7563,9 +7544,9 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/core@6.7.2(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/core@6.8.2(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
-      '@argos-ci/api-client': 0.28.0(supports-color@10.2.2)
+      '@argos-ci/api-client': 0.31.0(supports-color@10.2.2)
       '@argos-ci/util': 4.1.0
       convict: 6.2.5
       debug: 4.4.3(supports-color@10.2.2)
@@ -7578,10 +7559,10 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@argos-ci/core@6.8.2(@types/node@24.13.3)(supports-color@10.2.2)':
+  '@argos-ci/core@6.8.3(@types/node@24.13.3)(supports-color@10.2.2)':
     dependencies:
       '@argos-ci/api-client': 0.31.0(supports-color@10.2.2)
-      '@argos-ci/util': 4.1.0
+      '@argos-ci/util': 4.2.0
       convict: 6.2.5
       debug: 4.4.3(supports-color@10.2.2)
       fast-glob: 3.3.3
@@ -7605,6 +7586,8 @@ snapshots:
       - supports-color
 
   '@argos-ci/util@4.1.0': {}
+
+  '@argos-ci/util@4.2.0': {}
 
   '@ark/schema@0.56.2':
     dependencies:
@@ -8089,10 +8072,10 @@ snapshots:
 
   '@devframes/json-render@0.8.2(@devframes/hub@0.8.2(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5)))(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5))':
     dependencies:
-      '@json-render/core': 0.19.0(zod@4.4.3)
+      '@json-render/core': 0.19.0(zod@4.5.4)
       devframe: 0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5)
       nostics: 1.2.0
-      zod: 4.4.3
+      zod: 4.5.4
     optionalDependencies:
       '@devframes/hub': 0.8.2(devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5))
     optional: true
@@ -8664,9 +8647,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@json-render/core@0.19.0(zod@4.4.3)':
+  '@json-render/core@0.19.0(zod@4.5.4)':
     dependencies:
-      zod: 4.4.3
+      zod: 4.5.4
     optional: true
 
   '@json-render/core@0.20.0(zod@4.5.4)':
@@ -8731,12 +8714,12 @@ snapshots:
 
   '@modelcontextprotocol/core@2.0.0':
     dependencies:
-      zod: 4.4.3
+      zod: 4.5.4
 
   '@modelcontextprotocol/server@2.0.0':
     dependencies:
       '@modelcontextprotocol/core': 2.0.0
-      zod: 4.4.3
+      zod: 4.5.4
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
@@ -10292,6 +10275,8 @@ snapshots:
     dependencies:
       valibot: 1.4.2(typescript@6.0.3)
 
+  '@vercel/detect-agent@1.2.5': {}
+
   '@vikejs/elysia@0.2.1(elysia@1.4.30(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.12.5)(vike@0.4.266(@voidzero-dev/vite-plus-core@0.2.5)(elysia@1.4.30(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.12.5)(supports-color@10.2.2))':
     dependencies:
       '@universal-middleware/elysia': 0.6.5(elysia@1.4.30(@sinclair/typebox@0.34.49)(exact-mirror@1.2.2)(file-type@22.0.1(supports-color@10.2.2))(openapi-types@12.1.3)(typescript@6.0.3))(h3@1.15.11)(srvx@0.12.5)
@@ -10333,6 +10318,7 @@ snapshots:
       - '@modelcontextprotocol/client'
       - '@modelcontextprotocol/server'
       - cac
+      - ocache
       - srvx
     optional: true
 
@@ -11556,10 +11542,10 @@ snapshots:
   devframe@0.8.2(@modelcontextprotocol/server@2.0.0)(cac@7.0.0)(srvx@0.12.5):
     dependencies:
       '@standard-schema/spec': 1.1.0
-      birpc: 4.0.0
-      crossws: 0.4.10(srvx@0.12.5)
+      birpc: 4.2.0
+      crossws: 0.4.12(srvx@0.12.5)
       destr: 2.0.5
-      h3: 2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5))
+      h3: 2.0.1-rc.31(crossws@0.4.12(srvx@0.12.5))
       mrmime: 2.0.1
       nostics: 1.2.0
       pathe: 2.0.3
@@ -11568,6 +11554,7 @@ snapshots:
       '@modelcontextprotocol/server': 2.0.0
       cac: 7.0.0
     transitivePeerDependencies:
+      - ocache
       - srvx
     optional: true
 
@@ -12000,14 +11987,6 @@ snapshots:
       srvx: 0.11.17
     optionalDependencies:
       crossws: 0.4.10(srvx@0.12.5)
-
-  h3@2.0.1-rc.26(crossws@0.4.10(srvx@0.12.5)):
-    dependencies:
-      rou3: 0.9.1
-      srvx: 0.12.5
-    optionalDependencies:
-      crossws: 0.4.10(srvx@0.12.5)
-    optional: true
 
   h3@2.0.1-rc.31(crossws@0.4.10(srvx@0.12.5)):
     dependencies:
@@ -14116,9 +14095,6 @@ snapshots:
 
   rou3@0.8.1: {}
 
-  rou3@0.9.1:
-    optional: true
-
   rou3@0.9.2: {}
 
   roughjs@4.6.6:
@@ -15219,8 +15195,6 @@ snapshots:
       '@yuku-parser/binding-win32-x64': 0.5.48
 
   zigpty@0.2.1: {}
-
-  zod@4.4.3: {}
 
   zod@4.5.4: {}
 
