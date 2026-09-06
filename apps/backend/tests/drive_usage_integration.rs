@@ -1,3 +1,9 @@
+// Drive の行を作るテストは、backfill のテスト（`drive_project_id_backfill_integration`）が
+// 実行前に `TRUNCATE drive_files, drive_folders CASCADE` を流すのと同じ鍵で直列化する。
+// backfill の SQL はテナントを跨いで全行を見るので、あちらは Drive を空にしてからでないと
+// 他のファイルの残骸で落ちる。鍵を共有しないと、その TRUNCATE がこちらの実行中の行を
+// 巻き添えにする（CASCADE は drive_folder_shares と task_attachments にも及ぶ）。
+
 mod common;
 
 use axum::http::StatusCode;
@@ -39,6 +45,7 @@ async fn upload_text_file(app: &TestApp, tenant_id: Uuid, file_name: &str, body:
 /// SUM が NULL になり素通りするので 1 件目までは成功し、2 件目のアップロード
 /// （クォータ事前チェックで使用量を読む）と使用量取得が 500 になっていた。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn drive_usage_sums_multiple_files() {
     let mut app = TestApp::new().await;
 

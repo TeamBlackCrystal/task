@@ -1,3 +1,9 @@
+// Drive の行を作るテストは、backfill のテスト（`drive_project_id_backfill_integration`）が
+// 実行前に `TRUNCATE drive_files, drive_folders CASCADE` を流すのと同じ鍵で直列化する。
+// backfill の SQL はテナントを跨いで全行を見るので、あちらは Drive を空にしてからでないと
+// 他のファイルの残骸で落ちる。鍵を共有しないと、その TRUNCATE がこちらの実行中の行を
+// 巻き添えにする（CASCADE は drive_folder_shares と task_attachments にも及ぶ）。
+
 mod common;
 
 use axum::http::StatusCode;
@@ -138,6 +144,7 @@ fn folders_url(app: &TestApp, tenant_id: Uuid) -> String {
 
 /// プロジェクトフォルダの下に作った子フォルダは `project_id` を継承する。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn a_child_of_a_project_folder_inherits_the_project() {
     let mut app = TestApp::new().await;
 
@@ -181,6 +188,7 @@ async fn a_child_of_a_project_folder_inherits_the_project() {
 
 /// 入れないプロジェクトのフォルダ配下には子フォルダを作れない。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn creating_a_child_under_a_foreign_project_folder_is_forbidden() {
     let mut app = TestApp::new().await;
 
@@ -232,6 +240,7 @@ async fn creating_a_child_under_a_foreign_project_folder_is_forbidden() {
 /// ここではテスト側が同じ鍵でロックを握り、握っているあいだ作成が進まないこと・
 /// 離した後に親の値を継承して完了することを見る。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn creating_a_folder_waits_for_the_tenant_drive_lock() {
     let mut app = TestApp::new().await;
 
@@ -294,6 +303,7 @@ async fn creating_a_folder_waits_for_the_tenant_drive_lock() {
 /// ここではテスト側が同じ鍵でロックを握り、握っているあいだ削除が進まないこと・
 /// 離した後に完了することを見る。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn deleting_a_folder_waits_for_the_tenant_drive_lock() {
     let mut app = TestApp::new().await;
 
@@ -336,6 +346,7 @@ async fn deleting_a_folder_waits_for_the_tenant_drive_lock() {
 
 /// フォルダ移動で配下のフォルダ・ファイルの `project_id` が揃う。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn moving_a_folder_syncs_the_project_of_everything_underneath() {
     let mut app = TestApp::new().await;
 
@@ -407,6 +418,7 @@ async fn moving_a_folder_syncs_the_project_of_everything_underneath() {
 
 /// 入れないプロジェクトへフォルダを送り込めない／そこから持ち出せない。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn moving_across_a_project_boundary_is_forbidden() {
     let mut app = TestApp::new().await;
 
@@ -481,6 +493,7 @@ async fn moving_across_a_project_boundary_is_forbidden() {
 
 /// 入れないプロジェクトのフォルダへファイルを送り込めない。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn moving_a_file_into_a_foreign_project_folder_is_forbidden() {
     let mut app = TestApp::new().await;
 
@@ -533,6 +546,7 @@ async fn moving_a_file_into_a_foreign_project_folder_is_forbidden() {
 
 /// 自動生成のプロジェクトルートフォルダは、空でも削除・移動できない。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn the_project_root_folder_cannot_be_deleted_or_moved() {
     let mut app = TestApp::new().await;
 
@@ -641,6 +655,7 @@ async fn move_file_to_project(blocker: sea_orm::DatabaseTransaction, file: Uuid,
 /// まま名前を変えたりルートへ持ち出したりできる。ここではテスト側が同じ鍵でロックを
 /// 握り、握っているあいだに移動を確定させてから離す。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
     let mut app = TestApp::new().await;
     let (tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;
@@ -707,6 +722,7 @@ async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
 /// `update_file` より長い。ここではテスト側が対象行を握り、握っているあいだに移動を
 /// 確定させてから離す。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn updating_file_content_re_authorizes_after_taking_the_row_lock() {
     let mut app = TestApp::new().await;
     let (_tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;
@@ -768,6 +784,7 @@ async fn updating_file_content_re_authorizes_after_taking_the_row_lock() {
 ///
 /// `delete_file` はトランザクションすら張らず、別々の接続で読んでから消していた。
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn deleting_a_file_re_authorizes_after_taking_the_row_lock() {
     let mut app = TestApp::new().await;
     let (_tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;

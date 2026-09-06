@@ -1,3 +1,9 @@
+// Drive の行を作るテストは、backfill のテスト（`drive_project_id_backfill_integration`）が
+// 実行前に `TRUNCATE drive_files, drive_folders CASCADE` を流すのと同じ鍵で直列化する。
+// backfill の SQL はテナントを跨いで全行を見るので、あちらは Drive を空にしてからでないと
+// 他のファイルの残骸で落ちる。鍵を共有しないと、その TRUNCATE がこちらの実行中の行を
+// 巻き添えにする（CASCADE は drive_folder_shares と task_attachments にも及ぶ）。
+
 mod common;
 
 use axum::http::StatusCode;
@@ -123,6 +129,7 @@ async fn insert_drive_file(app: &TestApp, tenant_id: Uuid, uploader_id: Uuid) ->
 }
 
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn task_extensions_integration_suite() {
     let mut app = TestApp::new().await;
     let fx = setup_task(&mut app).await;
@@ -215,6 +222,7 @@ async fn task_extensions_integration_suite() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn task_extensions_negative_cases() {
     let mut app = TestApp::new().await;
     let fx = setup_task(&mut app).await;
@@ -302,6 +310,7 @@ async fn add_project_member(app: &TestApp, project_id: Uuid, user_id: Uuid) {
 }
 
 #[tokio::test]
+#[serial_test::file_serial(drive)]
 async fn task_extensions_acl_cases() {
     let mut app = TestApp::new().await;
     let fx = setup_task(&mut app).await; // owner としてログイン済み

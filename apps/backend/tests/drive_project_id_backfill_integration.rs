@@ -148,8 +148,9 @@ async fn set_folder_parent(app: &TestApp, folder_id: Uuid, parent_id: Option<Uui
 /// 判定に入る。実際 CI では drive_folder_boundary_integration が残した
 /// 「プロジェクトツリーに混ざった別プロジェクトのファイル」で、このファイルの
 /// 最初のテストが例外で落ちた。自分が作った状態だけを見るように、毎回空にする。
-/// 同じ理由でこのファイルのテストは `file_serial` で直列化する（統合テストは
-/// `--test-threads=1` で流す前提だが、並列に流されても互いを消し合わないようにする）。
+/// 空にする以上、Drive の行を作る他のテストと同時に走らせられない。`drive` の鍵で
+/// 直列化し、同じ鍵を Drive を触る他のテストファイルにも付けてある（統合テストは
+/// `--test-threads=1` で流す前提だが、並列に流されても消し合わないようにする）。
 async fn new_app() -> TestApp {
     let app = TestApp::new().await;
     app.state
@@ -193,7 +194,7 @@ async fn run_backfill(app: &TestApp) {
 
 /// プロジェクトルート配下は、何段下でもルートの `project_id` に揃う。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_propagates_the_project_down_the_whole_subtree() {
     let app = new_app().await;
 
@@ -256,7 +257,7 @@ async fn backfill_propagates_the_project_down_the_whole_subtree() {
 /// 一般ツリーの配下に `project_id` を持つ行は、階層より厳しい判定になるだけで
 /// 漏れる向きではない。NULL へ落とすと非メンバーへ開いてしまうので backfill の対象外。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_leaves_rows_outside_project_roots_alone() {
     let app = new_app().await;
 
@@ -302,7 +303,7 @@ async fn backfill_leaves_rows_outside_project_roots_alone() {
 
 /// 別プロジェクトのツリーが混ざっても、それぞれのルートの値になる。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_keeps_projects_separate() {
     let app = new_app().await;
 
@@ -333,7 +334,7 @@ async fn backfill_keeps_projects_separate() {
 /// A のルートと配下のファイルが B のものになり、A のファイルが B のメンバーへ公開され、
 /// A のメンバーはアクセスを失う。backfill が新しい漏れを作ってはいけない。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
     let app = new_app().await;
 
@@ -378,7 +379,7 @@ async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
 
 /// 2 回流しても結果が変わらない（デプロイのたびに適用されても壊れない）。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_is_idempotent() {
     let app = new_app().await;
 
@@ -412,7 +413,7 @@ async fn backfill_is_idempotent() {
 /// プロジェクトルートが残りうる。ドライブ直下だけを起点にすると、その配下の NULL の
 /// 子孫が修復されないまま「成功」し、プロジェクト非メンバーから見え続ける。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_repairs_a_project_root_moved_under_a_plain_folder() {
     let app = new_app().await;
 
@@ -474,7 +475,7 @@ async fn backfill_repairs_a_project_root_moved_under_a_plain_folder() {
 /// API に深さの上限は無いので、途中で止めると残りが NULL のまま「成功」する。
 /// 実装の打ち切り値（かつては 64）をまたぐ深さで確かめる。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_reaches_folders_deeper_than_any_recursion_cutoff() {
     let app = new_app().await;
 
@@ -513,7 +514,7 @@ async fn backfill_reaches_folders_deeper_than_any_recursion_cutoff() {
 /// フォルダだけを止めてファイルを黙って上書きすると、そのファイルが別プロジェクトの
 /// メンバーへ公開される。フォルダと同じ向きの漏れなので、同じ扱いにする。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_refuses_to_absorb_a_foreign_file_inside_a_project_tree() {
     let app = new_app().await;
 
@@ -555,7 +556,7 @@ async fn backfill_refuses_to_absorb_a_foreign_file_inside_a_project_tree() {
 /// project_id が NULL の子だけを辿るため、循環して起点へ戻る最後の一歩を踏めず、
 /// そちらの `CYCLE` 句では立たない。検出は全フォルダから親を辿る別の CTE が担う。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_refuses_to_run_when_a_project_tree_has_a_cycle() {
     let app = new_app().await;
 
@@ -601,7 +602,7 @@ async fn backfill_refuses_to_run_when_a_project_tree_has_a_cycle() {
 /// 伝播用の CTE は project_id を持つフォルダからしか始まらないので、この形には
 /// 起点が無く、そちらからは存在にすら気づけない。
 #[tokio::test]
-#[serial_test::file_serial(drive_backfill)]
+#[serial_test::file_serial(drive)]
 async fn backfill_refuses_to_run_when_a_plain_subtree_has_a_cycle() {
     let app = new_app().await;
 
