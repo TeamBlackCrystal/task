@@ -45,6 +45,8 @@ pub async fn create_tenant(
         name: Set(payload.name),
         description: Set(payload.description),
         icon_url: Set(payload.icon_url),
+        // 作成時は選ばせない。未設定のまま返し、画面が既定の絵文字を出す
+        icon_emoji: Set(None),
         owner_id: Set(auth.user_id),
         drive_quota_bytes: Set(None),
         require_2fa: Set(false),
@@ -175,6 +177,9 @@ pub async fn update_tenant(
     }
     if let Some(icon_url) = payload.icon_url {
         active.icon_url = Set(icon_url);
+    }
+    if let Some(icon_emoji) = payload.icon_emoji {
+        active.icon_emoji = Set(Some(icon_emoji));
     }
     let updated = active.update(&state.db).await?;
     Ok(Json(updated.into()))

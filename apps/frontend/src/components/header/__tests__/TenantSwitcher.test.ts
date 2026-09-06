@@ -1,4 +1,5 @@
 import { defineComponent, h, inject, provide, ref, type Ref } from 'vue';
+import { QueryClient, VUE_QUERY_CLIENT } from '@tanstack/vue-query';
 import { afterEach, describe, expect, it } from 'vitest';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 import type { Tenant } from '@/stores/tenant';
@@ -89,7 +90,15 @@ function mountSwitcher(props: {
     {
       components: { SidebarProvider, TenantSwitcher },
       template: '<SidebarProvider><TenantSwitcher v-bind="props" /></SidebarProvider>',
-      setup: () => ({ props }),
+      setup: () => {
+        provide(
+          VUE_QUERY_CLIENT,
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+          }),
+        );
+        return { props };
+      },
     },
     {
       global: {

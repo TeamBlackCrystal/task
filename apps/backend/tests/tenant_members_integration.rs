@@ -59,6 +59,24 @@ async fn tenant_members_gate_tenant_and_project_access() {
         .await;
     assert_eq!(duplicated.status(), StatusCode::CONFLICT);
 
+    // owner は tenant_members に行を持たないが、管理画面の一覧には表示する。
+    let listed = app.get_with_session(&members_path).await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed_body: Value = listed.json().await.expect("tenant members json");
+    let listed_ids: Vec<Uuid> = listed_body
+        .as_array()
+        .expect("tenant members must be an array")
+        .iter()
+        .map(|member| {
+            member["user_id"]
+                .as_str()
+                .and_then(|id| Uuid::parse_str(id).ok())
+                .expect("member user_id")
+        })
+        .collect();
+    assert!(listed_ids.contains(&owner.id));
+    assert!(listed_ids.contains(&member.id));
+
     // --- 追加後: テナントもプロジェクトも見える（project_members が空なので開放） ---
     app.reset_session_client();
     app.login_session(&member.email, &member.password).await;

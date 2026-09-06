@@ -29,6 +29,17 @@ impl TenantMemberResponse {
             user: user.into(),
         }
     }
+
+    /// テナント owner は `tenant_members` に行を持たないため、一覧表示用に合成する。
+    pub fn from_owner(tenant_id: Uuid, user: entity::users::Model) -> Self {
+        Self {
+            id: user.id,
+            tenant_id,
+            user_id: user.id,
+            role: TenantRole::Admin,
+            user: user.into(),
+        }
+    }
 }
 
 #[derive(Validate, Debug, Deserialize, ToSchema)]

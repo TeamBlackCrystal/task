@@ -94,9 +94,13 @@ async fn project_member_responses_embed_user_summary() {
     assert_eq!(tenant_list.status(), StatusCode::OK);
     let tenant_rows = json_body(tenant_list).await;
     let tenant_rows = tenant_rows.as_array().expect("tenant member list");
-    assert_eq!(tenant_rows.len(), 1);
-    assert_eq!(tenant_rows[0]["user"]["id"], member.id.to_string());
+    // owner は tenant_members に行を持たないが、一覧では read-only の synthetic row として
+    // 先頭に並ぶ。埋め込みの user summary は owner 行にも要る
+    assert_eq!(tenant_rows.len(), 2);
+    assert_eq!(tenant_rows[0]["user"]["id"], owner.id.to_string());
     assert!(tenant_rows[0]["user"]["username"].is_string());
+    assert_eq!(tenant_rows[1]["user"]["id"], member.id.to_string());
+    assert!(tenant_rows[1]["user"]["username"].is_string());
 
     app.cleanup_user(owner.id).await;
     app.cleanup_user(member.id).await;

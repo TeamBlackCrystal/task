@@ -22802,6 +22802,9 @@
             "type": ["integer", "null"],
             "format": "int64"
           },
+          "icon_emoji": {
+            "type": ["string", "null"]
+          },
           "icon_url": {
             "type": "string"
           },
@@ -23286,8 +23289,13 @@
           "description": {
             "type": ["string", "null"]
           },
+          "icon_emoji": {
+            "type": ["string", "null"],
+            "description": "画像を持たないテナントのアイコン。projects.icon_emoji と同じ上限。"
+          },
           "icon_url": {
-            "type": ["string", "null"]
+            "type": ["string", "null"],
+            "description": "data URL を受け付ける場合も DB 行と一覧レスポンスを膨らませない上限を設ける。"
           },
           "name": {
             "type": ["string", "null"]

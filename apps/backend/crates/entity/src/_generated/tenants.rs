@@ -15,6 +15,7 @@ pub struct Model {
     pub description: String,
     #[sea_orm(column_type = "Text")]
     pub icon_url: String,
+    pub icon_emoji: Option<String>,
     pub owner_id: Uuid,
     pub drive_quota_bytes: Option<i64>,
     pub require_2fa: bool,
