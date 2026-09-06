@@ -28,6 +28,7 @@ const props = defineProps<{
   tenantId: string | null | undefined;
   projectId: string | null | undefined;
   labelId?: string | null;
+  sort: string;
   pageSize: number;
   enabled: boolean;
 }>();
@@ -40,6 +41,7 @@ const query = useInfiniteQuery(
     const query = {
       status_id: props.status.id,
       label_id: props.labelId ?? undefined,
+      sort: props.sort,
       limit: props.pageSize,
     };
     return {
