@@ -60,7 +60,10 @@ const AppHeader = defineAsyncComponent(() => import('@/components/header/AppHead
     SidebarProvider は横並びなので、縦積みにして 1 段目をヘッダー、2 段目を
     サイドバー + 本文にする。min-h-0 は min-h-svh を twMerge で上書きするためのもの。
   -->
-  <SidebarProvider v-else-if="meQuery.isSuccess.value" class="min-h-0 h-svh flex-col">
+  <SidebarProvider
+    v-else-if="meQuery.isSuccess.value"
+    class="min-h-0 h-svh flex-col overflow-hidden"
+  >
     <AppHeader />
     <div class="flex min-h-0 w-full flex-1">
       <Suspense>
@@ -69,7 +72,7 @@ const AppHeader = defineAsyncComponent(() => import('@/components/header/AppHead
           <AppSidebarSkeleton desktop-top-offset="3rem" />
         </template>
       </Suspense>
-      <SidebarInset>
+      <SidebarInset class="min-h-0 min-w-0 overflow-y-auto">
         <header
           class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
         >

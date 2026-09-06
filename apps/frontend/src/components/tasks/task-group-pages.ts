@@ -46,7 +46,10 @@ export function toTaskGroup(status: StatusResponse, query: TaskGroupQueryState):
       if (seen.has(task.id)) return false;
       seen.add(task.id);
       return true;
-    });
+    })
+    // API は新しい順でページングする。List 表示では追加欄が末尾にあるため、
+    // 取得済みの範囲を古い順にして、作成したタスクが追加欄の直前へ出るようにする。
+    .reverse();
 
   const isError = !!query.isError;
 
