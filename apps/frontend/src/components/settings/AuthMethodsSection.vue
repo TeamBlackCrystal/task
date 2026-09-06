@@ -105,7 +105,7 @@ const PROVIDER_ICONS: Record<string, Component> = {
 };
 
 function providerIcon(provider: string): Component {
-  return PROVIDER_ICONS[provider] ?? PhKey;
+  return Object.hasOwn(PROVIDER_ICONS, provider) ? PROVIDER_ICONS[provider] : PhKey;
 }
 
 function providerHint(provider: components['schemas']['OAuthProviderItem']): string {

@@ -15,7 +15,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider] ?? provider;
+  return Object.hasOwn(PROVIDER_LABELS, provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 /**
