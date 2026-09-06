@@ -21,9 +21,9 @@ export function providerLabel(provider: string): string {
 /**
  * 知っているプロバイダーか。
  *
- * `providerLabel` は知らない値をそのまま返すので、URL から拾った文字列を通知文へ
- * 混ぜる前にこれで濾す。濾さないと `?linked=<任意の文字列>` を開かせるだけで、
- * 正規の設定画面が出した通知として攻撃者の文面を読ませられる。
+ * `providerLabel` は知らない値をそのまま返すので、画面の外から来た文字列を通知文へ
+ * 混ぜる前にこれで濾す。今の入力は `lib/one-time-notice.ts` の印（sessionStorage）に
+ * 保存された値で、濾さないと書き換えられた印がそのまま正規の通知の文面になる。
  * `/v1/auth/oauth/providers` の応答は画面を開いた直後にはまだ無いので、判定には使えない。
  */
 export function isKnownProvider(value: string): boolean {

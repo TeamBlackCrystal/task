@@ -319,6 +319,30 @@ describe('AuthMethodsSection の OAuth 連携', () => {
     expect(document.body.textContent).toContain('このインスタンスは連携済みです');
   });
 
+  // 重複の判定は backend も保存した文字列の完全一致。画面が origin まで正規化して
+  // ホスト名の大小を同一視すると、backend では足せるインスタンスを止めてしまう
+  it('ホスト名の大小が違うインスタンスは別の連携として開始できる', async () => {
+    stubFetch({
+      connections: [
+        connection({ provider: 'gitlab_selfhosted', instance_url: 'https://GitLab.example.com' }),
+      ],
+      providers: [provider('gitlab_selfhosted')],
+    });
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    const wrapper = mountSection(true);
+    await flushPromises();
+
+    await wrapper.find('#instance-gitlab_selfhosted').setValue(INSTANCE_URL);
+    await flushPromises();
+
+    expect(document.body.textContent).not.toContain('このインスタンスは連携済みです');
+    expect((bodyButton('連携する') as HTMLButtonElement).disabled).toBe(false);
+    clickBodyButton('連携する');
+    expect(assignSpy).toHaveBeenCalledWith(
+      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(INSTANCE_URL)}`,
+    );
+  });
+
   it('未連携のプロバイダーだけ追加候補に出す', async () => {
     stubFetch({
       connections: [connection({ provider: 'github' })],

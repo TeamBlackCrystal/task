@@ -174,18 +174,13 @@ const availableProviders = computed(() => {
 /**
  * 同じインスタンスを指しているかの判定用。
  *
- * backend の正規化（`normalize_instance_url`）と厳密に揃える必要はない。ここで通しても
- * 重複は backend が 409 で弾く。逆に別のインスタンスを取り違えて止めないよう、URL として
- * 解釈できたときだけ origin + パスで比べる。
+ * backend の `normalize_instance_url`（前後の空白と末尾のスラッシュを落とすだけ）と同じ規則で
+ * 揃える。重複の判定は backend も保存した文字列の完全一致なので、ここで origin に正規化して
+ * ホスト名の大小や既定ポートまで同一視すると、backend では足せるインスタンスを画面が
+ * 止めてしまう。
  */
 function normalizeInstance(url: string): string {
-  const trimmed = url.trim();
-  try {
-    const parsed = new URL(trimmed);
-    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
-  } catch {
-    return trimmed.replace(/\/+$/, '');
-  }
+  return url.trim().replace(/\/+$/, '');
 }
 
 /** プロバイダーごとの、連携済みインスタンス。 */
