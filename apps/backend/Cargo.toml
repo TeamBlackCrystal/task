@@ -70,7 +70,7 @@ redis = { workspace = true }
 redis_pool = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = ["cookies", "json", "rustls", "multipart"] }
 serde = { workspace = true }
-serial_test = { version = "3", features = ["file_locks"] }
+serial_test = { version = "4", features = ["file_locks"] }
 sha2 = "0.11"
 tower = { version = "0.5.2", features = ["util"] }
 url = { workspace = true }
