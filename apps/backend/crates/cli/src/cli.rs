@@ -48,8 +48,9 @@ pub enum Command {
     },
     /// Task commands
     Tasks {
+        // 一番大きい派生（`Update` の項目群）に enum 全体の大きさが引きずられるので箱に入れる
         #[command(subcommand)]
-        command: TasksCommand,
+        command: Box<TasksCommand>,
     },
     /// My Tasks commands
     My {
@@ -130,6 +131,50 @@ pub enum TasksCommand {
         project: String,
         #[arg(long, help = concat!("Filter by priority (", priority_hint!(), ")"))]
         priority: Option<String>,
+        /// Filter by status name
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by label name
+        #[arg(long)]
+        label: Option<String>,
+        /// Filter by assignee username (or UUID)
+        #[arg(long)]
+        assignee: Option<String>,
+        /// Filter by milestone name (or UUID)
+        #[arg(long)]
+        milestone: Option<String>,
+        /// Filter by sprint name (or UUID)
+        #[arg(long)]
+        sprint: Option<String>,
+        /// Filter by parent task (KEY-N or UUID)
+        #[arg(long)]
+        parent: Option<String>,
+        /// List archived tasks instead of active ones
+        #[arg(long)]
+        archived: bool,
+        /// created_at_desc | priority_asc | deadline_asc
+        #[arg(long)]
+        sort: Option<String>,
+        /// Tasks per page (1-200)
+        #[arg(long, default_value_t = 50)]
+        limit: u64,
+        /// Page number, 1-based
+        #[arg(long, default_value_t = 1)]
+        page: u64,
+    },
+    /// Search tasks by text
+    Search {
+        /// Search query
+        query: String,
+        /// Project key or UUID
+        #[arg(long)]
+        project: String,
+        /// Hits per page (1-100)
+        #[arg(long, default_value_t = 20)]
+        limit: u64,
+        /// Page number, 1-based
+        #[arg(long, default_value_t = 1)]
+        page: u64,
     },
     /// Create a task
     Create {
@@ -150,6 +195,8 @@ pub enum TasksCommand {
         /// Status name
         #[arg(long)]
         status: Option<String>,
+        #[command(flatten)]
+        fields: TaskFieldArgs,
     },
     /// Show a task
     Show {
@@ -180,6 +227,16 @@ pub enum TasksCommand {
         status: Option<String>,
         #[arg(long, help = concat!("Priority (", priority_hint!(), ")"))]
         priority: Option<String>,
+        #[command(flatten)]
+        fields: TaskFieldArgs,
+        #[command(flatten)]
+        clears: TaskClearArgs,
+        /// Move the task into the archive
+        #[arg(long)]
+        archive: bool,
+        /// Bring the task back from the archive
+        #[arg(long, conflicts_with = "archive")]
+        unarchive: bool,
     },
     /// Mark a task as done
     Complete {
@@ -210,6 +267,73 @@ pub enum TasksCommand {
         #[arg(long)]
         project: Option<String>,
     },
+}
+
+/// 作成と更新で同じ綴りにする項目。片方だけ増えると使う側が覚え直しになる。
+#[derive(Debug, clap::Args)]
+pub struct TaskFieldArgs {
+    /// Soft deadline (RFC 3339, or YYYY-MM-DD for the start of that day in UTC)
+    #[arg(long)]
+    pub soft_deadline: Option<String>,
+    /// Hard deadline (RFC 3339, or YYYY-MM-DD for the start of that day in UTC)
+    #[arg(long)]
+    pub hard_deadline: Option<String>,
+    /// Estimate in minutes (1 or more)
+    #[arg(long)]
+    pub estimate: Option<i32>,
+    /// Progress percentage (0-100)
+    #[arg(long)]
+    pub progress: Option<i16>,
+    /// Parent task (KEY-N or UUID)
+    #[arg(long)]
+    pub parent: Option<String>,
+    /// Milestone name (or UUID)
+    #[arg(long)]
+    pub milestone: Option<String>,
+    /// Sprint name (or UUID)
+    #[arg(long)]
+    pub sprint: Option<String>,
+    /// Label name; repeat to set several (replaces the current labels)
+    #[arg(long = "label")]
+    pub labels: Vec<String>,
+    /// Label to add, keeping the others; repeat to add several
+    #[arg(long = "add-label", conflicts_with = "labels")]
+    pub add_labels: Vec<String>,
+    /// Label to remove, keeping the others; repeat to remove several
+    #[arg(long = "remove-label", conflicts_with = "labels")]
+    pub remove_labels: Vec<String>,
+    /// Assignee username; repeat to set several (replaces the current assignees)
+    #[arg(long = "assignee")]
+    pub assignees: Vec<String>,
+}
+
+/// 明示的な解除。値の指定と混ぜられないよう `conflicts_with` を張る。
+#[derive(Debug, clap::Args)]
+pub struct TaskClearArgs {
+    /// Remove the description
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
+    pub clear_description: bool,
+    /// Remove the soft deadline
+    #[arg(long, conflicts_with = "soft_deadline")]
+    pub clear_soft_deadline: bool,
+    /// Remove the hard deadline
+    #[arg(long, conflicts_with = "hard_deadline")]
+    pub clear_hard_deadline: bool,
+    /// Remove the estimate
+    #[arg(long, conflicts_with = "estimate")]
+    pub clear_estimate: bool,
+    /// Detach from the parent task
+    #[arg(long, conflicts_with = "parent")]
+    pub clear_parent: bool,
+    /// Detach from the milestone
+    #[arg(long, conflicts_with = "milestone")]
+    pub clear_milestone: bool,
+    /// Detach from the sprint
+    #[arg(long, conflicts_with = "sprint")]
+    pub clear_sprint: bool,
+    /// Remove every assignee
+    #[arg(long, conflicts_with = "assignees")]
+    pub clear_assignees: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -425,6 +549,58 @@ mod tests {
     fn requires_the_project_and_pr_options_the_read_commands_are_documented_with() {
         assert!(Cli::try_parse_from(["task", "review", "list", "--pr", "1"]).is_err());
         assert!(Cli::try_parse_from(["task", "review", "list", "--project", "APP"]).is_err());
+    }
+
+    /// 本文の指定と解除を同時に受けると、API が解除を優先して渡した本文が黙って消える。
+    #[test]
+    fn refuses_a_new_description_together_with_clearing_it() {
+        let base = ["task", "tasks", "update", "APP-1"];
+        for value in [
+            vec!["--description", "new"],
+            vec!["--description-file", "body.md"],
+        ] {
+            let argv: Vec<&str> = base
+                .iter()
+                .copied()
+                .chain(value)
+                .chain(["--clear-description"])
+                .collect();
+            assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?}");
+        }
+        // 解除だけ、本文だけならそれぞれ通る
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--clear-description"])
+                .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--description", "new"])
+                .is_ok()
+        );
+    }
+
+    /// 担当者の解除も値の指定と混ぜられない。混ざると「置き換え」と「全員外す」の
+    /// どちらが勝つかが綴りから読めなくなる。
+    #[test]
+    fn rejects_clearing_and_setting_assignees_together() {
+        assert!(
+            Cli::try_parse_from([
+                "task",
+                "tasks",
+                "update",
+                "APP-1",
+                "--assignee",
+                "alice",
+                "--clear-assignees",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--clear-assignees"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["task", "tasks", "update", "APP-1", "--assignee", "alice"])
+                .is_ok()
+        );
     }
 
     #[test]

@@ -208,6 +208,99 @@ async fn assignable_users_requires_the_same_scope_as_assigning() {
     assert_eq!(session.status(), StatusCode::OK);
 }
 
+/// `insert_user` が付ける username（TestUser は持っていないので id から組み立てる）。
+fn username_of(user: &common::TestUser) -> String {
+    format!("test_{}", &user.id.to_string()[..8])
+}
+
+/// 名前で 1 人だけ引く形は読み取りでも通す。
+///
+/// 一覧の絞り込みは担当者を ID で指す必要があるので、名前解決が書き込み専用だと
+/// 「タスクは読めるのに担当者で絞り込めない」状態になる。列挙ができるようには
+/// ならないこと（名前を指定しない形は 403 のまま）を対にして見る。
+#[tokio::test]
+async fn assignable_users_resolves_one_name_for_read_only_tokens() {
+    let mut app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let owner_name = username_of(&owner);
+
+    let assignable_path = format!(
+        "/v1/tenants/{}/projects/{}/assignable-users",
+        tp.tenant_id, tp.project_id
+    );
+
+    app.reset_session_client();
+    app.login_session(&owner.email, &owner.password).await;
+    let read_only = issue_token(&app, tp.tenant_id, "read-only", &["read:task"]).await;
+
+    let resolved = app
+        .get_with_bearer(
+            &format!("{assignable_path}?username={owner_name}"),
+            &read_only,
+        )
+        .await;
+    assert_eq!(
+        resolved.status(),
+        StatusCode::OK,
+        "read:task だけでも名前から ID は引ける"
+    );
+    assert_eq!(
+        user_ids(&json_body(resolved).await),
+        vec![owner.id.to_string()],
+        "指定した 1 人だけを返す（列挙にならない）"
+    );
+
+    // 大文字小文字は無視する（CLI の突き合わせと揃える）
+    let upper = app
+        .get_with_bearer(
+            &format!("{assignable_path}?username={}", owner_name.to_uppercase()),
+            &read_only,
+        )
+        .await;
+    assert_eq!(upper.status(), StatusCode::OK);
+    assert_eq!(
+        user_ids(&json_body(upper).await),
+        vec![owner.id.to_string()]
+    );
+
+    // 知らない名前は空。存在しない利用者を候補として漏らさない
+    let missing = app
+        .get_with_bearer(
+            &format!("{assignable_path}?username=nobody-here"),
+            &read_only,
+        )
+        .await;
+    assert_eq!(missing.status(), StatusCode::OK);
+    assert!(
+        json_body(missing)
+            .await
+            .as_array()
+            .expect("user list")
+            .is_empty(),
+        "一致しなければ空で返す"
+    );
+
+    // 対照: 名前を指定しない列挙は read:task では読めないまま
+    let listed = app.get_with_bearer(&assignable_path, &read_only).await;
+    assert_eq!(
+        listed.status(),
+        StatusCode::FORBIDDEN,
+        "候補の列挙は緩めない"
+    );
+
+    // 対照: 書き込みだけの PAT からも名前で引ける（過剰拒否になっていないこと）
+    let writable = issue_token(&app, tp.tenant_id, "writable", &["write:task"]).await;
+    let as_writer = app
+        .get_with_bearer(
+            &format!("{assignable_path}?username={owner_name}"),
+            &writable,
+        )
+        .await;
+    assert_eq!(as_writer.status(), StatusCode::OK);
+}
+
 /// テナントに入れない利用者は候補を読めない。
 #[tokio::test]
 async fn assignable_users_rejects_outsiders() {

@@ -6,7 +6,7 @@ use validator::Validate;
 use crate::users::UserSummary;
 use entity::project_members::{self, ProjectRole};
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct ProjectMemberResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
@@ -41,4 +41,12 @@ pub struct AddMemberRequest {
 #[derive(Validate, Debug, Deserialize, ToSchema)]
 pub struct UpdateMemberRequest {
     pub role: ProjectRole,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AssignableUsersQuery {
+    /// 指定するとその利用者だけを返す（大文字小文字を無視した完全一致）。
+    /// 名前から ID を引くだけの経路で、候補の列挙とは公開範囲が違う。
+    pub username: Option<String>,
 }

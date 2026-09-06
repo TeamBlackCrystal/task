@@ -219,7 +219,7 @@ pub struct TaskDetailResponse {
     pub custom_field_values: Vec<TaskCustomFieldValueResponse>,
 }
 
-#[derive(Validate, Deserialize, ToSchema)]
+#[derive(Validate, Deserialize, ToSchema, serde::Serialize)]
 pub struct AddAssigneeRequest {
     pub user_id: Uuid,
     #[validate(length(min = 1))]
@@ -232,7 +232,7 @@ pub struct UpdateAssigneeRequest {
     pub role: String,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct TaskAssigneeResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,

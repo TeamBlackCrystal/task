@@ -175,6 +175,29 @@ pub fn finding_json() -> serde_json::Value {
     })
 }
 
+/// 呼ばれるたびに次の応答へ進むモック。同じ URL でサーバー側の状態変化を表す。
+/// 最後の応答はそれ以降も返し続ける。
+pub struct Changing(std::sync::Mutex<std::collections::VecDeque<serde_json::Value>>);
+
+impl Changing {
+    pub fn new(bodies: Vec<serde_json::Value>) -> Self {
+        assert!(!bodies.is_empty(), "応答を 1 つ以上渡すこと");
+        Self(std::sync::Mutex::new(bodies.into()))
+    }
+}
+
+impl wiremock::Respond for Changing {
+    fn respond(&self, _request: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let mut bodies = self.0.lock().unwrap();
+        let body = if bodies.len() > 1 {
+            bodies.pop_front().expect("応答が残っている")
+        } else {
+            bodies[0].clone()
+        };
+        wiremock::ResponseTemplate::new(200).set_body_json(body)
+    }
+}
+
 pub fn project_path(suffix: &str) -> String {
     format!("/v1/tenants/{TENANT}/projects/{PROJECT_ID}/{suffix}")
 }

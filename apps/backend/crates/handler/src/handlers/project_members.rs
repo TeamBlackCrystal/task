@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use axum_valid::Valid;
@@ -36,6 +36,7 @@ use service::access::assignable_user_ids;
     params(
         ("tenant_id" = Uuid, Path, description = "テナントID"),
         ("project_id" = Uuid, Path, description = "プロジェクトID"),
+        AssignableUsersQuery,
     ),
     responses(
         (status = 200, description = "担当者候補", body = [UserSummary]),
@@ -50,18 +51,30 @@ use service::access::assignable_user_ids;
 /// メンバーを 1 人も指定していない共有プロジェクトはテナント全体へ開放されるので、
 /// `project_members` の行ではなく `assignable_user_ids` の判定で返す。
 ///
-/// **スコープは割り当て API（`add_assignee` / `remove_assignee`）と同じ `WriteTask`。**
+/// **候補の列挙は割り当て API（`add_assignee` / `remove_assignee`）と同じ `WriteTask`。**
 /// これは担当者を編集するための候補一覧で、読むだけの主体に見せる情報ではない。
 /// `ReadTask` で通すと、read-only の PAT でも「そのプロジェクトで担当者にできる
 /// 利用者全員」の名前とアイコン URL を列挙できてしまう。メンバー未指定の共有
 /// プロジェクトではテナント全体が返るので、既存タスクを読むだけでは分からない
 /// 利用者まで公開範囲が広がる。
+///
+/// **`username` を指定した形だけは `ReadTask` でも通す。** 一覧を絞り込むには
+/// 担当者を名前ではなく ID で指す必要があり、名前解決の口が書き込み専用だと
+/// 「読めるのに絞り込めない」状態になる。返るのは指定した 1 人だけで、
+/// 名前を知らないと引けないため、候補を列挙できるようにはならない。
 pub async fn list_assignable_users(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, project_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<AssignableUsersQuery>,
 ) -> Result<Json<Vec<UserSummary>>, AppError> {
-    auth.require_scope(Scope::WriteTask)?;
+    match &query.username {
+        // 読み書きどちらかがあればよい（write:task だけの PAT も名前で指せる）
+        Some(_) => auth
+            .require_scope(Scope::ReadTask)
+            .or_else(|_| auth.require_scope(Scope::WriteTask))?,
+        None => auth.require_scope(Scope::WriteTask)?,
+    }
     // プロジェクト単位のアクセス可否はここで見る（担当者を触れる人が読める）
     auth.ensure_tenant_access(&state, tenant_id, Some(project_id))
         .await?;
@@ -75,7 +88,17 @@ pub async fn list_assignable_users(
         .order_by_asc(users::Column::Username)
         .all(&state.db)
         .await?;
-    Ok(Json(users.into_iter().map(UserSummary::from).collect()))
+    // 突き合わせは DB ではなくここで行う。SQL の lower() と Rust の大文字小文字の
+    // 扱いがずれると、CLI が名前で引けたり引けなかったりする
+    let users = users
+        .into_iter()
+        .filter(|user| match &query.username {
+            Some(username) => user.username.eq_ignore_ascii_case(username),
+            None => true,
+        })
+        .map(UserSummary::from)
+        .collect();
+    Ok(Json(users))
 }
 
 async fn get_project_in_tenant(

@@ -1,7 +1,11 @@
 //! キー・名前・参照から API が要る UUID を引く。
 
+use payload::labels::LabelResponse;
+use payload::milestones::MilestoneResponse;
 use payload::projects::ProjectResponse;
+use payload::sprints::SprintResponse;
 use payload::statuses::ProjectStatusResponse;
+use payload::users::UserSummary;
 use uuid::Uuid;
 
 use crate::api::ApiClient;
@@ -97,6 +101,145 @@ pub async fn find_done_status_id(api: &ApiClient, project_id: Uuid) -> Result<Uu
 /// 既定に印のある状態、無ければ並び順の先頭を使う。
 pub async fn default_status_id(api: &ApiClient, project_id: Uuid) -> Result<Uuid> {
     pick_default_status(&list_statuses(api, project_id).await?)
+}
+
+/// プロジェクト配下の一覧を引く（`labels` / `milestones` / `sprints`）。
+async fn list_under_project<T: serde::de::DeserializeOwned>(
+    api: &ApiClient,
+    project_id: Uuid,
+    collection: &str,
+    query: &[(&str, String)],
+) -> Result<Vec<T>> {
+    let project_id = project_id.to_string();
+    api.get(
+        &[
+            "v1",
+            "tenants",
+            api.tenant_id(),
+            "projects",
+            &project_id,
+            collection,
+        ],
+        query,
+    )
+    .await
+}
+
+/// 名前で引けなかったときのエラー。
+///
+/// ラベルもマイルストーンもプロジェクトごとに違うので、綴りを外したときに何が使えるか
+/// 分からないと詰まる。解決のために一覧はすでに取ってあるので、そのまま添える。
+fn not_found_with_candidates(kind: &str, name: &str, candidates: Vec<String>) -> CliError {
+    let listed = if candidates.is_empty() {
+        "none".to_string()
+    } else {
+        candidates.join(", ")
+    };
+    CliError::not_found(format!(
+        "{kind} not found: {name} (this project has {listed})"
+    ))
+}
+
+pub async fn list_labels(api: &ApiClient, project_id: Uuid) -> Result<Vec<LabelResponse>> {
+    list_under_project(api, project_id, "labels", &[]).await
+}
+
+pub async fn resolve_label_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
+    let labels = list_labels(api, project_id).await?;
+    labels
+        .iter()
+        .find(|label| label.name.eq_ignore_ascii_case(name))
+        .map(|label| label.id)
+        .ok_or_else(|| {
+            not_found_with_candidates(
+                "Label",
+                name,
+                labels.iter().map(|label| label.name.clone()).collect(),
+            )
+        })
+}
+
+pub async fn list_milestones(api: &ApiClient, project_id: Uuid) -> Result<Vec<MilestoneResponse>> {
+    list_under_project(api, project_id, "milestones", &[]).await
+}
+
+pub async fn resolve_milestone_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
+    if let Ok(uuid) = Uuid::parse_str(name) {
+        return Ok(uuid);
+    }
+    let milestones = list_milestones(api, project_id).await?;
+    milestones
+        .iter()
+        .find(|milestone| milestone.name.eq_ignore_ascii_case(name))
+        .map(|milestone| milestone.id)
+        .ok_or_else(|| {
+            not_found_with_candidates(
+                "Milestone",
+                name,
+                milestones
+                    .iter()
+                    .map(|milestone| milestone.name.clone())
+                    .collect(),
+            )
+        })
+}
+
+pub async fn list_sprints(api: &ApiClient, project_id: Uuid) -> Result<Vec<SprintResponse>> {
+    list_under_project(api, project_id, "sprints", &[]).await
+}
+
+pub async fn resolve_sprint_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
+    if let Ok(uuid) = Uuid::parse_str(name) {
+        return Ok(uuid);
+    }
+    let sprints = list_sprints(api, project_id).await?;
+    sprints
+        .iter()
+        .find(|sprint| sprint.name.eq_ignore_ascii_case(name))
+        .map(|sprint| sprint.id)
+        .ok_or_else(|| {
+            not_found_with_candidates(
+                "Sprint",
+                name,
+                sprints.iter().map(|sprint| sprint.name.clone()).collect(),
+            )
+        })
+}
+
+pub async fn list_assignable_users(api: &ApiClient, project_id: Uuid) -> Result<Vec<UserSummary>> {
+    list_under_project(api, project_id, "assignable-users", &[]).await
+}
+
+/// 担当者はユーザー名で指す。UUID をそのまま渡す道も残す。
+///
+/// 名前を 1 つ引くだけの `?username=` は `read:task` でも通るので、一覧を読むだけの
+/// PAT でも `--assignee` を名前で書ける。候補の列挙には `write:task` が要るため、
+/// 綴りを外したときの候補は読めないことがある。そのときは候補なしで返す。
+pub async fn resolve_user_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
+    if let Ok(uuid) = Uuid::parse_str(name) {
+        return Ok(uuid);
+    }
+    let matched: Vec<UserSummary> = list_under_project(
+        api,
+        project_id,
+        "assignable-users",
+        &[("username", name.to_string())],
+    )
+    .await?;
+    if let Some(user) = matched
+        .into_iter()
+        .find(|user| user.username.eq_ignore_ascii_case(name))
+    {
+        return Ok(user.id);
+    }
+    let candidates = list_assignable_users(api, project_id)
+        .await
+        .unwrap_or_default();
+    Err(not_found_with_candidates(
+        "Assignable user",
+        name,
+        candidates.into_iter().map(|user| user.username).collect(),
+    ))
 }
 
 fn pick_status_by_name(statuses: &[ProjectStatusResponse], name: &str) -> Result<Uuid> {
@@ -320,5 +463,28 @@ mod tests {
         assert_eq!(pick_default_status(&unmarked).unwrap(), unmarked[1].id);
 
         assert!(pick_default_status(&[]).is_err());
+    }
+
+    /// ラベルやマイルストーンもプロジェクトごとに違う。綴りを外したとき、
+    /// 何が使えるか出さないと、名前を当てるまで総当たりになる。
+    #[test]
+    fn lists_the_candidates_when_a_name_does_not_match() {
+        let err =
+            not_found_with_candidates("Label", "buf", vec!["bug".into(), "enhancement".into()]);
+
+        assert!(
+            err.message.contains("Label not found: buf"),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("bug, enhancement"), "{}", err.message);
+        assert_eq!(err.exit_code, 5);
+    }
+
+    #[test]
+    fn says_none_when_there_is_nothing_to_suggest() {
+        let err = not_found_with_candidates("Sprint", "week-1", vec![]);
+
+        assert!(err.message.contains("none"), "{}", err.message);
     }
 }

@@ -498,7 +498,6 @@ pub async fn list_tasks(
     } else {
         None
     };
-
     Ok(Json(TaskListResponse {
         tasks: build_task_responses(&state.db, rows).await?,
         total,

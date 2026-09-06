@@ -24,7 +24,7 @@ pub struct UpdateMilestoneRequest {
     pub due_date: Option<NaiveDate>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, serde::Deserialize)]
 pub struct MilestoneResponse {
     #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,

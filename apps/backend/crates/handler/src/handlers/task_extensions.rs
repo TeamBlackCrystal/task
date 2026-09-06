@@ -113,6 +113,8 @@ async fn search_tasks_ilike(
     let total = base.clone().count(&state.db).await?;
     let rows = base
         .order_by_desc(tasks::Column::UpdatedAt)
+        // 同じ更新時刻が並ぶと offset のページ境界で行が重複・欠落する
+        .order_by_asc(tasks::Column::Id)
         .limit(limit)
         .offset(offset)
         .all(&state.db)
@@ -229,7 +231,8 @@ async fn search_tasks_tsvector(
         WHERE project_id = $1
           AND deleted_at IS NULL
           AND search_vector @@ plainto_tsquery('pg_catalog.simple', $2)
-        ORDER BY score DESC
+        -- score は同値が頻発する。並びが一意でないと offset のページ境界で行が重複・欠落する
+        ORDER BY score DESC, id ASC
         LIMIT $3 OFFSET $4
     "#;
     let rows = state

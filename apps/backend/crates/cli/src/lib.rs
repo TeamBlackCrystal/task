@@ -68,7 +68,7 @@ pub async fn run(cli: Cli, context: &Context) -> Result<i32> {
         Command::Config { command } => commands::config::run(command, context.store(), output),
         Command::Auth { command } => commands::auth::run(command, context, output).await,
         Command::Projects { command } => commands::projects::run(context, command, output).await,
-        Command::Tasks { command } => commands::tasks::run(context, command, output).await,
+        Command::Tasks { command } => commands::tasks::run(context, *command, output).await,
         Command::My { command } => commands::my::run(context, command, output).await,
         Command::Sprints { command } => commands::sprints::run(context, command, output).await,
         Command::Review { command } => commands::reviews::run(context, command, output).await,
