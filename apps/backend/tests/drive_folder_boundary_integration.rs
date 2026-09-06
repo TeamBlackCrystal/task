@@ -583,29 +583,23 @@ async fn the_project_root_folder_cannot_be_deleted_or_moved() {
     assert_eq!(deleted_plain.status(), StatusCode::NO_CONTENT);
 }
 
-/// ロックを待っているあいだにファイルが別プロジェクトへ移ったら、更新は拒む。
+/// 「書き手が入れないプロジェクトへ移されうるファイル」の前提を組む。
 ///
-/// 取得と認可をロックの外で済ませると、ロックを待っているあいだに別のリクエストが
-/// そのファイルを自分の入れないプロジェクトへ移していても、古いモデルと古い認可結果の
-/// まま名前を変えたりルートへ持ち出したりできる。ここではテスト側が同じ鍵でロックを
-/// 握り、握っているあいだに移動を確定させてから離す。
-#[tokio::test]
-async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
-    let mut app = TestApp::new().await;
-
+/// 戻り値は (テナント, 移動先のプロジェクト, ファイル, そのファイルの URL)。書き手でログイン済み。
+async fn setup_file_that_can_be_moved_away(app: &mut TestApp) -> (Uuid, Uuid, Uuid, String) {
     let owner = app.insert_user(false, false).await;
     let tp = app.insert_tenant_project(owner.id).await;
     // 書き手はプロジェクト A のメンバー。B には入れない
     let writer = app.insert_user(false, false).await;
-    add_member(&app, tp.project_id, writer.id).await;
-    let project_b = insert_extra_project(&app, tp.tenant_id).await;
+    add_member(app, tp.project_id, writer.id).await;
+    let project_b = insert_extra_project(app, tp.tenant_id).await;
     // メンバーが 1 人も居ないプロジェクトはテナント全体へ開くので（project_is_open_or_member）、
     // 別の利用者を入れて閉じた状態にする。そうしないと writer も入れてしまう
     let stranger = app.insert_user(false, false).await;
-    add_member(&app, project_b, stranger.id).await;
+    add_member(app, project_b, stranger.id).await;
 
-    let root_a = insert_project_root_folder(&app, tp.tenant_id, tp.project_id, owner.id).await;
-    let file = insert_file(&app, tp.tenant_id, root_a, owner.id).await;
+    let root_a = insert_project_root_folder(app, tp.tenant_id, tp.project_id, owner.id).await;
+    let file = insert_file(app, tp.tenant_id, root_a, owner.id).await;
 
     app.reset_session_client();
     app.login_session_no_content(&writer.email, &writer.password)
@@ -616,6 +610,40 @@ async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
         app.base_url(),
         tp.tenant_id
     );
+    (tp.tenant_id, project_b, file, file_url)
+}
+
+/// 対象の行を `FOR UPDATE` で握る。握っているあいだ、行ロックを取る経路は進まない。
+async fn lock_file_row<C: sea_orm::ConnectionTrait>(conn: &C, file: Uuid) {
+    common::execute_sql(
+        conn,
+        "SELECT id FROM drive_files WHERE id = $1 FOR UPDATE",
+        vec![file.into()],
+    )
+    .await;
+}
+
+/// ロックを握ったまま、そのファイルを別プロジェクトへ移して確定させる。
+async fn move_file_to_project(blocker: sea_orm::DatabaseTransaction, file: Uuid, project: Uuid) {
+    common::execute_sql(
+        &blocker,
+        "UPDATE drive_files SET project_id = $1 WHERE id = $2",
+        vec![project.into(), file.into()],
+    )
+    .await;
+    blocker.commit().await.expect("commit blocker");
+}
+
+/// ロックを待っているあいだにファイルが別プロジェクトへ移ったら、更新は拒む。
+///
+/// 取得と認可をロックの外で済ませると、ロックを待っているあいだに別のリクエストが
+/// そのファイルを自分の入れないプロジェクトへ移していても、古いモデルと古い認可結果の
+/// まま名前を変えたりルートへ持ち出したりできる。ここではテスト側が同じ鍵でロックを
+/// 握り、握っているあいだに移動を確定させてから離す。
+#[tokio::test]
+async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
+    let mut app = TestApp::new().await;
+    let (tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;
 
     // 対照: 移動していなければ同じ要求が通る（過剰拒否になっていないこと）
     let allowed = app
@@ -629,11 +657,7 @@ async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
 
     // 同じ鍵をテスト側のトランザクションで握る
     let blocker = app.state.db.begin().await.expect("begin blocker");
-    common::execute_advisory_lock(
-        &blocker,
-        service::drive::tenant_drive_lock_key(tp.tenant_id),
-    )
-    .await;
+    common::execute_advisory_lock(&blocker, service::drive::tenant_drive_lock_key(tenant_id)).await;
 
     let client = app.client().clone();
     let pending_url = file_url.clone();
@@ -654,13 +678,7 @@ async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
     );
 
     // ロックを握ったまま、書き手が入れないプロジェクトへ移して確定させる
-    common::execute_sql(
-        &blocker,
-        "UPDATE drive_files SET project_id = $1 WHERE id = $2",
-        vec![project_b.into(), file.into()],
-    )
-    .await;
-    blocker.commit().await.expect("commit blocker");
+    move_file_to_project(blocker, file, project_b).await;
 
     let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
         .await
@@ -680,4 +698,118 @@ async fn updating_a_file_re_authorizes_after_waiting_for_the_lock() {
         .expect("file exists");
     assert_eq!(after.name, "before.txt");
     assert_eq!(after.project_id, Some(project_b));
+}
+
+/// アップロードを待っているあいだにファイルが別プロジェクトへ移ったら、本文更新は拒む。
+///
+/// `update_file_content` は行を `FOR UPDATE` で読み直しているのに、認可だけがロックの外に
+/// 残っていた。しかもこの経路の窓はロック待ちではなく**アップロードの完走ぶん**なので、
+/// `update_file` より長い。ここではテスト側が対象行を握り、握っているあいだに移動を
+/// 確定させてから離す。
+#[tokio::test]
+async fn updating_file_content_re_authorizes_after_taking_the_row_lock() {
+    let mut app = TestApp::new().await;
+    let (_tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;
+    let content_url = format!("{file_url}/content");
+
+    // 対照: 移動していなければ本文を書き換えられる（過剰拒否になっていないこと）
+    let allowed = app
+        .client()
+        .put(&content_url)
+        .json(&serde_json::json!({ "content": "before" }))
+        .send()
+        .await
+        .expect("update content");
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let blocker = app.state.db.begin().await.expect("begin blocker");
+    lock_file_row(&blocker, file).await;
+
+    let client = app.client().clone();
+    let pending_url = content_url.clone();
+    let pending = tokio::spawn(async move {
+        client
+            .put(pending_url)
+            .json(&serde_json::json!({ "content": "after-move" }))
+            .send()
+            .await
+            .expect("update content")
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "対象行のロックを待たずに本文更新が通っている"
+    );
+
+    move_file_to_project(blocker, file, project_b).await;
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+        .await
+        .expect("ロック解放後に完了する")
+        .expect("join");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "移動後のファイルの本文を、古い認可結果のまま差し替えられている"
+    );
+
+    // 差し替わっていない（ロックの内側で弾けている）
+    let after = drive_files::Entity::find_by_id(file)
+        .one(&app.state.db)
+        .await
+        .expect("load file")
+        .expect("file exists");
+    assert_eq!(after.size, "before".len() as i64);
+    assert_eq!(after.project_id, Some(project_b));
+}
+
+/// 読んでから消すまでのあいだにファイルが別プロジェクトへ移ったら、削除も拒む。
+///
+/// `delete_file` はトランザクションすら張らず、別々の接続で読んでから消していた。
+#[tokio::test]
+async fn deleting_a_file_re_authorizes_after_taking_the_row_lock() {
+    let mut app = TestApp::new().await;
+    let (_tenant_id, project_b, file, file_url) = setup_file_that_can_be_moved_away(&mut app).await;
+
+    let blocker = app.state.db.begin().await.expect("begin blocker");
+    lock_file_row(&blocker, file).await;
+
+    let client = app.client().clone();
+    let pending_url = file_url.clone();
+    let pending = tokio::spawn(async move {
+        client
+            .delete(pending_url)
+            .send()
+            .await
+            .expect("delete file")
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "対象行のロックを待たずに削除が通っている"
+    );
+
+    move_file_to_project(blocker, file, project_b).await;
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+        .await
+        .expect("ロック解放後に完了する")
+        .expect("join");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "移動後のファイルを、古い認可結果のまま消せている"
+    );
+
+    // 行が残っている
+    assert!(
+        drive_files::Entity::find_by_id(file)
+            .one(&app.state.db)
+            .await
+            .expect("load file")
+            .is_some(),
+        "拒否されたのに行が消えている"
+    );
 }

@@ -694,6 +694,11 @@ pub async fn update_file_content(
             .one(&txn)
             .await?
             .ok_or(AppError::NotFound)?;
+        // 認可もロックの内側でやり直す。ロック前の結果で通すと、アップロードを待っている
+        // あいだに別のリクエストがこのファイルを呼び出し元の入れないプロジェクトへ移しても、
+        // 本文とストレージキーを差し替えられる（窓はロック待ちではなくアップロード完走ぶん）。
+        // ここで弾いた場合はアップロード済みの新キーが下の Err 枝で消える
+        authorize_file_write(&txn, &locked, &auth).await?;
         let old_storage_key = locked.storage_key.clone();
         let used_now = tenant_used_bytes(&txn, tenant_id).await?;
         // 差し替え後の使用量 = 現在の合計 − ロック時点の旧サイズ + 新サイズ
@@ -753,12 +758,22 @@ pub async fn delete_file(
     auth.require_scope(Scope::WriteDrive)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
 
-    let file = load_tenant_file(&state, tenant_id, id).await?;
-    authorize_file_write(&state.db, &file, &auth).await?;
-    let storage_key = file.storage_key.clone();
-    drive_files::Entity::delete_by_id(id)
-        .exec(&state.db)
-        .await?;
+    // 取得・認可・削除を同じトランザクションの内側で行う。別々の接続で読んでから消すと、
+    // その間に別のリクエストがこのファイルを呼び出し元の入れないプロジェクトへ移しても、
+    // 古い認可結果のまま消せる（update_file と同じ筋）
+    let txn = state.db.begin().await?;
+    let locked = drive_files::Entity::find_by_id(id)
+        .filter(drive_files::Column::TenantId.eq(tenant_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    authorize_file_write(&txn, &locked, &auth).await?;
+    let storage_key = locked.storage_key.clone();
+    drive_files::Entity::delete_by_id(id).exec(&txn).await?;
+    txn.commit().await?;
+
+    // 実体の削除はコミット後。失敗しても行はもう無いので、更新自体は成立させる
     let _ = state.storage.delete(&storage_key).await;
     Ok(StatusCode::NO_CONTENT)
 }
