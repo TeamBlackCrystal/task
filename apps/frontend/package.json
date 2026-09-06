@@ -92,7 +92,7 @@
     "@vitejs/plugin-vue": "6.0.8",
     "@vitest/browser-playwright": "4.1.10",
     "@vitest/coverage-v8": "4.1.10",
-    "@vue/test-utils": "2.4.11",
+    "@vue/test-utils": "2.5.0",
     "happy-dom": "20.11.2",
     "http-server": "14.1.1",
     "openapi-typescript": "7.13.0",
