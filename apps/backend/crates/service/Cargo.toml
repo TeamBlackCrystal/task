@@ -14,7 +14,7 @@ auth-core-github = { workspace = true }
 auth-core-gitlab = { workspace = true }
 forge-core = { workspace = true }
 forge-github = { workspace = true }
-argon2 = "0.5.3"
+argon2 = "0.6.0"
 axum = { workspace = true }
 axum_session = { version = "0.20.0" }
 axum_session_redispool = { version = "0.11.0" }
