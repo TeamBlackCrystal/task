@@ -4859,7 +4859,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/TenantResponse"
+                    "$ref": "#/components/schemas/TenantListItemResponse"
                   }
                 }
               }
@@ -7745,6 +7745,120 @@
         "responses": {
           "204": {
             "description": "削除しました"
+          },
+          "401": {
+            "description": "ログインまたはセッションが必要です",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "この操作は許可されていません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "リソースが見つかりません",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "サーバー側で問題が発生しました。時間をおいて再度お試しください",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "API 共通のエラー応答ボディ。",
+                  "required": ["message"],
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "internal-error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant_id}/members/{user_id}/explicit-projects": {
+      "get": {
+        "tags": ["Tenant Members"],
+        "summary": "テナントメンバーが持つプロジェクト単位の明示 ACE",
+        "description": "テナント除名の前に「除名しても、この人はこれらのプロジェクトに入り続ける」と確かめるための口。除名の後に呼んでも同じ内容を返す。",
+        "operationId": "list_explicit_projects",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "テナントID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "ユーザーID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "明示 ACE の一覧",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplicitProjectsResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "ログインまたはセッションが必要です",
@@ -20872,6 +20986,46 @@
           }
         }
       },
+      "ExplicitProjectAce": {
+        "type": "object",
+        "description": "その人が持つ、プロジェクト単位の明示 ACE。\nテナント所属（継承）を外しても明示 ACE は独立して残り、持ち主は客分としてそのプロジェクトに入り続ける。",
+        "required": ["project_id", "key", "name", "role"],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          }
+        }
+      },
+      "ExplicitProjectsResponse": {
+        "type": "object",
+        "description": "その人がこのテナントで持つ明示 ACE の一覧。\nテナント除名の前に「除名しても、この人はこれらのプロジェクトに入り続ける」と確かめるために使う。\n管理者が「除名したのにまだ入れる」と驚かないためのもので、除名の後に呼んでも同じ内容を返す。",
+        "required": ["explicit_projects", "hidden_count"],
+        "properties": {
+          "explicit_projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExplicitProjectAce"
+            },
+            "description": "呼び出し側から見えるプロジェクトの明示 ACE。\n閉め出したい場合は、ここに挙がったプロジェクトのメンバーからも外す。"
+          },
+          "hidden_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "呼び出し側には見えないプロジェクトに残る明示 ACE の件数。\n非公開プロジェクトの名前や key を、そのプロジェクトに入れない人へ出さないために数だけ返す。",
+            "minimum": 0
+          }
+        }
+      },
       "FindingResponse": {
         "type": "object",
         "required": [
@@ -22755,6 +22909,47 @@
           }
         }
       },
+      "TenantListItemResponse": {
+        "type": "object",
+        "description": "`GET /v1/tenants` 専用のレスポンス。テナントの欄に `membership` の印を加えたもの。\n\n客分（membership=Guest）のテナントは一覧に出る。客分に開く tenant-wide の口は\nプロジェクト一覧・My Tasks（いずれも己の分に絞る）だけで、テナント取得などは\n開かないため、クライアントはこの印で開ける口を見分ける。\n取得・作成・更新は従来どおり `TenantResponse`。",
+        "required": ["id", "display_id", "name", "description", "icon_url", "membership"],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_id": {
+            "type": "string"
+          },
+          "drive_quota_bytes": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "テナント設定の欄。客分（membership=Guest）には返さない（null）"
+          },
+          "icon_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/TenantMembershipKind",
+            "description": "この利用者から見た関わり方（Owner / Member / Guest）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "テナント設定の欄。客分（membership=Guest）には返さない（null）"
+          },
+          "require_2fa": {
+            "type": ["boolean", "null"],
+            "description": "テナント設定の欄。客分（membership=Guest）には返さない（null）"
+          }
+        }
+      },
       "TenantMemberResponse": {
         "type": "object",
         "required": ["id", "tenant_id", "user_id", "role", "user"],
@@ -22779,6 +22974,11 @@
             "format": "uuid"
           }
         }
+      },
+      "TenantMembershipKind": {
+        "type": "string",
+        "description": "テナント一覧における、この利用者から見た関わり方の印。\n`TenantRole` と同じ流儀（PascalCase の文字列）で返す。",
+        "enum": ["Owner", "Member", "Guest"]
       },
       "TenantResponse": {
         "type": "object",

@@ -27,6 +27,86 @@ pub async fn is_tenant_member<C: ConnectionTrait>(
         .is_some())
 }
 
+/// プロジェクトメンバーとして明示指定されているか（テナント所属も公開規則も見ない）。
+///
+/// テナントに行が無い利用者（project-only の客分）を名指しのプロジェクトへ通す判定にも
+/// 使うため、「メンバー未指定＝テナント全体に開放」の規則はここでは扱わない。
+pub async fn is_project_member<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, AppError> {
+    Ok(project_members::Entity::find()
+        .filter(project_members::Column::ProjectId.eq(project_id))
+        .filter(project_members::Column::UserId.eq(user_id))
+        .one(db)
+        .await?
+        .is_some())
+}
+
+/// project-only の客分として関わるテナント（自分が `project_members` に明示指定されている
+/// プロジェクトを持つテナント）の id 集合。テナント一覧の印付けに使う。
+///
+/// オーナー・テナントメンバーであるテナントもここに含まれうる（明示指定は絞り込みとしても
+/// 使われるため）。除く判定は呼び出し側で行う。
+pub async fn guest_tenant_ids<C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, AppError> {
+    let project_ids: Vec<Uuid> = project_members::Entity::find()
+        .filter(project_members::Column::UserId.eq(user_id))
+        .select_only()
+        .column(project_members::Column::ProjectId)
+        .into_tuple()
+        .all(db)
+        .await?;
+    if project_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(projects::Entity::find()
+        .filter(projects::Column::Id.is_in(project_ids))
+        .select_only()
+        .column(projects::Column::TenantId)
+        .distinct()
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+/// そのテナント配下で自分が `project_members` に明示指定されている project の id 集合。
+///
+/// project-only の客分に開く一覧系 2 口（プロジェクト一覧・My Tasks）の絞り込みに使う。
+/// 公開規則（メンバー未指定＝テナント全体に開放）はここでは見ない —
+/// 公開 project は客分に開かないため、明示指定の行だけを数える。
+pub async fn explicit_member_project_ids<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, AppError> {
+    let project_ids: Vec<Uuid> = project_members::Entity::find()
+        .filter(project_members::Column::UserId.eq(user_id))
+        .select_only()
+        .column(project_members::Column::ProjectId)
+        .into_tuple()
+        .all(db)
+        .await?;
+    if project_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    Ok(projects::Entity::find()
+        .filter(projects::Column::Id.is_in(project_ids))
+        .filter(projects::Column::TenantId.eq(tenant_id))
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
+
 /// プロジェクト単位のアクセス可否。**テナントに入れることは呼び出し側で確認済みの前提。**
 ///
 /// メンバーを 1 人も指定していないプロジェクトはテナント全体に開放し、
@@ -42,13 +122,7 @@ pub async fn project_is_open_or_member<C: ConnectionTrait>(
     user_id: Uuid,
 ) -> Result<bool, AppError> {
     // 自分が指定されていればそこで確定（指定あり側の判定を 1 クエリで終わらせる）
-    if project_members::Entity::find()
-        .filter(project_members::Column::ProjectId.eq(project_id))
-        .filter(project_members::Column::UserId.eq(user_id))
-        .one(db)
-        .await?
-        .is_some()
-    {
+    if is_project_member(db, project_id, user_id).await? {
         return Ok(true);
     }
 

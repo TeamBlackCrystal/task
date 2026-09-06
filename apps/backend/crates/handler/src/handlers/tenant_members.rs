@@ -16,8 +16,12 @@ use crate::extractors::AuthUser;
 use crate::handlers::project_members;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
-use entity::{scopes::Scope, tenant_members, tenants, users};
+use entity::{
+    project_members as project_members_entity, projects, scopes::Scope, tenant_members, tenants,
+    users,
+};
 use payload::tenant_members::*;
+use service::access::visible_project_ids;
 use service::db::is_postgres_unique_violation;
 
 async fn ensure_tenant_exists(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -243,16 +247,89 @@ pub async fn remove_member(
     let txn = state.db.begin().await?;
     project_members::lock_membership_changes(&txn, tenant_id).await?;
 
-    // project_members の行はあえて残す。テナント所属は has_tenant_access が先に見るので、
-    // テナントに居ない人の行は何のアクセスも与えない。
-    // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
-    // 「メンバー未指定＝テナント全体に開放」の規則で他のメンバーに開いてしまう。
-    // 残しておけば再参加したときに元の割り当てがそのまま戻る。
-    // 通知の宛先はテナントに居る人だけに絞られる（`service::access`）
+    // 除名が消すのはテナント所属（継承）だけ。`project_members` の行はプロジェクト単位の
+    // 明示 ACE であり、NTFS / NFSv4 の ACL と同じく継承元と独立して残る
+    // （apps/backend/docs/tenant-project-authz.md の「継承と明示」）。残った行の持ち主は
+    // project-only の客分になり、名指しされたプロジェクトの中だけ引き続き入れる。
+    // 副次的に、その人しか指定されていなかったプロジェクトがメンバー 0 人になって
+    // 「メンバー未指定＝テナント全体に開放」へ戻ることも防ぎ、再参加時は元の割り当てが戻る。
+    // 残る明示 ACE は `list_explicit_projects` で除名の前後どちらでも確かめられる。
+    // 通知の宛先はテナントに居る人だけに絞られる（`service::access`。客分には飛ばない）
     tenant_members::Entity::delete_by_id(member.id)
         .exec(&txn)
         .await?;
     txn.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[axum::debug_handler]
+#[utoipa::path(
+    get,
+    path = "/{user_id}/explicit-projects",
+    tag = "Tenant Members",
+    summary = "テナントメンバーが持つプロジェクト単位の明示 ACE",
+    description = "テナント除名の前に「除名しても、この人はこれらのプロジェクトに入り続ける」と確かめるための口。除名の後に呼んでも同じ内容を返す。",
+    params(
+        ("tenant_id" = Uuid, Path, description = "テナントID"),
+        ("user_id" = Uuid, Path, description = "ユーザーID"),
+    ),
+    responses(
+        (status = 200, description = "明示 ACE の一覧", body = ExplicitProjectsResponse),
+        CrudErrors,
+    )
+)]
+pub async fn list_explicit_projects(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ExplicitProjectsResponse>, AppError> {
+    auth.require_scope(Scope::AdminTenant)?;
+    auth.ensure_tenant_access(&state, tenant_id, None).await?;
+    // 除名と同じ相手（オーナーとテナント Admin）にだけ見せる。
+    // 対象がテナントに居るかは問わない。除名した後に「まだ何が残っているか」を確かめる用途があるため
+    require_tenant_admin(&state, tenant_id, auth.user_id).await?;
+
+    let rows = project_members_entity::Entity::find()
+        .filter(project_members_entity::Column::UserId.eq(user_id))
+        .find_also_related(projects::Entity)
+        .all(&state.db)
+        .await?;
+    let mut aces: Vec<(project_members_entity::Model, projects::Model)> = rows
+        .into_iter()
+        .filter_map(|(m, p)| p.filter(|p| p.tenant_id == tenant_id).map(|p| (m, p)))
+        .collect();
+
+    // 非公開プロジェクトの名前や key を、そのプロジェクトに入れない人へ出さない。
+    // テナント Admin でもプロジェクトの閲覧は `list_projects` と同じ境界で絞られるので、
+    // ここも同じ判定（`visible_project_ids`）を通す。オーナーは全プロジェクトに入れる
+    let visible = if is_tenant_owner(&state.db, tenant_id, auth.user_id).await? {
+        aces.iter().map(|(_, p)| p.id).collect()
+    } else {
+        visible_project_ids(
+            &state.db,
+            aces.iter().map(|(_, p)| p.id).collect(),
+            auth.user_id,
+        )
+        .await?
+    };
+    let hidden_count = aces
+        .iter()
+        .filter(|(_, p)| !visible.contains(&p.id))
+        .count() as u64;
+    aces.retain(|(_, p)| visible.contains(&p.id));
+    aces.sort_by(|a, b| a.1.key.cmp(&b.1.key));
+
+    Ok(Json(ExplicitProjectsResponse {
+        explicit_projects: aces
+            .into_iter()
+            .map(|(m, p)| ExplicitProjectAce {
+                project_id: p.id,
+                key: p.key,
+                name: p.name,
+                role: m.role,
+            })
+            .collect(),
+        hidden_count,
+    }))
 }

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import type { components } from '@/generated/api';
 import { apiClient } from '@/lib/api';
 
-export type Tenant = components['schemas']['TenantResponse'];
+export type Tenant = components['schemas']['TenantListItemResponse'];
 export type CreateTenantInput = components['schemas']['CreateTenantRequest'];
 export const useTenantStore = defineStore(
   'tenant',

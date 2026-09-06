@@ -54,3 +54,65 @@ pub struct UpdateTenantRequest {
     pub description: Option<String>,
     pub icon_url: Option<String>,
 }
+
+/// テナント一覧における、この利用者から見た関わり方の印。
+/// `TenantRole` と同じ流儀（PascalCase の文字列）で返す。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub enum TenantMembershipKind {
+    /// `tenants.owner_id` の本人
+    Owner,
+    /// `tenant_members` に行がある（ロールの内訳は `TenantRole` が別途表す）
+    Member,
+    /// project-only の客分（`project_members` の明示指定だけで関わる）
+    Guest,
+}
+
+/// `GET /v1/tenants` 専用のレスポンス。テナントの欄に `membership` の印を加えたもの。
+///
+/// 客分（membership=Guest）のテナントは一覧に出る。客分に開く tenant-wide の口は
+/// プロジェクト一覧・My Tasks（いずれも己の分に絞る）だけで、テナント取得などは
+/// 開かないため、クライアントはこの印で開ける口を見分ける。
+/// 取得・作成・更新は従来どおり `TenantResponse`。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TenantListItemResponse {
+    #[schema(value_type = String, format = "uuid")]
+    pub id: Uuid,
+    pub display_id: String,
+    pub name: String,
+    pub description: String,
+    pub icon_url: String,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
+    #[schema(value_type = Option<String>, format = "uuid", nullable)]
+    pub owner_id: Option<Uuid>,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
+    #[schema(nullable)]
+    pub drive_quota_bytes: Option<i64>,
+    /// テナント設定の欄。客分（membership=Guest）には返さない（null）
+    #[schema(nullable)]
+    pub require_2fa: Option<bool>,
+    /// この利用者から見た関わり方（Owner / Member / Guest）
+    pub membership: TenantMembershipKind,
+}
+
+impl TenantListItemResponse {
+    pub fn from_parts(model: tenants::Model, membership: TenantMembershipKind) -> Self {
+        // 客分にはテナント設定の欄を返さない（一覧の表示に要る display_id / name /
+        // description / icon_url は残す）
+        let is_guest = membership == TenantMembershipKind::Guest;
+        Self {
+            id: model.id,
+            display_id: model.display_id,
+            name: model.name,
+            description: model.description,
+            icon_url: model.icon_url,
+            owner_id: (!is_guest).then_some(model.owner_id),
+            drive_quota_bytes: if is_guest {
+                None
+            } else {
+                model.drive_quota_bytes
+            },
+            require_2fa: (!is_guest).then_some(model.require_2fa),
+            membership,
+        }
+    }
+}

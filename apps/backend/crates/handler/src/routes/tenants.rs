@@ -21,7 +21,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
                 .routes(routes!(crate::handlers::tenant_members::list_members))
                 .routes(routes!(crate::handlers::tenant_members::add_member))
                 .routes(routes!(crate::handlers::tenant_members::update_member))
-                .routes(routes!(crate::handlers::tenant_members::remove_member)),
+                .routes(routes!(crate::handlers::tenant_members::remove_member))
+                .routes(routes!(
+                    crate::handlers::tenant_members::list_explicit_projects
+                )),
         )
         .nest(
             "/{tenant_id}/projects",

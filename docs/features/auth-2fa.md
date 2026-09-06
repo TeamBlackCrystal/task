@@ -288,6 +288,9 @@ half_authed セッション + { "requires_2fa_setup": true }
 
 2FA 設定完了前はそのテナントのリソースへのアクセスを `403` で拒否する。  
 パスキーログインユーザーはテナント強制ポリシーの対象外（パスキー自体が MFA）。
+project にだけ参加しテナントに参加しない客分（project-only guest）も、関わるテナントの
+`require_2fa` の対象である（ここから漏れると、除名後に残る `project_members` の行で
+project へ入れる利用者が 2FA 無しで読み書きできてしまう）。
 
 ---
 
