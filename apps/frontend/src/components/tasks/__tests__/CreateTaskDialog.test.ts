@@ -273,6 +273,45 @@ describe('CreateTaskDialog a11y and cache invalidation', () => {
     wrapper.unmount();
   });
 
+  /**
+   * 作成に成功すると親が created を受けて open を false にする。その経路は
+   * onOpenChange を通らないので、成功表示を閉じるときに捨てないと次に開いた
+   * 瞬間に前回の「タスクを作成しました」が出る。
+   */
+  it('閉じて開き直したとき、前回の成功表示が残らない', async () => {
+    const wrapper = mountDialog(queryClient);
+    await nextTick();
+
+    await new DOMWrapper(getTitleInput()).setValue('New task');
+    await new DOMWrapper(getForm()).trigger('submit');
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('タスクを作成しました');
+
+    // 親が閉じる（created を受けた側の挙動）
+    await wrapper.setProps({ open: false });
+    await nextTick();
+    await wrapper.setProps({ open: true });
+    await nextTick();
+
+    expect(document.body.textContent).not.toContain('タスクを作成しました');
+  });
+
+  it('閉じて開き直したとき、前回の入力が残らない', async () => {
+    const wrapper = mountDialog(queryClient);
+    await nextTick();
+
+    await new DOMWrapper(getTitleInput()).setValue('書きかけ');
+    expect(getTitleInput().value).toBe('書きかけ');
+
+    await wrapper.setProps({ open: false });
+    await nextTick();
+    await wrapper.setProps({ open: true });
+    await nextTick();
+
+    expect(getTitleInput().value).toBe('');
+  });
+
   it('resets form when the dialog closes', async () => {
     const wrapper = mountDialog(queryClient);
     await nextTick();
