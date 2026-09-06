@@ -48,6 +48,18 @@ function state(pages: TaskGroupPage[], extra: Partial<TaskGroupQueryState> = {})
 }
 
 describe('toTaskGroup', () => {
+  it('API の新しい順を反転し、List 表示では最新のタスクを末尾にする', () => {
+    const group = toTaskGroup(
+      status,
+      state([
+        { tasks: [task('newest'), task('middle')], total: 3, next_cursor: 'c1' },
+        { tasks: [task('oldest')], total: 3, next_cursor: null },
+      ]),
+    );
+
+    expect(group.tasks.map((item) => item.id)).toEqual(['oldest', 'middle', 'newest']);
+  });
+
   it('続きがあれば もっと見る を出す', () => {
     const group = toTaskGroup(status, state([page(0, PAGE_SIZE, 75, 'c1')]));
     expect(group.tasks).toHaveLength(20);
@@ -131,7 +143,7 @@ describe('toTaskGroup', () => {
         { tasks: [task('task-2'), task('task-9')], total: 6, next_cursor: null },
       ]),
     );
-    expect(group.tasks.map((t) => t.id)).toEqual(['task-0', 'task-1', 'task-2', 'task-9']);
+    expect(group.tasks.map((t) => t.id)).toEqual(['task-9', 'task-2', 'task-1', 'task-0']);
   });
 
   it('1 ページも返っていなければ もっと見る を出さない', () => {
