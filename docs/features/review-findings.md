@@ -72,6 +72,11 @@ project（GitHub 連携は要約コメントの投稿にだけ必要。無くて
 | `summary` | 総評（markdown） |
 | `pr_title` / `pr_author` | 表示用の PR メタ。要約コメント投稿ジョブが GitHub から取得してキャッシュする（連携なし・取得失敗時は空のままで PR 番号だけ表示）。増減行数など鮮度が落ちる数値は持たない |
 
+> **予定（[Git ホスティング↔タスク連携](/features/tasks/github-tasks) §2）**: `integration_id` / `repo_owner` /
+> `repo_name` / `pr_number` / `pr_title` / `pr_author` は PR の実体表 `forge_pull_requests` へ移り、
+> `reviews` は `pull_request_id` で参照する。採番の UNIQUE は `(pull_request_id, round)` になる。
+> 下記のリポジトリを含めた合流キーの考え方はそのまま PR 行の UNIQUE に引き継ぐ。API の形は変えない。
+
 同一 PR への再レビューは**新しいラウンド**として作る（更新しない）。`round` はサーバーが
 PR 内で採番し、「どのラウンド（R1, R2, …）で出た指摘か」「どの head を見たか」が
 履歴として残る。採番には `UNIQUE (project_id, repo_owner, repo_name, pr_number, round)` を
@@ -685,3 +690,4 @@ AI が生成した JSON の取り違えを直す手がかりが薄くなる。
 - 2026-08-31: `head_sha` は 40 桁の小文字 16 進に限る（CLI は終了コード 2、API は 400）。
   鮮度の照合は厳密一致なので、短縮 SHA を受け取るとそのラウンドは永久にマージ可へ届かず、
   しかも「同じ commit に見えるのに再レビューを要求される」形で出て原因を辿れないため
+- 2026-09-02: PR を実体表（`forge_pull_requests`）へ切り出し、`reviews` は FK で参照する方針を [Git ホスティング↔タスク連携](/features/tasks/github-tasks) 側に置いた。レビュー指摘 → PR → タスクと辿るため。実装は同仕様の分割 1 で行う
