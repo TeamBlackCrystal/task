@@ -44,7 +44,7 @@ async-trait = "0.1"
 dotenvy = { workspace = true }
 tokio = { version = "1.52.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "net"] }
 tokio-util = { version = "0.7", features = ["io"] }
-totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+totp-rs = { version = "6", features = ["gen_secret", "otpauth"] }
 tracing = { workspace = true }
 url = { workspace = true }
 urlencoding = "2.1"
