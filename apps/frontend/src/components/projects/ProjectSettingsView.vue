@@ -2,10 +2,18 @@
 import { useForm } from '@tanstack/vue-form';
 import { type } from 'arktype';
 import { useQueryClient } from '@tanstack/vue-query';
-import { PhKanban, PhSlidersHorizontal, PhUsers, PhWarning } from '@phosphor-icons/vue';
+import {
+  PhGear,
+  PhKanban,
+  PhPlugsConnected,
+  PhTag,
+  PhTextbox,
+  PhUsers,
+  PhWarning,
+} from '@phosphor-icons/vue';
 import { navigate } from 'vike/client/router';
 import { usePageContext } from 'vike-vue/usePageContext';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, type Component } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -48,14 +56,24 @@ const saveDone = ref(false);
 const isDeleteOpen = ref(false);
 const icon = ref<string | null>(props.project.icon_emoji ?? null);
 
-const sections: { key: SettingsSection; label: string; danger?: boolean }[] = [
-  { key: 'general', label: '一般' },
-  { key: 'members', label: 'メンバー' },
-  { key: 'workflow', label: 'ワークフロー' },
-  { key: 'labels', label: 'ラベル' },
-  { key: 'fields', label: 'カスタムフィールド' },
-  { key: 'integrations', label: '連携' },
-  { key: 'danger', label: '削除', danger: true },
+/**
+ * アイコンは section ごとに持たせる。テンプレート側で key を条件分岐していたときは
+ * 当てはまらない節が全部フォールバックの 1 つに落ち、一般・ラベル・カスタムフィールド・
+ * 連携の 4 つが同じ絵になっていた。ここで必須にすれば足し忘れが型で分かる。
+ */
+const sections: {
+  key: SettingsSection;
+  label: string;
+  icon: Component;
+  danger?: boolean;
+}[] = [
+  { key: 'general', label: '一般', icon: PhGear },
+  { key: 'members', label: 'メンバー', icon: PhUsers },
+  { key: 'workflow', label: 'ワークフロー', icon: PhKanban },
+  { key: 'labels', label: 'ラベル', icon: PhTag },
+  { key: 'fields', label: 'カスタムフィールド', icon: PhTextbox },
+  { key: 'integrations', label: '連携', icon: PhPlugsConnected },
+  { key: 'danger', label: '削除', icon: PhWarning, danger: true },
 ];
 
 /** `?section=` から初期表示セクションを決める（GitHub callback の戻り先が利用。#386） */
@@ -168,10 +186,11 @@ function onDeleted() {
             :aria-current="activeSection === section.key ? 'true' : undefined"
             @click="activeSection = section.key"
           >
-            <PhWarning v-if="section.danger" class="size-4" />
-            <PhUsers v-else-if="section.key === 'members'" class="size-4 text-muted-foreground" />
-            <PhKanban v-else-if="section.key === 'workflow'" class="size-4 text-muted-foreground" />
-            <PhSlidersHorizontal v-else class="size-4 text-muted-foreground" />
+            <component
+              :is="section.icon"
+              class="size-4"
+              :class="section.danger ? '' : 'text-muted-foreground'"
+            />
             <span class="flex-1">{{ section.label }}</span>
           </button>
         </template>

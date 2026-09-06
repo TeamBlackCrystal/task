@@ -130,8 +130,8 @@ describe('TenantSwitcher', () => {
   it('shows the empty state when the user has no tenant memberships', async () => {
     const wrapper = mountSwitcher({ tenants: [], selectedTenantId: null });
 
+    // ヘッダーのトリガーは 1 行なので、状態は主文で伝える
     expect(wrapper.text()).toContain('所属テナントなし');
-    expect(wrapper.text()).toContain('利用可能なテナントがありません');
 
     await wrapper.get('[data-testid="tenant-switcher-trigger"]').trigger('click');
     expect(wrapper.get('[data-testid="tenant-switcher-menu"]').text()).toContain(
@@ -169,6 +169,5 @@ describe('TenantSwitcher', () => {
     const wrapper = mountSwitcher({ tenants, selectedTenantId: null });
 
     expect(wrapper.text()).toContain('指定されたテナントが見つかりません');
-    expect(wrapper.text()).toContain('URLを確認してください');
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, defineComponent, h, nextTick, ref } from 'vue';
+import { computed, defineComponent, h, ref } from 'vue';
 import { enableAutoUnmount, mount } from '@vue/test-utils';
 
 const { navigateSpy, projectsControl, tenantStoreStub } = vi.hoisted(() => ({
@@ -21,16 +21,8 @@ vi.mock('vike-vue/usePageContext', () => ({
   usePageContext: () => ({ routeParams: { tenant: 'acme' }, urlPathname: '/acme/my-tasks' }),
 }));
 
-vi.mock('@/composables/useAuthSession', () => ({
-  useAuthSession: () => ({ logout: vi.fn() }),
-}));
-
 vi.mock('@/composables/useRouteAlignedTenantId', () => ({
   useRouteAlignedTenantId: () => computed(() => 'tenant-1'),
-}));
-
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ user: { id: 'user-1', username: 'yupix', avatar_url: null } }),
 }));
 
 vi.mock('@/stores/tenant', () => ({ useTenantStore: () => tenantStoreStub }));
@@ -91,16 +83,6 @@ function findLink(href: string) {
   return link;
 }
 
-/** ユーザーメニューの開閉ボタン。テナント切り替えにも同じ trigger があるので名前で選ぶ。 */
-function findUserMenuTrigger() {
-  const triggers = document.body.querySelectorAll<HTMLButtonElement>(
-    '[data-slot="dropdown-menu-trigger"]',
-  );
-  const trigger = [...triggers].find((el) => el.textContent?.includes('yupix'));
-  if (!trigger) throw new Error('user menu trigger not found');
-  return trigger;
-}
-
 function findButton(label: string) {
   const button = [...document.body.querySelectorAll('button')].find(
     (el) => el.getAttribute('title') === label || el.textContent?.trim() === label,
@@ -134,21 +116,6 @@ describe('AppSidebar のナビリンク', () => {
     mountSidebar(setOpenMobile);
 
     findLink('/acme/my-tasks').click();
-
-    expect(setOpenMobile).toHaveBeenCalledWith(false);
-  });
-
-  /**
-   * ユーザーメニューは DropdownMenuPortal でサイドバーの外へ出るため、
-   * SidebarContent の委譲には掛からない。リンク側で閉じている。
-   */
-  it('ユーザーメニューの Account を押してもサイドバーを閉じる', async () => {
-    const setOpenMobile = vi.fn<(value: boolean) => void>();
-    mountSidebar(setOpenMobile);
-
-    findUserMenuTrigger().click();
-    await nextTick();
-    findLink('/settings/profile').click();
 
     expect(setOpenMobile).toHaveBeenCalledWith(false);
   });

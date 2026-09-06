@@ -6,6 +6,8 @@ export interface SidebarProps {
   side?: "left" | "right"
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
+  /** Offset the fixed desktop sidebar below an application-level header. */
+  desktopTopOffset?: string
   class?: HTMLAttributes["class"]
 }
 

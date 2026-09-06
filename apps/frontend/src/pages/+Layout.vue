@@ -36,6 +36,7 @@ const { meQuery, logout } = useAuthSession({
 const isEmailVerified = computed(() => meQuery.data.value?.email_verified ?? true);
 
 const AppSidebar = defineAsyncComponent(() => import('@/components/sidebar/AppSidebar.vue'));
+const AppHeader = defineAsyncComponent(() => import('@/components/header/AppHeader.vue'));
 </script>
 
 <template>
@@ -54,36 +55,44 @@ const AppSidebar = defineAsyncComponent(() => import('@/components/sidebar/AppSi
     :email="meQuery.data.value!.email"
     @logout="logout"
   />
-  <SidebarProvider v-else-if="meQuery.isSuccess.value">
-    <Suspense>
-      <AppSidebar />
-      <template #fallback>
-        <AppSidebarSkeleton />
-      </template>
-    </Suspense>
-    <SidebarInset>
-      <header
-        class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
-      >
-        <div class="flex items-center gap-2 px-4">
-          <SidebarTrigger class="-ml-1" />
-          <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem class="hidden md:block">
-                <BreadcrumbLink href="#"> ToDo </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator class="hidden md:block" />
-              <BreadcrumbItem>
-                <BreadcrumbPage>いい感じにする</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
+  <!--
+    テナントとアカウントは全幅のヘッダーに置く（サイドバーの上下ではなく）。
+    SidebarProvider は横並びなので、縦積みにして 1 段目をヘッダー、2 段目を
+    サイドバー + 本文にする。min-h-0 は min-h-svh を twMerge で上書きするためのもの。
+  -->
+  <SidebarProvider v-else-if="meQuery.isSuccess.value" class="min-h-0 h-svh flex-col">
+    <AppHeader />
+    <div class="flex min-h-0 w-full flex-1">
+      <Suspense>
+        <AppSidebar desktop-top-offset="3rem" />
+        <template #fallback>
+          <AppSidebarSkeleton desktop-top-offset="3rem" />
+        </template>
+      </Suspense>
+      <SidebarInset>
+        <header
+          class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+        >
+          <div class="flex items-center gap-2 px-4">
+            <SidebarTrigger class="-ml-1" />
+            <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem class="hidden md:block">
+                  <BreadcrumbLink href="#"> ToDo </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator class="hidden md:block" />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>いい感じにする</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+        </header>
+        <div class="flex flex-1 flex-col gap-4 p-4 pt-0">
+          <slot />
         </div>
-      </header>
-      <div class="flex flex-1 flex-col gap-4 p-4 pt-0">
-        <slot />
-      </div>
-    </SidebarInset>
+      </SidebarInset>
+    </div>
   </SidebarProvider>
 </template>

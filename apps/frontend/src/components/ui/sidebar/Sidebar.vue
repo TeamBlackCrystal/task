@@ -6,6 +6,7 @@ import SheetDescription from '@/components/ui/sheet/SheetDescription.vue'
 import SheetHeader from '@/components/ui/sheet/SheetHeader.vue'
 import SheetTitle from '@/components/ui/sheet/SheetTitle.vue'
 import { SIDEBAR_WIDTH_MOBILE, useSidebar } from "./utils"
+import { computed } from "vue"
 
 defineOptions({
   inheritAttrs: false,
@@ -18,6 +19,15 @@ const props = withDefaults(defineProps<SidebarProps>(), {
 })
 
 const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+
+const desktopSidebarStyle = computed(() => {
+  if (!props.desktopTopOffset) return undefined
+
+  return {
+    top: props.desktopTopOffset,
+    height: `calc(100svh - ${props.desktopTopOffset})`,
+  }
+})
 </script>
 
 <template>
@@ -83,6 +93,7 @@ const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
           : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l',
         props.class,
       )"
+      :style="desktopSidebarStyle"
       v-bind="$attrs"
     >
       <div
