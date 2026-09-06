@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { PhBell, PhDevices, PhKey, PhSlidersHorizontal, PhUser } from '@phosphor-icons/vue';
+import {
+  PhBell,
+  PhDevices,
+  PhKey,
+  PhShieldCheck,
+  PhSlidersHorizontal,
+  PhUser,
+} from '@phosphor-icons/vue';
 import type { Component } from 'vue';
 
 type NavItem = {
@@ -13,6 +20,7 @@ const items: NavItem[] = [
   { title: 'プロフィール', icon: PhUser, href: '/settings/profile' },
   { title: '環境設定', icon: PhSlidersHorizontal },
   { title: '通知', icon: PhBell },
+  { title: 'セキュリティ', icon: PhShieldCheck, href: '/settings/security' },
   { title: 'アクセストークン', icon: PhKey, href: '/settings/tokens' },
   { title: 'セッション', icon: PhDevices },
 ];

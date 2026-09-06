@@ -174,6 +174,36 @@ mod tests {
         assert!(parse_encryption_key(Some(&"a".repeat(31)), true).is_err());
     }
 
+    /// 連携一覧が返す識別子。OIDC だけ開始用 slug と形が違うので、画面はこちらで突き合わせる。
+    #[test]
+    fn db_provider_key_carries_oidc_issuer() {
+        let mut settings = OAuthSettings {
+            app_base_url: "http://localhost:3400".to_string(),
+            encryption_key: "k".repeat(32),
+            default_redirect_path: "/dashboard".to_string(),
+            github: None,
+            gitlab: None,
+            gitlab_selfhosted: None,
+            google: None,
+            oidc: Some(OidcConfig {
+                issuer_url: "https://idp.example.com".to_string(),
+                client_id: "id".to_string(),
+                client_secret: "secret".to_string(),
+            }),
+        };
+        assert_eq!(
+            settings.db_provider_key("oidc").as_deref(),
+            Some("oidc:https://idp.example.com")
+        );
+        assert_eq!(
+            settings.db_provider_key("github").as_deref(),
+            Some("github")
+        );
+
+        settings.oidc = None;
+        assert_eq!(settings.db_provider_key("oidc"), None);
+    }
+
     #[test]
     fn encryption_key_keeps_full_material() {
         // 先頭 32 バイトへの切り詰めをしない（鍵材料全体が HKDF に入る）。

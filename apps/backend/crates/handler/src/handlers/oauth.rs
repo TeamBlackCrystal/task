@@ -484,9 +484,12 @@ pub async fn list_providers(State(state): State<AppState>) -> Json<OAuthProvider
     let providers = OAUTH_PROVIDER_SLUGS
         .iter()
         .filter(|(slug, _)| settings.is_provider_configured(slug))
-        .map(|(slug, requires_instance_url)| OAuthProviderItem {
-            provider: (*slug).to_string(),
-            requires_instance_url: *requires_instance_url,
+        .filter_map(|(slug, requires_instance_url)| {
+            Some(OAuthProviderItem {
+                provider: (*slug).to_string(),
+                connection_provider: settings.db_provider_key(slug)?,
+                requires_instance_url: *requires_instance_url,
+            })
         })
         .collect();
 

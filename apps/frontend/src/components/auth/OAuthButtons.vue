@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { useOAuthProvidersQuery } from '@/lib/api-vue-query';
+import { providerLabel, startOAuth } from '@/lib/oauth-providers';
 
 const props = withDefaults(defineProps<{ redirectAfter?: string; errorRedirectAfter?: string }>(), {
   redirectAfter: '/',
@@ -11,7 +12,6 @@ const props = withDefaults(defineProps<{ redirectAfter?: string; errorRedirectAf
 });
 
 const { data } = useOAuthProvidersQuery();
-const apiBase = import.meta.env.VITE_API_BASE ?? '/api';
 const instanceUrls = ref<Record<string, string>>({});
 const showOAuthError = ref(false);
 
@@ -21,30 +21,15 @@ onMounted(() => {
   showOAuthError.value = params.has('oauth_error');
 });
 
-const PROVIDER_LABELS: Record<string, string> = {
-  github: 'GitHub',
-  gitlab: 'GitLab',
-  gitlab_selfhosted: 'GitLab (セルフホスト)',
-  google: 'Google',
-  oidc: 'OIDC',
-};
-
-function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider] ?? provider;
-}
-
-function startOAuth(provider: string, requiresInstanceUrl: boolean) {
-  const params = new URLSearchParams();
-  params.set('redirect_after', props.redirectAfter);
-  // プロバイダーエラー時は OAuth ボタンのあるページ（signin/signup）へ戻してエラーを表示させる。
-  params.set('error_redirect_after', props.errorRedirectAfter);
-  if (requiresInstanceUrl) {
-    const instanceUrl = instanceUrls.value[provider]?.trim();
-    if (!instanceUrl) return;
-    params.set('instance_url', instanceUrl);
-  }
-  // openapi-fetch クライアントは 302 をパースできないため、必ずフルページ遷移させる。
-  window.location.assign(`${apiBase}/v1/auth/oauth/${provider}?${params.toString()}`);
+function onStart(provider: string, requiresInstanceUrl: boolean) {
+  const instanceUrl = requiresInstanceUrl ? instanceUrls.value[provider]?.trim() : undefined;
+  if (requiresInstanceUrl && !instanceUrl) return;
+  startOAuth(provider, {
+    redirectAfter: props.redirectAfter,
+    // プロバイダーエラー時は OAuth ボタンのあるページ（signin/signup）へ戻してエラーを表示させる。
+    errorRedirectAfter: props.errorRedirectAfter,
+    instanceUrl,
+  });
 }
 </script>
 
@@ -78,7 +63,7 @@ function startOAuth(provider: string, requiresInstanceUrl: boolean) {
           variant="outline"
           class="w-full"
           :disabled="!instanceUrls[provider.provider]?.trim()"
-          @click="startOAuth(provider.provider, true)"
+          @click="onStart(provider.provider, true)"
         >
           {{ providerLabel(provider.provider) }} で続ける
         </Button>
@@ -88,7 +73,7 @@ function startOAuth(provider: string, requiresInstanceUrl: boolean) {
         type="button"
         variant="outline"
         class="w-full"
-        @click="startOAuth(provider.provider, false)"
+        @click="onStart(provider.provider, false)"
       >
         {{ providerLabel(provider.provider) }} で続ける
       </Button>
