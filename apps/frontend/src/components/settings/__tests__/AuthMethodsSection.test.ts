@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import AuthMethodsSection from '../AuthMethodsSection.vue';
+import { OAUTH_LINK_NOTICE } from '@/lib/one-time-notice';
 import type { components } from '@/generated/api';
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -140,6 +141,8 @@ enableAutoUnmount(afterEach);
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // 通知の印はタブに残るので、テスト間で持ち越さない
+  window.sessionStorage.clear();
 });
 
 describe('AuthMethodsSection のパスワード', () => {
@@ -237,7 +240,7 @@ describe('AuthMethodsSection のパスワード', () => {
     await wrapper.find('form').trigger('submit');
     await flushPromises();
 
-    expect(assignSpy).toHaveBeenCalledWith('/signin?password_changed=1');
+    expect(assignSpy).toHaveBeenCalledWith('/signin');
   });
 });
 
@@ -281,7 +284,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
     clickBodyButton('連携する');
 
     expect(assignSpy).toHaveBeenCalledWith(
-      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity%3Flinked%3Dgitlab_selfhosted&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(other)}`,
+      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(other)}`,
     );
   });
 
@@ -339,7 +342,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
 
     clickBodyButton('連携する');
     expect(assignSpy).toHaveBeenCalledWith(
-      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity%3Flinked%3Dgitlab_selfhosted&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(INSTANCE_URL)}`,
+      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(INSTANCE_URL)}`,
     );
   });
 
@@ -415,46 +418,78 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   });
 });
 
-describe('AuthMethodsSection の ?linked= の扱い', () => {
+describe('AuthMethodsSection の成功通知', () => {
   /** 連携から戻った直後の URL を作る。history.state も載せて引き継ぎを見る。 */
   function enterWith(search: string, state: unknown = { vike: 'routed' }) {
     window.history.replaceState(state, '', `/settings/security${search}`);
   }
 
-  it('知っているプロバイダーなら成功通知を出し、印を URL から落とす', async () => {
+  /** 「連携する」を押した側が置く印。 */
+  function markStarted(provider: string) {
+    window.sessionStorage.setItem(OAUTH_LINK_NOTICE, provider);
+  }
+
+  it('自分で始めた連携が一覧に入っていれば通知を出す', async () => {
+    stubFetch({ connections: [connection()], providers: [] });
+    markStarted('github');
+    enterWith('');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('GitHub を連携しました。');
+  });
+
+  // URL を開かせるだけで正規の成功通知を出せると、連携していない人に
+  // 連携できたと思わせられる。通知の根拠は本人のタブに置いた印だけにする
+  it('印が無ければ URL に linked を付けても通知を出さない', async () => {
     stubFetch({ connections: [connection()], providers: [] });
     enterWith('?linked=github');
     const wrapper = mountSection();
     await flushPromises();
 
-    expect(wrapper.text()).toContain('GitHub を連携しました。');
-    expect(window.location.search).toBe('');
-  });
-
-  // URL から拾った文字列をそのまま通知文へ入れると、その画面を開かせるだけで
-  // 正規の設定画面が出した通知として任意の文面を読ませられる
-  it('知らない値は通知に出さない', async () => {
-    stubFetch({ connections: [], providers: [] });
-    enterWith('?linked=%E5%81%BD%E3%81%AE%E3%81%8A%E7%9F%A5%E3%82%89%E3%81%9B');
-    const wrapper = mountSection();
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain('偽のお知らせ');
     expect(wrapper.text()).not.toContain('を連携しました。');
   });
 
-  it('知らない値でも印は URL から落とす（再読み込みで残さない）', async () => {
+  // 承認の途中で失敗するとこの画面には戻らない。印だけを根拠にすると、
+  // 次にここを開いた時点で連携できたことになってしまう
+  it('印があっても一覧に入っていなければ通知を出さない', async () => {
     stubFetch({ connections: [], providers: [] });
-    enterWith('?linked=bogus');
+    markStarted('github');
+    enterWith('');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('を連携しました。');
+  });
+
+  it('印は一度きりで、開き直しても通知は出ない', async () => {
+    stubFetch({ connections: [connection()], providers: [] });
+    markStarted('github');
+    enterWith('');
     mountSection();
     await flushPromises();
 
+    const second = mountSection();
+    await flushPromises();
+
+    expect(second.text()).not.toContain('を連携しました。');
+  });
+
+  it('プロバイダー側の失敗は通知に変えない', async () => {
+    stubFetch({ connections: [connection()], providers: [] });
+    markStarted('github');
+    enterWith('?oauth_error=access_denied');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('を連携しました。');
+    expect(wrapper.text()).toContain('外部プロバイダーでの連携に失敗しました。');
     expect(window.location.search).toBe('');
   });
 
-  it('印を落とすときに history.state を捨てない', async () => {
+  it('失敗の印を落とすときに history.state を捨てない', async () => {
     stubFetch({ connections: [connection()], providers: [] });
-    enterWith('?linked=github', { vike: 'routed' });
+    enterWith('?oauth_error=access_denied', { vike: 'routed' });
     mountSection();
     await flushPromises();
 

@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils';
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query';
 import SignInForm from '../SignInForm.vue';
+import { PASSWORD_CHANGED_NOTICE } from '@/lib/one-time-notice';
 
 const jsonResponse = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -51,6 +52,8 @@ enableAutoUnmount(afterEach);
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // 通知の印はタブに残るので、テスト間で持ち越さない
+  window.sessionStorage.clear();
 });
 
 describe('SignInForm', () => {
@@ -153,5 +156,37 @@ describe('SignInForm', () => {
     expect(document.body.textContent).toContain(
       'メールアドレスまたはパスワードが正しくありません。',
     );
+  });
+});
+
+describe('SignInForm のパスワード変更の案内', () => {
+  const NOTICE = 'すべてのセッションとパーソナルアクセストークンが失効したため';
+
+  it('設定画面が置いた印があるときだけ出す', async () => {
+    stubLogin(200, {});
+    window.sessionStorage.setItem(PASSWORD_CHANGED_NOTICE, '1');
+    const wrapper = await mountForm();
+
+    expect(wrapper.text()).toContain(NOTICE);
+  });
+
+  // URL を開かせるだけでこの案内を出せると、変えていない人にパスワードが変わったと
+  // 思わせられる。根拠は本人のタブに置いた印だけにする
+  it('印が無ければ URL に印を付けても出さない', async () => {
+    stubLogin(200, {});
+    window.history.replaceState(null, '', '/signin?password_changed=1');
+    const wrapper = await mountForm();
+
+    expect(wrapper.text()).not.toContain(NOTICE);
+  });
+
+  it('印は一度きりで、開き直しても出ない', async () => {
+    stubLogin(200, {});
+    window.sessionStorage.setItem(PASSWORD_CHANGED_NOTICE, '1');
+    await mountForm();
+
+    const second = await mountForm();
+
+    expect(second.text()).not.toContain(NOTICE);
   });
 });

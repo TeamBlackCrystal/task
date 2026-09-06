@@ -13,6 +13,7 @@ import {
   validatePasswordForm,
   type PasswordFormMode,
 } from '@/lib/auth-methods';
+import { markNotice, PASSWORD_CHANGED_NOTICE } from '@/lib/one-time-notice';
 
 const props = defineProps<{ hasPassword: boolean; email: string }>();
 
@@ -95,7 +96,9 @@ async function onSubmit() {
     });
     // セッションも PAT も失効済み。手元のキャッシュを持ち越さないよう、
     // クライアントルーティングではなくフルページ遷移でサインインへ移す。
-    window.location.assign('/signin?password_changed=1');
+    // 失効の理由はこの印で伝える（URL に置くと、開かせるだけで偽装できる）
+    markNotice(PASSWORD_CHANGED_NOTICE);
+    window.location.assign('/signin');
   } catch (e) {
     const message = messageOf(e);
     if (message === 'invalid-current-password') {

@@ -13,15 +13,16 @@ import PasswordInput from '@/components/auth/PasswordInput.vue';
 import { Input } from '@/components/ui/input';
 import { meQueryOptions, useLoginMutation, useLogoutMutation } from '@/lib/api-vue-query';
 import { arkMessage } from '@/lib/auth-validation';
+import { consumeNotice, PASSWORD_CHANGED_NOTICE } from '@/lib/one-time-notice';
 
 /**
- * パスワード変更はすべてのセッションと PAT を失効させるので、設定画面から
- * `?password_changed=1` 付きでここへ戻ってくる。なぜサインアウトされたのかを伝える。
+ * パスワード変更はすべてのセッションと PAT を失効させるので、設定画面がこのタブへ印を
+ * 置いてからここへ戻す。なぜサインアウトされたのかを伝える。
  */
 const passwordChanged = ref(false);
 
 onMounted(() => {
-  passwordChanged.value = new URLSearchParams(window.location.search).has('password_changed');
+  passwordChanged.value = consumeNotice(PASSWORD_CHANGED_NOTICE) !== null;
 });
 
 const schema = type({

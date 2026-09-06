@@ -12,7 +12,7 @@ import {
   PhWarningCircle,
   PhX,
 } from '@phosphor-icons/vue';
-import { computed, onMounted, ref, type Component } from 'vue';
+import { computed, onMounted, ref, watch, type Component } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -27,12 +27,13 @@ import {
   usePasskeysQuery,
 } from '@/lib/api-vue-query';
 import { countAuthMethods, formatConnectedAt, type OAuthConnection } from '@/lib/auth-methods';
+import { consumeNotice, markNotice, OAUTH_LINK_NOTICE } from '@/lib/one-time-notice';
 import { isKnownProvider, providerLabel, startOAuth } from '@/lib/oauth-providers';
 import type { components } from '@/generated/api';
 
 const props = defineProps<{ user: components['schemas']['UserResponse'] }>();
 
-/** この画面へ戻す。連携直後だけ `linked` を付けて、戻ったことを伝える。 */
+/** 承認のあとこの画面へ戻す。 */
 const SECURITY_PATH = '/settings/security';
 
 const queryClient = useQueryClient();
@@ -47,16 +48,17 @@ const confirmingKey = ref<string | null>(null);
 const rowError = ref<Record<string, string>>({});
 const instanceDrafts = ref<Record<string, string>>({});
 
+/** 連携を開始したプロバイダー。連携一覧に現れるまで通知を保留する。 */
+const pendingLinked = ref<string | null>(null);
+
 onMounted(() => {
   const params = new URLSearchParams(window.location.search);
-  // 知らない値は無視する。URL から来た文字列をそのまま通知文へ入れると、
-  // その画面を開かせるだけで任意の文面を「設定画面が出した通知」として読ませられる
-  const linked = params.get('linked');
-  const linkedProvider = linked && isKnownProvider(linked) ? linked : null;
-  if (linkedProvider) flash.value = `${providerLabel(linkedProvider)} を連携しました。`;
   // コールバックが失敗すると backend が ?oauth_error= を付けてここへ戻す。
   oauthFailed.value = params.has('oauth_error');
-  if (linked || oauthFailed.value) {
+  // 通知の根拠は URL ではなく、連携を始めたときにこのタブへ置いた印。
+  const started = consumeNotice(OAUTH_LINK_NOTICE);
+  if (!oauthFailed.value && started && isKnownProvider(started)) pendingLinked.value = started;
+  if (oauthFailed.value) {
     // 再読み込みで同じ通知が出ないよう、印だけ URL から落とす。
     // state は引き継ぐ（null を渡すと vike のクライアントルーターの state を捨てる）
     window.history.replaceState(window.history.state, '', SECURITY_PATH);
@@ -66,6 +68,20 @@ onMounted(() => {
 const connections = computed<OAuthConnection[]>(
   () => connectionsQuery.data.value?.connections ?? [],
 );
+// 実際に連携一覧へ入ったことまで確かめてから通知する。開始の印だけを見ると、
+// 承認の途中で失敗してこの画面に戻らなかったとき、次にここを開いた時点で誤って出る
+watch(
+  [pendingLinked, connections],
+  () => {
+    const provider = pendingLinked.value;
+    if (!provider) return;
+    if (!connections.value.some((connection) => connection.provider === provider)) return;
+    flash.value = `${providerLabel(provider)} を連携しました。`;
+    pendingLinked.value = null;
+  },
+  { immediate: true },
+);
+
 const providers = computed(() => providersQuery.data.value?.providers ?? []);
 const passkeyCount = computed(() => passkeysQuery.data.value?.passkeys?.length ?? 0);
 
@@ -169,8 +185,10 @@ function onLink(provider: components['schemas']['OAuthProviderItem']) {
   if (provider.requires_instance_url && (!instanceUrl || instanceAlreadyLinked(provider.provider)))
     return;
 
+  // 戻ってきたときの通知はこの印だけを根拠にする（URL には何も足さない）
+  markNotice(OAUTH_LINK_NOTICE, provider.provider);
   startOAuth(provider.provider, {
-    redirectAfter: `${SECURITY_PATH}?linked=${encodeURIComponent(provider.provider)}`,
+    redirectAfter: SECURITY_PATH,
     errorRedirectAfter: SECURITY_PATH,
     instanceUrl,
   });
