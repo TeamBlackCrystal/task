@@ -260,8 +260,49 @@ describe('AuthMethodsSection の OAuth 連携', () => {
     expect(document.body.textContent).toContain('dev@example.com');
     expect(document.body.textContent).toContain('接続日時');
     expect(document.body.textContent).toContain(INSTANCE_URL);
-    // 連携済みなので「追加できる連携」には出さない
-    expect(document.body.textContent).not.toContain('追加できる連携');
+    // インスタンスが違えば別の連携なので、1 件連携済みでも追加の口は残す
+    expect(document.body.textContent).toContain('追加できる連携');
+  });
+
+  it('self-hosted は連携済みでも別のインスタンスを開始できる', async () => {
+    stubFetch({
+      connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
+      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+    });
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    const wrapper = mountSection(true);
+    await flushPromises();
+
+    const other = 'https://gitlab.internal.example.com';
+    await wrapper.find('#instance-gitlab_selfhosted').setValue(other);
+    await flushPromises();
+
+    expect((bodyButton('連携する') as HTMLButtonElement).disabled).toBe(false);
+    clickBodyButton('連携する');
+
+    expect(assignSpy).toHaveBeenCalledWith(
+      `/api/v1/auth/oauth/gitlab_selfhosted?redirect_after=%2Fsettings%2Fsecurity%3Flinked%3Dgitlab_selfhosted&error_redirect_after=%2Fsettings%2Fsecurity&instance_url=${encodeURIComponent(other)}`,
+    );
+  });
+
+  it('連携済みと同じインスタンスは開始しない', async () => {
+    stubFetch({
+      connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
+      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+    });
+    const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
+    const wrapper = mountSection(true);
+    await flushPromises();
+
+    // 末尾のスラッシュ違いは同じインスタンスとして扱う
+    await wrapper.find('#instance-gitlab_selfhosted').setValue(`${INSTANCE_URL}/`);
+    await flushPromises();
+
+    const button = bodyButton('連携する') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('このインスタンスは連携済みです');
   });
 
   it('未連携のプロバイダーだけ追加候補に出す', async () => {

@@ -183,7 +183,7 @@ PAT で自分のプロフィールを書き換えられないことは、
 | 単体 | `apps/frontend/src/components/settings/__tests__/AccessTokensSection.test.ts` | 一覧表示（伏せ字・スコープ数・期限・最終使用）、発行リクエストの内容（90 日既定・無期限）、名前とスコープの入力チェック、403 の表示、取り消しの確認ダイアログと失敗時の表示、オーナーのテナントが無い場合の無効化 |
 | 単体 | `apps/frontend/src/lib/__tests__/personal-tokens.test.ts` | 有効期限プリセットの計算、伏せ字、期限・最終使用の表示文言（境界値込み） |
 | 統合 | `apps/backend/tests/oauth_integration.rs` | `has_password` の反転、初回パスワード設定が一度きりであること、パスワードを得たあとに最後の連携を解除できること |
-| 単体 | `apps/frontend/src/components/settings/__tests__/AuthMethodsSection.test.ts` | パスワードあり／なしの出し分け、初回設定に現在のパスワード欄を出さないこと、確認不一致で送信しないこと、現在のパスワード不一致の表示、変更後のサインイン画面への遷移、連携一覧と追加候補、self-hosted の URL 未入力での無効化、確認を挟む解除と `instance_url` の付与、最後の認証方法の拒否表示 |
+| 単体 | `apps/frontend/src/components/settings/__tests__/AuthMethodsSection.test.ts` | パスワードあり／なしの出し分け、初回設定に現在のパスワード欄を出さないこと、確認不一致で送信しないこと、現在のパスワード不一致の表示、変更後のサインイン画面への遷移、連携一覧と追加候補、self-hosted の URL 未入力での無効化、連携済みでも別インスタンスを開始できること、同一インスタンスを開始しないこと、確認を挟む解除と `instance_url` の付与、最後の認証方法の拒否表示 |
 | 単体 | `apps/frontend/src/lib/__tests__/auth-methods.test.ts` | 認証方法の数え方（パスキー込み）、パスワード入力チェック（8 文字の境界・現在と同値・確認不一致） |
 
 拒否を確認するテストには、対照として通るケースも置いている（過剰に拒否していないことの確認）。
@@ -273,8 +273,11 @@ OAuth の認可フローと解除規則は [OAuth ログイン](/features/auth-o
 - **連携済み**: `GET /v1/auth/oauth/connections`。プロバイダー名、`provider_email`、接続日時、
   self-hosted の `instance_url` を出す。解除は確認を挟んで
   `DELETE /v1/auth/oauth/connections/{provider}`（self-hosted は `instance_url` をクエリに添える）
-- **追加できる連携**: `GET /v1/auth/oauth/providers` のうち未連携のもの。「連携する」で既存の
-  OAuth 開始 URL へフルページ遷移する。`redirect_after` にこの画面を指定して戻し、
+- **追加できる連携**: `GET /v1/auth/oauth/providers` のうち未連携のもの。ただし
+  `requires_instance_url` のプロバイダー（GitLab セルフホスト）は、インスタンスが違えば
+  別の連携として足せるので、1 件連携済みでも候補に残す。連携済みと同じインスタンス URL を
+  入れた場合は開始しない（backend も `(provider, instance_url)` の重複を 409 で弾く）。
+  「連携する」で既存の OAuth 開始 URL へフルページ遷移する。`redirect_after` にこの画面を指定して戻し、
   `?linked=<provider>` で連携できた旨を出す。プロバイダー側のエラーは backend が
   `?oauth_error=` を付けて同じ画面に戻す
 

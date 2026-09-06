@@ -90,11 +90,56 @@ const linkedProviders = computed(() =>
   })),
 );
 
-/** 未連携のプロバイダーだけ「追加できる連携」に出す。 */
+/**
+ * 「追加できる連携」に出すプロバイダー。
+ *
+ * インスタンス URL を取るプロバイダー（GitLab セルフホスト）は、1 件連携済みでも候補に残す。
+ * backend は (provider, provider_user_id, instance_url) で接続を識別していて、インスタンスが
+ * 違えば別の連携として足せる。プロバイダー名だけで消すと、2 つ目のインスタンスを画面から
+ * 追加できなくなる。
+ */
 const availableProviders = computed(() => {
   const linked = new Set(connections.value.map((connection) => connection.provider));
-  return providers.value.filter((provider) => !linked.has(provider.provider));
+  return providers.value.filter(
+    (provider) => provider.requires_instance_url || !linked.has(provider.provider),
+  );
 });
+
+/**
+ * 同じインスタンスを指しているかの判定用。
+ *
+ * backend の正規化（`normalize_instance_url`）と厳密に揃える必要はない。ここで通しても
+ * 重複は backend が 409 で弾く。逆に別のインスタンスを取り違えて止めないよう、URL として
+ * 解釈できたときだけ origin + パスで比べる。
+ */
+function normalizeInstance(url: string): string {
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+/** プロバイダーごとの、連携済みインスタンス。 */
+const linkedInstances = computed(() => {
+  const byProvider = new Map<string, string[]>();
+  for (const connection of connections.value) {
+    if (!connection.instance_url) continue;
+    const list = byProvider.get(connection.provider) ?? [];
+    list.push(normalizeInstance(connection.instance_url));
+    byProvider.set(connection.provider, list);
+  }
+  return byProvider;
+});
+
+/** 入力中のインスタンスが既に連携済みか。承認画面へ飛ばす前に気づけるようにする。 */
+function instanceAlreadyLinked(provider: string): boolean {
+  const draft = instanceDrafts.value[provider]?.trim();
+  if (!draft) return false;
+  return (linkedInstances.value.get(provider) ?? []).includes(normalizeInstance(draft));
+}
 
 const PROVIDER_ICONS: Record<string, Component> = {
   github: PhGithubLogo,
@@ -109,16 +154,20 @@ function providerIcon(provider: string): Component {
 }
 
 function providerHint(provider: components['schemas']['OAuthProviderItem']): string {
-  return provider.requires_instance_url
-    ? 'インスタンス URL を指定して連携します'
-    : `${providerLabel(provider.provider)} アカウントでサインインできるようにします`;
+  if (!provider.requires_instance_url) {
+    return `${providerLabel(provider.provider)} アカウントでサインインできるようにします`;
+  }
+  return linkedInstances.value.has(provider.provider)
+    ? '別のインスタンス URL を指定して、もう1つ連携できます'
+    : 'インスタンス URL を指定して連携します';
 }
 
 function onLink(provider: components['schemas']['OAuthProviderItem']) {
   const instanceUrl = provider.requires_instance_url
     ? instanceDrafts.value[provider.provider]?.trim()
     : undefined;
-  if (provider.requires_instance_url && !instanceUrl) return;
+  if (provider.requires_instance_url && (!instanceUrl || instanceAlreadyLinked(provider.provider)))
+    return;
 
   startOAuth(provider.provider, {
     redirectAfter: `${SECURITY_PATH}?linked=${encodeURIComponent(provider.provider)}`,
@@ -316,7 +365,9 @@ async function onPasswordSet() {
               variant="outline"
               size="sm"
               :disabled="
-                provider.requires_instance_url && !instanceDrafts[provider.provider]?.trim()
+                provider.requires_instance_url &&
+                (!instanceDrafts[provider.provider]?.trim() ||
+                  instanceAlreadyLinked(provider.provider))
               "
               @click="onLink(provider)"
             >
@@ -337,7 +388,10 @@ async function onPasswordSet() {
                 :model-value="instanceDrafts[provider.provider] ?? ''"
                 @update:model-value="(v) => (instanceDrafts[provider.provider] = String(v))"
               />
-              <FieldDescription>
+              <FieldDescription v-if="instanceAlreadyLinked(provider.provider)" role="alert">
+                このインスタンスは連携済みです。別のインスタンス URL を入力してください。
+              </FieldDescription>
+              <FieldDescription v-else>
                 インスタンス URL の入力が必要なプロバイダーです。承認前に指定してください。
               </FieldDescription>
             </Field>
