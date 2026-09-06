@@ -205,7 +205,7 @@ async fn only_owner_and_tenant_admin_can_manage_members() {
 
     assert_eq!(
         app.delete_with_session(&target_path).await.status(),
-        StatusCode::NO_CONTENT
+        StatusCode::OK
     );
     assert_eq!(
         app.delete_with_session(&target_path).await.status(),
@@ -311,7 +311,7 @@ async fn personal_project_is_not_open_to_other_tenant_members() {
         app.delete_with_session(&format!("{members_path}/{}", bob.id))
             .await
             .status(),
-        StatusCode::NO_CONTENT
+        StatusCode::OK
     );
 
     app.reset_session_client();
@@ -379,12 +379,22 @@ async fn removing_tenant_member_keeps_project_scoping() {
     // alice をテナントから外す
     app.reset_session_client();
     app.login_session(&owner.email, &owner.password).await;
+    let removed = app
+        .delete_with_session(&format!("{members_path}/{}", alice.id))
+        .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    // 除名が消すのは継承（テナント所属）だけ。明示 ACE は残り、応答がそれを名指しする
+    let removed_body: Value = removed.json().await.expect("remove member json");
+    let remaining_acl = removed_body["remaining_explicit_projects"]
+        .as_array()
+        .expect("remaining_explicit_projects must be an array");
+    assert_eq!(remaining_acl.len(), 1, "残る明示 ACE は 1 件");
     assert_eq!(
-        app.delete_with_session(&format!("{members_path}/{}", alice.id))
-            .await
-            .status(),
-        StatusCode::NO_CONTENT
+        remaining_acl[0]["project_id"].as_str(),
+        Some(tp.project_id.to_string().as_str()),
+        "残る明示 ACE のプロジェクトを名指しする"
     );
+    assert_eq!(remaining_acl[0]["role"].as_str(), Some("Member"));
     let remaining = app.get_with_session(&project_members_path).await;
     assert_eq!(remaining.status(), StatusCode::OK);
     let remaining_body: Value = remaining.json().await.expect("project members json");
@@ -394,7 +404,7 @@ async fn removing_tenant_member_keeps_project_scoping() {
             .expect("project members must be an array")
             .len(),
         1,
-        "再参加したときに戻せるよう、プロジェクトの指定自体は残す"
+        "明示 ACE（プロジェクトの指定）自体は残る。再参加したときはそのまま戻る"
     );
 
     // 絞り込みは壊れない。bob は依然として入れない
@@ -406,15 +416,16 @@ async fn removing_tenant_member_keeps_project_scoping() {
         "メンバーを外しても、絞り込み済みのプロジェクトは他のメンバーに開かない"
     );
 
-    // テナントから外れた alice は project-only の客分になり、
-    // 残った明示指定のプロジェクトには引き続き入れる。
+    // 明示 ACE は継承元（テナント所属）と独立に残る——NTFS でグループから外しても
+    // ファイルの explicit ACE が残るのと同じ。テナントから外れた alice は
+    // project-only の客分になり、明示 ACE のあるプロジェクトには引き続き入れる。
     // テナント全体の口が閉じたままであることは project_guest_access_integration.rs が固定する
     app.reset_session_client();
     app.login_session(&alice.email, &alice.password).await;
     assert_eq!(
         app.get_with_session(&project_path).await.status(),
         StatusCode::OK,
-        "残った project_members の行は客分としてそのプロジェクトへ通す"
+        "残った明示 ACE は客分としてそのプロジェクトへ通す"
     );
 
     // テナントに戻せば、元のプロジェクト指定がそのまま効く
@@ -504,11 +515,17 @@ async fn removed_member_pat_loses_tenant_read_access() {
     // alice をテナントから外す
     app.reset_session_client();
     app.login_session(&owner.email, &owner.password).await;
+    let removed = app
+        .delete_with_session(&format!("{members_path}/{}", alice.id))
+        .await;
+    assert_eq!(removed.status(), StatusCode::OK);
+    let removed_body: Value = removed.json().await.expect("remove member json");
     assert_eq!(
-        app.delete_with_session(&format!("{members_path}/{}", alice.id))
-            .await
-            .status(),
-        StatusCode::NO_CONTENT
+        removed_body["remaining_explicit_projects"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "明示 ACE を持たぬ人の除名は、残る ACE が空で返る"
     );
 
     assert_eq!(
@@ -630,7 +647,7 @@ async fn removed_tenant_member_does_not_hold_last_project_admin_slot() {
         app.delete_with_session(&format!("{members_path}/{}", alice.id))
             .await
             .status(),
-        StatusCode::NO_CONTENT
+        StatusCode::OK
     );
 
     // 残った行が Admin 枠を占有し続けないこと

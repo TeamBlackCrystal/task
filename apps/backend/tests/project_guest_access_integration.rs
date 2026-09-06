@@ -127,8 +127,14 @@ async fn setup_guest(app: &mut TestApp) -> GuestSetup {
         .await;
     assert_eq!(
         removed.status(),
-        StatusCode::NO_CONTENT,
-        "guest をテナントから除名（project_members の行は残る）"
+        StatusCode::OK,
+        "guest をテナントから除名（明示 ACE の行は残る）"
+    );
+    let removed_body: Value = removed.json().await.expect("remove member json");
+    assert_eq!(
+        project_ids_of_remaining(&removed_body),
+        vec![tp.project_id],
+        "除名の応答が、残る明示 ACE のプロジェクトを名指しする"
     );
 
     GuestSetup {
@@ -160,6 +166,21 @@ async fn membership_of(res: reqwest::Response, tenant_id: Uuid) -> Option<String
 }
 
 /// プロジェクト一覧レスポンスから id を取り出す。
+/// 除名応答 `remaining_explicit_projects` の project_id を key 順（応答順）に取り出す
+fn project_ids_of_remaining(body: &Value) -> Vec<Uuid> {
+    body["remaining_explicit_projects"]
+        .as_array()
+        .expect("remaining_explicit_projects must be an array")
+        .iter()
+        .map(|p| {
+            p["project_id"]
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .expect("project_id must be a uuid")
+        })
+        .collect()
+}
+
 fn project_ids(body: Value) -> Vec<Uuid> {
     body.as_array()
         .expect("project list must be an array")
@@ -627,7 +648,7 @@ async fn guest_cannot_disable_totp_under_require_2fa() {
     let removed = app
         .delete_with_session(&format!("{members_path}/{}", guest2.id))
         .await;
-    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    assert_eq!(removed.status(), StatusCode::OK);
     let policy = app
         .post_json_with_session(
             &format!("/v1/tenants/{}/require-2fa", s.tenant_id),

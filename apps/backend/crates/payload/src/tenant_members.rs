@@ -4,6 +4,7 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::users::UserSummary;
+use entity::project_members::ProjectRole;
 use entity::tenant_members::{self, TenantRole};
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -41,4 +42,24 @@ pub struct AddTenantMemberRequest {
 #[derive(Validate, Debug, Deserialize, ToSchema)]
 pub struct UpdateTenantMemberRequest {
     pub role: TenantRole,
+}
+
+/// テナント除名の後もその人に残る、プロジェクト単位の明示 ACE。
+/// テナント所属（継承）を外しても明示 ACE は独立して残り、持ち主は客分としてそのプロジェクトに入り続ける。
+/// 管理者が「除名したのにまだ入れる」と驚かないよう、除名の応答で名指しして返す。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RemainingExplicitProject {
+    #[schema(value_type = String, format = "uuid")]
+    pub project_id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub role: ProjectRole,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RemoveTenantMemberResponse {
+    /// 除名の後も残る明示 ACE。
+    /// 空なら、この人はもうこのテナントのどこにも入れない。
+    /// 閉め出したい場合は、ここに挙がったプロジェクトのメンバーからも外す。
+    pub remaining_explicit_projects: Vec<RemainingExplicitProject>,
 }

@@ -299,7 +299,7 @@ async fn removing_a_tenant_member_waits_for_the_membership_lock() {
     // 対照: ロックが空いていれば除名は通る（過剰に塞いでいない）
     assert_eq!(
         app.delete_with_session(&bob_tenant_path).await.status(),
-        StatusCode::NO_CONTENT,
+        StatusCode::OK,
         "ロックが空いていれば除名できる"
     );
 
@@ -368,7 +368,7 @@ async fn an_owner_can_still_manage_a_project_whose_admins_all_left() {
         app.delete_with_session(&format!("{tenant_members_path}/{}", bob.id))
             .await
             .status(),
-        StatusCode::NO_CONTENT,
+        StatusCode::OK,
         "単独 Admin でもテナントからは外せる（オフボーディングを止めない）"
     );
 

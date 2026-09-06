@@ -7743,8 +7743,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "削除しました"
+          "200": {
+            "description": "削除しました。除名の後も残るプロジェクト単位の明示 ACE を同梱する。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveTenantMemberResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "ログインまたはセッションが必要です",
@@ -21919,6 +21926,39 @@
             }
           }
         ]
+      },
+      "RemainingExplicitProject": {
+        "type": "object",
+        "description": "テナント除名の後もその人に残る、プロジェクト単位の明示 ACE。\nテナント所属（継承）を外しても明示 ACE は独立して残り、持ち主は客分としてそのプロジェクトに入り続ける。\n管理者が「除名したのにまだ入れる」と驚かないよう、除名の応答で名指しして返す。",
+        "required": ["project_id", "key", "name", "role"],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          }
+        }
+      },
+      "RemoveTenantMemberResponse": {
+        "type": "object",
+        "required": ["remaining_explicit_projects"],
+        "properties": {
+          "remaining_explicit_projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemainingExplicitProject"
+            },
+            "description": "除名の後も残る明示 ACE。\n空なら、この人はもうこのテナントのどこにも入れない。\n閉め出したい場合は、ここに挙がったプロジェクトのメンバーからも外す。"
+          }
+        }
       },
       "ReorderRequest": {
         "type": "object",

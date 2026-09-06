@@ -6,7 +6,8 @@ use axum::{
 use axum_valid::Valid;
 use sea_orm::prelude::Uuid;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    TransactionTrait,
 };
 
 use crate::AppState;
@@ -16,7 +17,10 @@ use crate::extractors::AuthUser;
 use crate::handlers::project_members;
 use crate::openapi::CrudErrors;
 use entity::tenant_members::TenantRole;
-use entity::{scopes::Scope, tenant_members, tenants, users};
+use entity::{
+    project_members as project_members_entity, projects, scopes::Scope, tenant_members, tenants,
+    users,
+};
 use payload::tenant_members::*;
 use service::db::is_postgres_unique_violation;
 
@@ -215,7 +219,7 @@ pub async fn update_member(
         ("user_id" = Uuid, Path, description = "ユーザーID"),
     ),
     responses(
-        (status = 204, description = "削除しました"),
+        (status = 200, description = "削除しました。除名の後も残るプロジェクト単位の明示 ACE を同梱する。", body = RemoveTenantMemberResponse),
         CrudErrors,
     )
 )]
@@ -223,7 +227,7 @@ pub async fn remove_member(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<RemoveTenantMemberResponse>, AppError> {
     auth.require_scope(Scope::AdminTenant)?;
     auth.ensure_tenant_access(&state, tenant_id, None).await?;
     require_tenant_admin(&state, tenant_id, auth.user_id).await?;
@@ -243,17 +247,51 @@ pub async fn remove_member(
     let txn = state.db.begin().await?;
     project_members::lock_membership_changes(&txn, tenant_id).await?;
 
-    // project_members の行はあえて残す。残った行の持ち主は project-only の客分になり、
-    // 名指しされたプロジェクトの中だけ引き続き入れる（テナント全体の口は開かない。
-    // apps/backend/docs/tenant-project-authz.md の「所属の 3 層」）。
-    // 逆に消すと、その人しか指定されていなかったプロジェクトがメンバー 0 人になり、
-    // 「メンバー未指定＝テナント全体に開放」の規則で他のメンバーに開いてしまう。
-    // 残しておけば再参加したときに元の割り当てがそのまま戻る。
+    // 除名が消すのはテナント所属（継承）だけ。`project_members` の行はプロジェクト単位の
+    // 明示 ACE であり、NTFS / NFSv4 の ACL と同じく継承元と独立して残る
+    // （apps/backend/docs/tenant-project-authz.md の「継承と明示」）。残った行の持ち主は
+    // project-only の客分になり、名指しされたプロジェクトの中だけ引き続き入れる。
+    // 副次的に、その人しか指定されていなかったプロジェクトがメンバー 0 人になって
+    // 「メンバー未指定＝テナント全体に開放」へ戻ることも防ぎ、再参加時は元の割り当てが戻る。
     // 通知の宛先はテナントに居る人だけに絞られる（`service::access`。客分には飛ばない）
     tenant_members::Entity::delete_by_id(member.id)
         .exec(&txn)
         .await?;
+
+    // 「除名したのにまだ入れる」と管理者が驚かぬよう、残る明示 ACE を名指しして返す。
+    // 同じ txn で読む。commit 後に読むと、その間の project member 操作が混ざる
+    let remaining_explicit_projects = remaining_explicit_projects(&txn, tenant_id, user_id).await?;
     txn.commit().await?;
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(RemoveTenantMemberResponse {
+        remaining_explicit_projects,
+    }))
+}
+
+/// このテナント配下で、その人に残っている明示 ACE（`project_members` の行）を集める。
+/// 他テナントのプロジェクトの行は、このテナントの除名とは無関係なので含めない
+async fn remaining_explicit_projects<C: ConnectionTrait>(
+    db: &C,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<RemainingExplicitProject>, AppError> {
+    let rows = project_members_entity::Entity::find()
+        .filter(project_members_entity::Column::UserId.eq(user_id))
+        .find_also_related(projects::Entity)
+        .all(db)
+        .await?;
+    let mut out: Vec<RemainingExplicitProject> = rows
+        .into_iter()
+        .filter_map(|(m, p)| {
+            let p = p?;
+            (p.tenant_id == tenant_id).then_some(RemainingExplicitProject {
+                project_id: p.id,
+                key: p.key,
+                name: p.name,
+                role: m.role,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
 }
