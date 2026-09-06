@@ -87,11 +87,20 @@ const labels = [
   },
 ];
 
+/** 担当者の候補。`assignable-users` はメンバー行ではなく利用者そのものを返す */
+const members = [
+  { id: 'user-1', username: 'yupix', avatar_url: null },
+  { id: 'user-2', username: 'sousuke', avatar_url: null },
+];
+
 type MountOptions = {
   open?: boolean;
   labels?: typeof labels;
   labelsLoading?: boolean;
   labelsError?: boolean;
+  members?: typeof members;
+  membersLoading?: boolean;
+  membersError?: boolean;
 };
 
 function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
@@ -105,6 +114,9 @@ function mountDialog(queryClient: QueryClient, options: MountOptions = {}) {
       labels: options.labels,
       labelsLoading: options.labelsLoading,
       labelsError: options.labelsError,
+      members: options.members,
+      membersLoading: options.membersLoading,
+      membersError: options.membersError,
     },
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
@@ -562,6 +574,194 @@ describe('CreateTaskDialog labels query states', () => {
     const heading = document.getElementById('task-labels-label');
     expect(heading?.textContent).toContain('ラベル');
     expect(group?.contains(heading)).toBe(true);
+    wrapper.unmount();
+  });
+});
+
+describe('CreateTaskDialog assignee selection', () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    isHydrated.value = true;
+    isPending.value = false;
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(createdTask);
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function memberButton(name: string) {
+    const button = [...document.body.querySelectorAll('button[aria-pressed]')].find(
+      (el) => el.textContent?.trim() === name,
+    );
+    if (!button) throw new Error(`member button ${name} not found`);
+    return button as HTMLButtonElement;
+  }
+
+  /**
+   * 担当者は作成後にしか付けられなかった。作成時に選べると、割り当て済みの状態で
+   * 一覧に出せる。role は詳細から付けるときと同じ primary に揃える。
+   */
+  it('選択した担当者を assignees として作成リクエストに含める', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('担当者付きで作成');
+
+    memberButton('yupix').click();
+    await nextTick();
+    expect(memberButton('yupix').getAttribute('aria-pressed')).toBe('true');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toEqual([
+      { user_id: 'user-1', role: 'primary' },
+    ]);
+    wrapper.unmount();
+  });
+
+  it('担当者を選ばなければ assignees を送らない', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('未割当で作成');
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('トグル解除で担当者の選択が外れる', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('選んで外す');
+
+    memberButton('yupix').click();
+    await nextTick();
+    memberButton('yupix').click();
+    await nextTick();
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  // 候補の再取得で消えた利用者を送ると、backend が 404 で弾く（ラベルと同じ理由）
+  it('候補の再取得で消えた ID は選択から外れて送信されない', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('抜けた人を送らない');
+
+    memberButton('yupix').click();
+    memberButton('sousuke').click();
+    await nextTick();
+
+    await wrapper.setProps({ members: [members[1]] });
+    await nextTick();
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toEqual([
+      { user_id: 'user-2', role: 'primary' },
+    ]);
+    wrapper.unmount();
+  });
+
+  it('members が undefined（ロード中・エラー）になっても選択は保持される', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+    await new DOMWrapper(getTitleInput()).setValue('取得が揺れても保つ');
+
+    memberButton('yupix').click();
+    await nextTick();
+
+    await wrapper.setProps({ members: undefined, membersLoading: true });
+    await nextTick();
+    await wrapper.setProps({ members, membersLoading: false });
+    await nextTick();
+
+    getForm().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mutateAsync.mock.calls[0][0].body.assignees).toEqual([
+      { user_id: 'user-1', role: 'primary' },
+    ]);
+    wrapper.unmount();
+  });
+});
+
+describe('CreateTaskDialog assignable-users query states', () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    isHydrated.value = true;
+    isPending.value = false;
+    mutateAsync.mockReset();
+    mutateAsync.mockResolvedValue(createdTask);
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('ロード中は担当者欄にロード中表示を出す', async () => {
+    const wrapper = mountDialog(queryClient, { membersLoading: true });
+    await nextTick();
+
+    expect(document.body.textContent).toContain('担当者');
+    expect(document.body.textContent).toContain('メンバーを読み込み中...');
+    wrapper.unmount();
+  });
+
+  it('取得エラーはエラー表示と再試行を出し、正常な空一覧と区別する', async () => {
+    const wrapper = mountDialog(queryClient, { membersError: true });
+    await nextTick();
+
+    expect(document.body.textContent).toContain('メンバーの取得に失敗しました');
+    const retry = [...document.body.querySelectorAll('button')].find(
+      (el) => el.textContent?.trim() === '再試行',
+    );
+    expect(retry).toBeDefined();
+    retry!.click();
+    await nextTick();
+    expect(wrapper.emitted('retryMembers')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  // 候補が 0 人なのは正常な状態。節ごと出さない（ラベルと同じ）
+  it('正常な 0 件では担当者欄を表示しない', async () => {
+    const wrapper = mountDialog(queryClient, { members: [] });
+    await nextTick();
+
+    expect(document.body.textContent).not.toContain('担当者');
+    wrapper.unmount();
+  });
+
+  it('担当者欄は role=group で「担当者」見出しに関連付く', async () => {
+    const wrapper = mountDialog(queryClient, { members });
+    await nextTick();
+
+    const group = document.body.querySelector('[aria-labelledby="task-assignees-label"]');
+    expect(group).not.toBeNull();
+    expect(group!.getAttribute('role')).toBe('group');
+    expect(document.getElementById('task-assignees-label')?.textContent).toContain('担当者');
     wrapper.unmount();
   });
 });
