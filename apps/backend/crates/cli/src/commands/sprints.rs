@@ -1,6 +1,8 @@
 //! スプリント。
 
+use entity::sprints::SprintStatus;
 use payload::sprints::{BurndownPoint, CompleteSprintRequest, SprintDetail, SprintResponse};
+use sea_orm::ActiveEnum;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -15,6 +17,8 @@ pub async fn run(context: &Context, command: SprintsCommand, output: OutputOptio
     let api = &context.connect()?;
     match command {
         SprintsCommand::List { project, status } => {
+            // 検証せず素通しすると、綴りを外したまま絞り込みが効かない結果が返る
+            let status = status.as_deref().map(parse_sprint_status).transpose()?;
             let project = resolve_project(api, &project).await?;
             let query = status
                 .map(|status| vec![("status", status)])
@@ -96,6 +100,18 @@ async fn resolve_sprint_id(api: &ApiClient, project_id: Uuid, id_or_name: &str) 
         .ok_or_else(|| CliError::not_found(format!("Sprint not found: {id_or_name}")))
 }
 
+/// 綴りは entity の `string_value` を正とする。CLI に一覧を写さない。
+fn parse_sprint_status(raw: &str) -> Result<String> {
+    SprintStatus::try_from_value(&raw.to_ascii_lowercase())
+        .map(|status| status.to_value())
+        .map_err(|_| {
+            CliError::validation(format!(
+                "unknown sprint status: {raw} (expected one of {})",
+                SprintStatus::values().join(", ")
+            ))
+        })
+}
+
 fn sprints_path(api: &ApiClient, project_id: Uuid) -> Vec<String> {
     vec![
         "v1".into(),
@@ -115,4 +131,33 @@ fn sprint_path(api: &ApiClient, project_id: Uuid, sprint_id: &str) -> Vec<String
 
 fn borrow(segments: &[String]) -> Vec<&str> {
     segments.iter().map(String::as_str).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_the_documented_sprint_statuses() {
+        for raw in ["planning", "active", "completed"] {
+            assert_eq!(parse_sprint_status(raw).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn accepts_a_status_regardless_of_case() {
+        assert_eq!(parse_sprint_status("Active").unwrap(), "active");
+    }
+
+    /// 素通しさせると、綴りを外したまま絞り込みが効かない結果が返る。
+    #[test]
+    fn rejects_an_unknown_status_and_lists_the_valid_ones() {
+        let err = parse_sprint_status("reviewing").unwrap_err();
+
+        assert_eq!(err.exit_code, 2, "引数の検証エラーは 2");
+        assert!(err.message.contains("reviewing"), "{}", err.message);
+        for expected in ["planning", "active", "completed"] {
+            assert!(err.message.contains(expected), "{}", err.message);
+        }
+    }
 }

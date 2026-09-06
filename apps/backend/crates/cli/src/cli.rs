@@ -2,6 +2,21 @@
 
 use clap::{Parser, Subcommand};
 
+// clap の help はコンパイル時のリテラルなので、entity の値をそのまま埋められない
+// （`concat!` はリテラルしか受け取らないため定数にもできない）。写しになるぶん、
+// 下の `value_hints_match_the_entity` で entity と一致することを固定する。
+macro_rules! priority_hint {
+    () => {
+        "critical_fire, critical, high, medium, low, trivial"
+    };
+}
+
+macro_rules! sprint_status_hint {
+    () => {
+        "planning, active, completed"
+    };
+}
+
 #[derive(Debug, Parser)]
 // 版はビルド時に決まる（`build.rs`。タグからのリリースではタグの版になる）
 #[command(name = "task", version = env!("TASK_CLI_VERSION"), about = "Task management CLI")]
@@ -93,6 +108,12 @@ pub enum ConfigCommand {
 pub enum ProjectsCommand {
     /// List projects
     List,
+    /// List the statuses a project's tasks can be in
+    Statuses {
+        /// Project key or UUID
+        #[arg(long)]
+        project: String,
+    },
     /// Show a project by key or UUID
     Show {
         /// Project key or UUID
@@ -107,8 +128,7 @@ pub enum TasksCommand {
         /// Project key or UUID
         #[arg(long)]
         project: String,
-        /// Filter by priority
-        #[arg(long)]
+        #[arg(long, help = concat!("Filter by priority (", priority_hint!(), ")"))]
         priority: Option<String>,
     },
     /// Create a task
@@ -125,8 +145,7 @@ pub enum TasksCommand {
         /// Read the description from a file (`-` for stdin)
         #[arg(long, conflicts_with = "description")]
         description_file: Option<String>,
-        /// Task priority
-        #[arg(long)]
+        #[arg(long, help = concat!("Task priority. Accepted values: ", priority_hint!()))]
         priority: Option<String>,
         /// Status name
         #[arg(long)]
@@ -159,8 +178,7 @@ pub enum TasksCommand {
         /// Status name
         #[arg(long)]
         status: Option<String>,
-        /// Priority
-        #[arg(long)]
+        #[arg(long, help = concat!("Priority (", priority_hint!(), ")"))]
         priority: Option<String>,
     },
     /// Mark a task as done
@@ -216,8 +234,7 @@ pub enum SprintsCommand {
         /// Project key or UUID
         #[arg(long)]
         project: String,
-        /// Filter by sprint status
-        #[arg(long)]
+        #[arg(long, help = concat!("Filter by sprint status (", sprint_status_hint!(), ")"))]
         status: Option<String>,
     },
     /// Show sprint details
@@ -341,6 +358,17 @@ pub enum ReviewCommand {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    /// help に並べた候補は entity の写し。entity 側が増減したらここで落として気付く。
+    #[test]
+    fn value_hints_match_the_entity() {
+        use entity::sprints::SprintStatus;
+        use entity::tasks::TaskPriority;
+        use sea_orm::ActiveEnum;
+
+        assert_eq!(priority_hint!(), TaskPriority::values().join(", "));
+        assert_eq!(sprint_status_hint!(), SprintStatus::values().join(", "));
+    }
 
     #[test]
     fn the_command_tree_is_internally_consistent() {

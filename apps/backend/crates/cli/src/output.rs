@@ -128,6 +128,25 @@ mod tests {
         assert_eq!(human(listing), "APP-1\tFirst\nAPP-2\tSecond");
     }
 
+    /// `projects statuses` の人間向け出力。名前の配列を渡すと 1 行ずつになる。
+    /// オブジェクトで包むと畳めず（特別扱いは `tasks` だけ）、id や日時まで出てしまう。
+    #[test]
+    fn renders_a_string_list_as_one_line_each() {
+        let names = json!(["Backlog", "Todo", "In Progress"]);
+        assert_eq!(human(names), "Backlog\nTodo\nIn Progress");
+    }
+
+    /// 畳めないオブジェクトで包むと用途に合わない出力になることの裏取り。
+    /// これが `projects statuses` の通常出力で起きていた。
+    #[test]
+    fn does_not_fold_a_statuses_object() {
+        let listing = json!({ "statuses": [{ "name": "Todo", "position": 0 }] });
+        assert!(
+            human(listing).starts_with('{'),
+            "オブジェクトは JSON のまま出る"
+        );
+    }
+
     #[test]
     fn keeps_json_for_objects_that_do_not_fold() {
         assert_eq!(

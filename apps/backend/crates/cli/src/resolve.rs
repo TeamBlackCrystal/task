@@ -104,7 +104,28 @@ fn pick_status_by_name(statuses: &[ProjectStatusResponse], name: &str) -> Result
         .iter()
         .find(|status| status.name.eq_ignore_ascii_case(name))
         .map(|status| status.id)
-        .ok_or_else(|| CliError::not_found(format!("Status not found: {name}")))
+        .ok_or_else(|| {
+            // ステータスはプロジェクトごとに違うので、綴りを外したときに何が使えるか
+            // 分からないと詰まる。解決のために一覧はすでに取ってあるので、そのまま添える
+            CliError::not_found(format!(
+                "Status not found: {name} (this project has {})",
+                status_names(statuses)
+            ))
+        })
+}
+
+/// エラーに添えるステータス名。並び順は画面と揃える（position 昇順）。
+fn status_names(statuses: &[ProjectStatusResponse]) -> String {
+    if statuses.is_empty() {
+        return "none".into();
+    }
+    let mut sorted: Vec<&ProjectStatusResponse> = statuses.iter().collect();
+    sorted.sort_by_key(|status| status.position);
+    sorted
+        .iter()
+        .map(|status| status.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn pick_done_status(statuses: &[ProjectStatusResponse]) -> Result<Uuid> {
@@ -211,6 +232,50 @@ mod tests {
                 .exit_code,
             5
         );
+    }
+
+    /// 綴りを外したとき、そのプロジェクトで何が使えるかが分からないと詰まる。
+    /// 解決のために一覧はすでに取ってあるので、エラーに添える。
+    #[test]
+    fn lists_the_available_statuses_when_the_name_does_not_match() {
+        let statuses = vec![
+            status("Todo", false, true, 0),
+            status("In Progress", false, false, 1),
+            status("Done", true, false, 2),
+        ];
+
+        let err = pick_status_by_name(&statuses, "Reviewing").unwrap_err();
+
+        assert!(err.message.contains("Reviewing"), "{}", err.message);
+        assert!(
+            err.message.contains("Todo, In Progress, Done"),
+            "並び順のまま候補を出す: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn orders_the_listed_statuses_by_position_not_by_input_order() {
+        let statuses = vec![
+            status("Done", true, false, 2),
+            status("Todo", false, true, 0),
+            status("In Progress", false, false, 1),
+        ];
+
+        let err = pick_status_by_name(&statuses, "nope").unwrap_err();
+
+        assert!(
+            err.message.contains("Todo, In Progress, Done"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn says_none_when_the_project_has_no_statuses() {
+        let err = pick_status_by_name(&[], "Todo").unwrap_err();
+
+        assert!(err.message.contains("none"), "{}", err.message);
     }
 
     #[test]
