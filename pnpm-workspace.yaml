@@ -15,8 +15,8 @@ catalog:
   '@codemirror/state': 6.7.2
   '@codemirror/view': 6.43.10
   '@lezer/highlight': 1.2.3
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.5
-  vite-plus: 0.2.5
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.0
+  vite-plus: 0.3.0
 minimumReleaseAgeExclude:
   - '@koyori-app/openapi-vue-query'
 overrides:
