@@ -14639,6 +14639,7 @@
           {
             "name": "sort",
             "in": "query",
+            "description": "`created_at_desc`（既定）、または `title` / `assignee` / `priority` / `deadline`\nと `_asc` / `_desc` の組み合わせ。",
             "required": false,
             "schema": {
               "type": "string"

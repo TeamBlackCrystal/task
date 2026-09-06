@@ -70,6 +70,7 @@ import TaskGroupQuery from '@/components/tasks/TaskGroupQuery.vue';
 import type { TaskGroup } from '@/components/tasks/task-grouped-columns';
 import TaskDetailOverlay from '@/components/tasks/TaskDetailOverlay.vue';
 import { useTaskRowMutations } from '@/composables/useTaskRowMutations';
+import { taskListApiSort, type TaskListSortingState } from '@/components/tasks/task-list-sort';
 
 // ---- 定数 ----
 const LIST_TASKS_PATH = '/v1/tenants/{tenant_id}/projects/{project_id}/tasks' as const;
@@ -742,6 +743,11 @@ const columns: ColumnDef<TaskRow>[] = [
 
 // ---- テーブル状態 ----
 const sorting = ref<SortingState>(initialListState.sorting);
+const taskGroupApiSort = computed(() => taskListApiSort(sorting.value));
+
+function onListSortingChange(next: TaskListSortingState) {
+  sorting.value = next;
+}
 const columnFilters = ref<ColumnFiltersState>([]);
 const columnVisibility = ref<VisibilityState>({});
 const rowSelection = ref({});
@@ -997,6 +1003,7 @@ const table = useVueTable({
             :tenant-id="tenantId"
             :project-id="projectId"
             :label-id="selectedLabelId"
+            :sort="taskGroupApiSort"
             :page-size="GROUP_PAGE_SIZE"
             :enabled="!isSearchActive"
             @update:group="setTaskGroup"
@@ -1087,6 +1094,7 @@ const table = useVueTable({
               :errors="rowMutations.errors.value"
               :comment-pending-task-ids="rowMutations.commentPendingTaskIds.value"
               :create-errors="rowMutations.createErrors.value"
+              :sorting="sorting"
               @open="openOverlay"
               @more="loadMoreInGroup"
               @update:status="(task, statusId) => rowMutations.setStatus(task, statusId)"
@@ -1098,6 +1106,7 @@ const table = useVueTable({
               @toggle:label="
                 (task, labelId, checked) => rowMutations.toggleLabel(task, labelId, checked)
               "
+              @update:sorting="onListSortingChange"
               :on-comment="(task, body) => rowMutations.addComment(task.id, body)"
               :creating-status-ids="rowMutations.creatingStatusIds.value"
               :on-create="rowMutations.createTask"

@@ -5,12 +5,12 @@ use axum::{
 };
 use axum_valid::Valid;
 use chrono::Utc;
-use sea_orm::sea_query::{Expr, LockType};
+use sea_orm::sea_query::{Expr, ExprTrait, Func, LockType, NullOrdering, SimpleExpr};
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
-    ColumnTrait, Condition, ConnectionTrait, EntityTrait, IsolationLevel, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, IsolationLevel, JoinType, Order,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     prelude::{DateTimeWithTimeZone, Uuid},
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -23,7 +23,7 @@ use crate::openapi::CrudErrors;
 use common::cursor::{decode_cursor, encode_cursor};
 use entity::{
     labels, milestones, project_statuses, sprints, task_assignees, task_labels, task_relations,
-    tasks,
+    tasks, users,
 };
 use payload::tasks::*;
 use service::custom_fields::{
@@ -284,15 +284,25 @@ enum TaskCursor {
         created_at: chrono::DateTime<chrono::Utc>,
         id: Uuid,
     },
+    #[serde(rename = "title_asc")]
+    TitleAsc { title: String, id: Uuid },
+    #[serde(rename = "title_desc")]
+    TitleDesc { title: String, id: Uuid },
+    #[serde(rename = "assignee_asc")]
+    AssigneeAsc { assignee: Option<String>, id: Uuid },
+    #[serde(rename = "assignee_desc")]
+    AssigneeDesc { assignee: Option<String>, id: Uuid },
     #[serde(rename = "priority_asc")]
-    PriorityAsc {
-        priority: tasks::TaskPriority,
-        id: Uuid,
-    },
+    PriorityAsc { priority_rank: i32, id: Uuid },
+    #[serde(rename = "priority_desc")]
+    PriorityDesc { priority_rank: i32, id: Uuid },
     #[serde(rename = "deadline_asc")]
     DeadlineAsc {
-        /// 期限なしは `null`。Postgres の `ASC` は NULL が最後なので、
-        /// `null` のカーソルは「末尾の期限なしの塊の途中」を指す
+        soft_deadline: Option<chrono::DateTime<chrono::Utc>>,
+        id: Uuid,
+    },
+    #[serde(rename = "deadline_desc")]
+    DeadlineDesc {
         soft_deadline: Option<chrono::DateTime<chrono::Utc>>,
         id: Uuid,
     },
@@ -302,35 +312,115 @@ enum TaskCursor {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TaskSort {
     CreatedAtDesc,
+    TitleAsc,
+    TitleDesc,
+    AssigneeAsc,
+    AssigneeDesc,
     PriorityAsc,
+    PriorityDesc,
     DeadlineAsc,
+    DeadlineDesc,
+}
+
+const PRIORITY_SORT_KEY_SQL: &str = "CASE tasks.priority::text WHEN 'critical_fire' THEN 0 WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 WHEN 'trivial' THEN 5 END";
+const ASSIGNEE_SORT_KEY_SQL: &str = "(SELECT MIN(LOWER(users.username)) FROM task_assignees JOIN users ON users.id = task_assignees.user_id WHERE task_assignees.task_id = tasks.id)";
+
+fn priority_sort_key() -> SimpleExpr {
+    Expr::cust(PRIORITY_SORT_KEY_SQL)
+}
+
+fn assignee_sort_key() -> SimpleExpr {
+    Expr::cust(ASSIGNEE_SORT_KEY_SQL)
+}
+
+async fn assignee_sort_cursor_key<C: ConnectionTrait>(
+    db: &C,
+    task_id: Uuid,
+) -> Result<Option<String>, AppError> {
+    let value = task_assignees::Entity::find()
+        .filter(task_assignees::Column::TaskId.eq(task_id))
+        .join(JoinType::InnerJoin, task_assignees::Relation::Users.def())
+        .select_only()
+        .column_as(
+            Expr::expr(Func::min(Func::lower(Expr::col(users::Column::Username)))),
+            "assignee",
+        )
+        .into_tuple::<Option<String>>()
+        .one(db)
+        .await?;
+    Ok(value.flatten())
+}
+
+fn priority_rank(priority: tasks::TaskPriority) -> i32 {
+    match priority {
+        tasks::TaskPriority::CriticalFire => 0,
+        tasks::TaskPriority::Critical => 1,
+        tasks::TaskPriority::High => 2,
+        tasks::TaskPriority::Medium => 3,
+        tasks::TaskPriority::Low => 4,
+        tasks::TaskPriority::Trivial => 5,
+    }
 }
 
 impl TaskSort {
     /// 知らない値は既定（作成日の新しい順）に倒す。既存の挙動を変えない
     fn parse(raw: Option<&str>) -> Self {
         match raw.unwrap_or("created_at_desc") {
+            "title_asc" => Self::TitleAsc,
+            "title_desc" => Self::TitleDesc,
+            "assignee_asc" => Self::AssigneeAsc,
+            "assignee_desc" => Self::AssigneeDesc,
             "priority_asc" => Self::PriorityAsc,
+            "priority_desc" => Self::PriorityDesc,
             "deadline_asc" => Self::DeadlineAsc,
+            "deadline_desc" => Self::DeadlineDesc,
             _ => Self::CreatedAtDesc,
         }
     }
 
-    fn cursor_of(self, task: &tasks::Model) -> String {
-        encode_cursor(&match self {
+    async fn cursor_of<C: ConnectionTrait>(
+        self,
+        db: &C,
+        task: &TaskResponse,
+    ) -> Result<String, AppError> {
+        Ok(encode_cursor(&match self {
             Self::CreatedAtDesc => TaskCursor::CreatedAtDesc {
-                created_at: task.created_at.with_timezone(&chrono::Utc),
+                created_at: task.created_at,
+                id: task.id,
+            },
+            Self::TitleAsc => TaskCursor::TitleAsc {
+                title: task.title.clone(),
+                id: task.id,
+            },
+            Self::TitleDesc => TaskCursor::TitleDesc {
+                title: task.title.clone(),
+                id: task.id,
+            },
+            Self::AssigneeAsc => TaskCursor::AssigneeAsc {
+                assignee: assignee_sort_cursor_key(db, task.id).await?,
+                id: task.id,
+            },
+            Self::AssigneeDesc => TaskCursor::AssigneeDesc {
+                assignee: assignee_sort_cursor_key(db, task.id).await?,
                 id: task.id,
             },
             Self::PriorityAsc => TaskCursor::PriorityAsc {
-                priority: task.priority,
+                priority_rank: priority_rank(task.priority),
+                id: task.id,
+            },
+            Self::PriorityDesc => TaskCursor::PriorityDesc {
+                priority_rank: priority_rank(task.priority),
                 id: task.id,
             },
             Self::DeadlineAsc => TaskCursor::DeadlineAsc {
-                soft_deadline: task.soft_deadline.map(|d| d.with_timezone(&chrono::Utc)),
+                soft_deadline: task.soft_deadline,
                 id: task.id,
             },
-        })
+            Self::DeadlineDesc => TaskCursor::DeadlineDesc {
+                soft_deadline: task.soft_deadline,
+                id: task.id,
+            },
+        }))
     }
 
     /// 「このカーソルより後ろ」の条件。`ORDER BY` と同じ形にしないと行が飛ぶ。
@@ -347,14 +437,42 @@ impl TaskSort {
                         .add(tasks::Column::Id.lt(id)),
                 )
             }
-            (Self::PriorityAsc, TaskCursor::PriorityAsc { priority, id }) => Condition::any()
-                .add(tasks::Column::Priority.gt(priority))
+            (Self::TitleAsc, TaskCursor::TitleAsc { title, id }) => Condition::any()
+                .add(tasks::Column::Title.gt(title.clone()))
                 .add(
                     Condition::all()
-                        .add(tasks::Column::Priority.eq(priority))
+                        .add(tasks::Column::Title.eq(title))
                         .add(tasks::Column::Id.lt(id)),
                 ),
-            // 期限ありの途中。期限なしは並びの末尾なので、まとめて「後ろ」に含める
+            (Self::TitleDesc, TaskCursor::TitleDesc { title, id }) => Condition::any()
+                .add(tasks::Column::Title.lt(title.clone()))
+                .add(
+                    Condition::all()
+                        .add(tasks::Column::Title.eq(title))
+                        .add(tasks::Column::Id.lt(id)),
+                ),
+            (Self::AssigneeAsc, TaskCursor::AssigneeAsc { assignee, id }) => {
+                nullable_text_keyset_after(assignee_sort_key, assignee, id, Order::Asc)
+            }
+            (Self::AssigneeDesc, TaskCursor::AssigneeDesc { assignee, id }) => {
+                nullable_text_keyset_after(assignee_sort_key, assignee, id, Order::Desc)
+            }
+            (Self::PriorityAsc, TaskCursor::PriorityAsc { priority_rank, id }) => Condition::any()
+                .add(priority_sort_key().gt(priority_rank))
+                .add(
+                    Condition::all()
+                        .add(priority_sort_key().eq(priority_rank))
+                        .add(tasks::Column::Id.lt(id)),
+                ),
+            (Self::PriorityDesc, TaskCursor::PriorityDesc { priority_rank, id }) => {
+                Condition::any()
+                    .add(priority_sort_key().lt(priority_rank))
+                    .add(
+                        Condition::all()
+                            .add(priority_sort_key().eq(priority_rank))
+                            .add(tasks::Column::Id.lt(id)),
+                    )
+            }
             (
                 Self::DeadlineAsc,
                 TaskCursor::DeadlineAsc {
@@ -363,27 +481,83 @@ impl TaskSort {
                 },
             ) => {
                 let at: DateTimeWithTimeZone = deadline.into();
-                Condition::any()
-                    .add(tasks::Column::SoftDeadline.gt(at))
-                    .add(tasks::Column::SoftDeadline.is_null())
-                    .add(
-                        Condition::all()
-                            .add(tasks::Column::SoftDeadline.eq(at))
-                            .add(tasks::Column::Id.lt(id)),
-                    )
+                nullable_datetime_keyset_after(Some(at), id, Order::Asc)
             }
-            // 期限なしの塊の途中。ここから先は期限なししか残っていない
             (
                 Self::DeadlineAsc,
                 TaskCursor::DeadlineAsc {
                     soft_deadline: None,
                     id,
                 },
-            ) => Condition::all()
-                .add(tasks::Column::SoftDeadline.is_null())
-                .add(tasks::Column::Id.lt(id)),
+            ) => nullable_datetime_keyset_after(None, id, Order::Asc),
+            (
+                Self::DeadlineDesc,
+                TaskCursor::DeadlineDesc {
+                    soft_deadline: Some(deadline),
+                    id,
+                },
+            ) => {
+                let at: DateTimeWithTimeZone = deadline.into();
+                nullable_datetime_keyset_after(Some(at), id, Order::Desc)
+            }
+            (
+                Self::DeadlineDesc,
+                TaskCursor::DeadlineDesc {
+                    soft_deadline: None,
+                    id,
+                },
+            ) => nullable_datetime_keyset_after(None, id, Order::Desc),
             _ => return Err(AppError::BadRequest),
         })
+    }
+}
+
+fn nullable_text_keyset_after(
+    key: fn() -> SimpleExpr,
+    value: Option<String>,
+    id: Uuid,
+    order: Order,
+) -> Condition {
+    match value {
+        Some(value) => Condition::any()
+            .add(match order {
+                Order::Asc => key().gt(value.clone()),
+                Order::Desc => key().lt(value.clone()),
+                _ => unreachable!("only ascending and descending task sorts are supported"),
+            })
+            .add(key().is_null())
+            .add(
+                Condition::all()
+                    .add(key().eq(value))
+                    .add(tasks::Column::Id.lt(id)),
+            ),
+        None => Condition::all()
+            .add(key().is_null())
+            .add(tasks::Column::Id.lt(id)),
+    }
+}
+
+fn nullable_datetime_keyset_after(
+    value: Option<DateTimeWithTimeZone>,
+    id: Uuid,
+    order: Order,
+) -> Condition {
+    match value {
+        Some(value) => Condition::any()
+            .add(match order {
+                Order::Asc => tasks::Column::SoftDeadline.gt(value),
+                Order::Desc => tasks::Column::SoftDeadline.lt(value),
+                _ => unreachable!("only ascending and descending task sorts are supported"),
+            })
+            .add(tasks::Column::SoftDeadline.is_null())
+            .add(
+                Condition::all()
+                    .add(tasks::Column::SoftDeadline.eq(value))
+                    .add(tasks::Column::Id.lt(id)),
+            ),
+        None => Condition::all()
+            .add(tasks::Column::SoftDeadline.is_null())
+            .add(tasks::Column::Id.lt(id)),
     }
 }
 
@@ -475,9 +649,23 @@ pub async fn list_tasks(
     }
 
     query = match sort {
-        TaskSort::PriorityAsc => query.order_by_asc(tasks::Column::Priority),
-        TaskSort::DeadlineAsc => query.order_by_asc(tasks::Column::SoftDeadline),
         TaskSort::CreatedAtDesc => query.order_by_desc(tasks::Column::CreatedAt),
+        TaskSort::TitleAsc => query.order_by_asc(tasks::Column::Title),
+        TaskSort::TitleDesc => query.order_by_desc(tasks::Column::Title),
+        TaskSort::AssigneeAsc => {
+            query.order_by_with_nulls(assignee_sort_key(), Order::Asc, NullOrdering::Last)
+        }
+        TaskSort::AssigneeDesc => {
+            query.order_by_with_nulls(assignee_sort_key(), Order::Desc, NullOrdering::Last)
+        }
+        TaskSort::PriorityAsc => query.order_by(priority_sort_key(), Order::Asc),
+        TaskSort::PriorityDesc => query.order_by(priority_sort_key(), Order::Desc),
+        TaskSort::DeadlineAsc => {
+            query.order_by_with_nulls(tasks::Column::SoftDeadline, Order::Asc, NullOrdering::Last)
+        }
+        TaskSort::DeadlineDesc => {
+            query.order_by_with_nulls(tasks::Column::SoftDeadline, Order::Desc, NullOrdering::Last)
+        }
     };
     // 同じ値を持つ行の順序は Postgres 上で未定義。タイブレーカーが無いと、同じデータでも
     // ページ境界に同値の行があるだけで重複・欠落が出る。カーソルの不等式もこの並びと
@@ -493,14 +681,18 @@ pub async fn list_tasks(
         .await?;
     let has_more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
+    let tasks = build_task_responses(&state.db, rows).await?;
     let next_cursor = if has_more {
-        rows.last().map(|task| sort.cursor_of(task))
+        match tasks.last() {
+            Some(task) => Some(sort.cursor_of(&state.db, task).await?),
+            None => None,
+        }
     } else {
         None
     };
 
     Ok(Json(TaskListResponse {
-        tasks: build_task_responses(&state.db, rows).await?,
+        tasks,
         total,
         next_cursor,
     }))

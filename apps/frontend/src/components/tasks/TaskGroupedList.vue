@@ -25,6 +25,11 @@ import {
 } from '@/lib/task-display';
 import TaskAssigneePicker from '@/components/tasks/TaskAssigneePicker.vue';
 import { TASK_ROW_GRID } from '@/components/tasks/task-grouped-columns';
+import TaskListSortHeader from '@/components/tasks/TaskListSortHeader.vue';
+import {
+  TASK_LIST_SORT_COLUMNS,
+  type TaskListSortingState,
+} from '@/components/tasks/task-list-sort';
 
 type TaskResponse = components['schemas']['TaskResponse'];
 type LabelResponse = components['schemas']['LabelResponse'];
@@ -49,6 +54,7 @@ const props = defineProps<{
   onComment: (task: TaskResponse, body: string) => Promise<boolean>;
   /** タスクの作成。同上 */
   onCreate: (input: CreateTaskInput) => Promise<boolean>;
+  sorting: TaskListSortingState;
 }>();
 
 const emit = defineEmits<{
@@ -59,6 +65,7 @@ const emit = defineEmits<{
   'update:softDeadline': [task: TaskResponse, iso: string | null];
   'toggle:assignee': [task: TaskResponse, userId: string, checked: boolean];
   'toggle:label': [task: TaskResponse, labelId: string, checked: boolean];
+  'update:sorting': [sorting: TaskListSortingState];
 }>();
 
 // 折りたたみは画面内の一時状態。URL には載せない（共有したい情報ではない）
@@ -219,10 +226,13 @@ async function commitAdding(statusId: string) {
         <div class="overflow-hidden">
           <div class="overflow-x-auto" :inert="collapsed[group.status.id] || undefined">
             <div :class="[TASK_ROW_GRID, 'border-b text-xs text-muted-foreground']">
-              <div class="px-2 py-1.5">タスク</div>
-              <div class="px-2">担当</div>
-              <div class="px-2">期限</div>
-              <div class="px-2">優先度</div>
+              <TaskListSortHeader
+                v-for="column in TASK_LIST_SORT_COLUMNS"
+                :key="column.id"
+                :column="column"
+                :sorting="sorting"
+                @update:sorting="emit('update:sorting', $event)"
+              />
               <div class="px-2"></div>
             </div>
 

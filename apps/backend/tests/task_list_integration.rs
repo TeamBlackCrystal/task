@@ -2,7 +2,10 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{TestApp, TestTenantProject, TestUser};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use uuid::Uuid;
+
+use entity::project_members;
 
 fn tasks_base(tp: &TestTenantProject) -> String {
     format!(
@@ -57,6 +60,69 @@ fn task_ids(body: &serde_json::Value) -> Vec<String> {
 /// 次のページの鍵。取り切っていれば `None`。
 fn next_cursor(body: &serde_json::Value) -> Option<String> {
     body["next_cursor"].as_str().map(|s| s.to_string())
+}
+
+async fn create_sort_task(
+    app: &TestApp,
+    tp: &TestTenantProject,
+    status_id: Uuid,
+    title: &str,
+    priority: Option<&str>,
+    soft_deadline: Option<&str>,
+    assignee_id: Option<Uuid>,
+) {
+    let mut payload = serde_json::json!({ "title": title, "status_id": status_id });
+    if let Some(priority) = priority {
+        payload["priority"] = priority.into();
+    }
+    if let Some(soft_deadline) = soft_deadline {
+        payload["soft_deadline"] = soft_deadline.into();
+    }
+    if let Some(user_id) = assignee_id {
+        payload["assignees"] = serde_json::json!([{ "user_id": user_id, "role": "assignee" }]);
+    }
+
+    let response = app.post_json_with_session(&tasks_base(tp), payload).await;
+    assert_eq!(response.status(), StatusCode::CREATED, "create {title}");
+}
+
+async fn sorted_titles(app: &TestApp, base: &str, sort: &str, limit: usize) -> Vec<String> {
+    let mut titles = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let url = match &cursor {
+            Some(cursor) => format!("{base}?sort={sort}&limit={limit}&cursor={cursor}"),
+            None => format!("{base}?sort={sort}&limit={limit}"),
+        };
+        let response = app.get_with_session(&url).await;
+        assert_eq!(response.status(), StatusCode::OK, "list {sort}");
+        let body: serde_json::Value = response.json().await.expect("list json");
+        titles.extend(
+            body["tasks"]
+                .as_array()
+                .expect("tasks array")
+                .iter()
+                .map(|task| task["title"].as_str().expect("title").to_string()),
+        );
+        cursor = next_cursor(&body);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    titles
+}
+
+async fn add_project_member(app: &TestApp, project_id: Uuid, user_id: Uuid) {
+    common::ensure_tenant_member_for_project(&app.state.db, project_id, user_id).await;
+    project_members::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        project_id: Set(project_id),
+        user_id: Set(user_id),
+        role: Set(project_members::ProjectRole::Member),
+    }
+    .insert(&app.state.db)
+    .await
+    .expect("add project member");
 }
 
 fn assert_user_summary(value: &serde_json::Value, expected_id: Uuid) {
@@ -362,4 +428,124 @@ async fn task_list_rejects_a_cursor_made_for_another_sort() {
         .get_with_session(&format!("{base}?limit=1&offset=20&cursor={cursor}"))
         .await;
     assert_eq!(mixed.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn task_list_sorts_titles_across_the_default_page_boundary() {
+    let mut app = TestApp::new().await;
+    let (_user, tp) = setup_project(&mut app).await;
+    let status_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+
+    for i in (0..27).rev() {
+        create_sort_task(
+            &app,
+            &tp,
+            status_id,
+            &format!("Task {i:02}"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    let expected_asc: Vec<String> = (0..27).map(|i| format!("Task {i:02}")).collect();
+    let expected_desc: Vec<String> = expected_asc.iter().rev().cloned().collect();
+    assert_eq!(
+        sorted_titles(&app, &base, "title_asc", 20).await,
+        expected_asc
+    );
+    assert_eq!(
+        sorted_titles(&app, &base, "title_desc", 20).await,
+        expected_desc
+    );
+}
+
+#[tokio::test]
+async fn task_list_sorts_priority_and_deadline_in_both_directions() {
+    let mut app = TestApp::new().await;
+    let (_user, tp) = setup_project(&mut app).await;
+    let status_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+    let fixtures = [
+        ("Fire", "CriticalFire", None),
+        ("Critical", "Critical", Some("2026-06-01T00:00:00Z")),
+        ("High", "High", Some("2026-01-01T00:00:00Z")),
+        ("Medium", "Medium", Some("2026-03-01T00:00:00Z")),
+        ("Low", "Low", Some("2026-02-01T00:00:00Z")),
+        ("Trivial", "Trivial", Some("2026-05-01T00:00:00Z")),
+    ];
+    for (title, priority, deadline) in fixtures {
+        create_sort_task(&app, &tp, status_id, title, Some(priority), deadline, None).await;
+    }
+
+    assert_eq!(
+        sorted_titles(&app, &base, "priority_asc", 2).await,
+        ["Fire", "Critical", "High", "Medium", "Low", "Trivial"]
+    );
+    assert_eq!(
+        sorted_titles(&app, &base, "priority_desc", 2).await,
+        ["Trivial", "Low", "Medium", "High", "Critical", "Fire"]
+    );
+    assert_eq!(
+        sorted_titles(&app, &base, "deadline_asc", 2).await,
+        ["High", "Low", "Medium", "Trivial", "Critical", "Fire"]
+    );
+    assert_eq!(
+        sorted_titles(&app, &base, "deadline_desc", 2).await,
+        ["Critical", "Trivial", "Medium", "Low", "High", "Fire"]
+    );
+}
+
+#[tokio::test]
+async fn task_list_sorts_assignees_case_insensitively_and_keeps_unassigned_last() {
+    let mut app = TestApp::new().await;
+    let (owner, tp) = setup_project(&mut app).await;
+    let status_id = create_status(&app, &tp).await;
+    let base = tasks_base(&tp);
+    let akira = app.insert_user_default().await;
+    let zeta = app.insert_user_default().await;
+    add_project_member(&app, tp.project_id, akira.id).await;
+    add_project_member(&app, tp.project_id, zeta.id).await;
+    for (name, id) in [("Mika", owner.id), ("akira", akira.id), ("Zeta", zeta.id)] {
+        common::execute_sql(
+            &app.state.db,
+            "UPDATE users SET username = $1 WHERE id = $2",
+            vec![name.into(), id.into()],
+        )
+        .await;
+    }
+
+    create_sort_task(&app, &tp, status_id, "Unassigned", None, None, None).await;
+    create_sort_task(
+        &app,
+        &tp,
+        status_id,
+        "Mika task",
+        None,
+        None,
+        Some(owner.id),
+    )
+    .await;
+    create_sort_task(
+        &app,
+        &tp,
+        status_id,
+        "Akira task",
+        None,
+        None,
+        Some(akira.id),
+    )
+    .await;
+    create_sort_task(&app, &tp, status_id, "Zeta task", None, None, Some(zeta.id)).await;
+
+    assert_eq!(
+        sorted_titles(&app, &base, "assignee_asc", 2).await,
+        ["Akira task", "Mika task", "Zeta task", "Unassigned"]
+    );
+    assert_eq!(
+        sorted_titles(&app, &base, "assignee_desc", 2).await,
+        ["Zeta task", "Mika task", "Akira task", "Unassigned"]
+    );
 }
