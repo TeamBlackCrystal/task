@@ -108,6 +108,7 @@ async fn list_under_project<T: serde::de::DeserializeOwned>(
     api: &ApiClient,
     project_id: Uuid,
     collection: &str,
+    query: &[(&str, String)],
 ) -> Result<Vec<T>> {
     let project_id = project_id.to_string();
     api.get(
@@ -119,7 +120,7 @@ async fn list_under_project<T: serde::de::DeserializeOwned>(
             &project_id,
             collection,
         ],
-        &[],
+        query,
     )
     .await
 }
@@ -140,7 +141,7 @@ fn not_found_with_candidates(kind: &str, name: &str, candidates: Vec<String>) ->
 }
 
 pub async fn list_labels(api: &ApiClient, project_id: Uuid) -> Result<Vec<LabelResponse>> {
-    list_under_project(api, project_id, "labels").await
+    list_under_project(api, project_id, "labels", &[]).await
 }
 
 pub async fn resolve_label_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
@@ -159,7 +160,7 @@ pub async fn resolve_label_id(api: &ApiClient, project_id: Uuid, name: &str) -> 
 }
 
 pub async fn list_milestones(api: &ApiClient, project_id: Uuid) -> Result<Vec<MilestoneResponse>> {
-    list_under_project(api, project_id, "milestones").await
+    list_under_project(api, project_id, "milestones", &[]).await
 }
 
 pub async fn resolve_milestone_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
@@ -184,7 +185,7 @@ pub async fn resolve_milestone_id(api: &ApiClient, project_id: Uuid, name: &str)
 }
 
 pub async fn list_sprints(api: &ApiClient, project_id: Uuid) -> Result<Vec<SprintResponse>> {
-    list_under_project(api, project_id, "sprints").await
+    list_under_project(api, project_id, "sprints", &[]).await
 }
 
 pub async fn resolve_sprint_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
@@ -206,26 +207,39 @@ pub async fn resolve_sprint_id(api: &ApiClient, project_id: Uuid, name: &str) ->
 }
 
 pub async fn list_assignable_users(api: &ApiClient, project_id: Uuid) -> Result<Vec<UserSummary>> {
-    list_under_project(api, project_id, "assignable-users").await
+    list_under_project(api, project_id, "assignable-users", &[]).await
 }
 
 /// 担当者はユーザー名で指す。UUID をそのまま渡す道も残す。
+///
+/// 名前を 1 つ引くだけの `?username=` は `read:task` でも通るので、一覧を読むだけの
+/// PAT でも `--assignee` を名前で書ける。候補の列挙には `write:task` が要るため、
+/// 綴りを外したときの候補は読めないことがある。そのときは候補なしで返す。
 pub async fn resolve_user_id(api: &ApiClient, project_id: Uuid, name: &str) -> Result<Uuid> {
     if let Ok(uuid) = Uuid::parse_str(name) {
         return Ok(uuid);
     }
-    let users = list_assignable_users(api, project_id).await?;
-    users
-        .iter()
+    let matched: Vec<UserSummary> = list_under_project(
+        api,
+        project_id,
+        "assignable-users",
+        &[("username", name.to_string())],
+    )
+    .await?;
+    if let Some(user) = matched
+        .into_iter()
         .find(|user| user.username.eq_ignore_ascii_case(name))
-        .map(|user| user.id)
-        .ok_or_else(|| {
-            not_found_with_candidates(
-                "Assignable user",
-                name,
-                users.iter().map(|user| user.username.clone()).collect(),
-            )
-        })
+    {
+        return Ok(user.id);
+    }
+    let candidates = list_assignable_users(api, project_id)
+        .await
+        .unwrap_or_default();
+    Err(not_found_with_candidates(
+        "Assignable user",
+        name,
+        candidates.into_iter().map(|user| user.username).collect(),
+    ))
 }
 
 fn pick_status_by_name(statuses: &[ProjectStatusResponse], name: &str) -> Result<Uuid> {

@@ -42,3 +42,11 @@ pub struct AddMemberRequest {
 pub struct UpdateMemberRequest {
     pub role: ProjectRole,
 }
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AssignableUsersQuery {
+    /// 指定するとその利用者だけを返す（大文字小文字を無視した完全一致）。
+    /// 名前から ID を引くだけの経路で、候補の列挙とは公開範囲が違う。
+    pub username: Option<String>,
+}

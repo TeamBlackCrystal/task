@@ -73,7 +73,7 @@ pub struct SearchTasksResponse {
     pub total: u64,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct BulkUpdateFields {
     #[schema(value_type = Option<String>, format = "uuid")]
     pub status_id: Option<Uuid>,
@@ -90,20 +90,20 @@ pub struct BulkUpdateFields {
     pub clear_sprint_id: bool,
 }
 
-#[derive(Validate, Deserialize, ToSchema)]
+#[derive(Validate, Deserialize, Serialize, ToSchema)]
 pub struct BulkUpdateRequest {
     #[validate(length(min = 1))]
     pub task_ids: Vec<Uuid>,
     pub update: BulkUpdateFields,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct BulkUpdateResponse {
     pub updated: u32,
     pub failed: Vec<BulkFailure>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct BulkFailure {
     #[schema(value_type = String, format = "uuid")]
     pub task_id: Uuid,
