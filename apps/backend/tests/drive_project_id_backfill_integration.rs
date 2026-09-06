@@ -119,6 +119,52 @@ async fn file_project_id(app: &TestApp, file_id: Uuid) -> Option<Uuid> {
         .project_id
 }
 
+/// 修正前のデータを組むための直接更新（API 経由では作れない形を作る）。
+async fn set_file_project(app: &TestApp, file_id: Uuid, project_id: Option<Uuid>) {
+    let file = drive_files::Entity::find_by_id(file_id)
+        .one(&app.state.db)
+        .await
+        .expect("load file")
+        .expect("file exists");
+    let mut active: drive_files::ActiveModel = file.into();
+    active.project_id = Set(project_id);
+    active.update(&app.state.db).await.expect("update file");
+}
+
+async fn set_folder_parent(app: &TestApp, folder_id: Uuid, parent_id: Option<Uuid>) {
+    let folder = drive_folders::Entity::find_by_id(folder_id)
+        .one(&app.state.db)
+        .await
+        .expect("load folder")
+        .expect("folder exists");
+    let mut active: drive_folders::ActiveModel = folder.into();
+    active.parent_id = Set(parent_id);
+    active.update(&app.state.db).await.expect("update folder");
+}
+
+/// 作った Drive の行を消す。
+///
+/// backfill はテナントを跨いで全行を見るので、例外で止める形のデータを残すと
+/// 後続のテストがその残骸で落ちる。検証を済ませたら自分の行は片付ける。
+async fn cleanup(app: &TestApp, files: &[Uuid], folders: &[Uuid]) {
+    for file in files {
+        drive_files::Entity::delete_by_id(*file)
+            .exec(&app.state.db)
+            .await
+            .expect("delete file");
+    }
+    // 親を先に消せないので、親子関係を切ってから消す
+    for folder in folders {
+        set_folder_parent(app, *folder, None).await;
+    }
+    for folder in folders {
+        drive_folders::Entity::delete_by_id(*folder)
+            .exec(&app.state.db)
+            .await
+            .expect("delete folder");
+    }
+}
+
 async fn run_backfill(app: &TestApp) {
     app.state
         .db
@@ -288,17 +334,21 @@ async fn backfill_refuses_to_absorb_a_nested_foreign_project_root() {
 
     let result = app.state.db.execute_unprepared(BACKFILL_SQL).await;
 
+    let nested_after = folder_project_id(&app, nested_a).await;
+    let file_after = file_project_id(&app, file_a).await;
+    cleanup(&app, &[file_a], &[nested_a, root_b]).await;
+
     assert!(
         result.is_err(),
         "境界が食い違う既存データは、書き換えずに失敗させる"
     );
     assert_eq!(
-        folder_project_id(&app, nested_a).await,
+        nested_after,
         Some(tp.project_id),
         "A のフォルダを B のものにしない"
     );
     assert_eq!(
-        file_project_id(&app, file_a).await,
+        file_after,
         Some(tp.project_id),
         "A のファイルを B のものにしない"
     );
@@ -330,5 +380,181 @@ async fn backfill_is_idempotent() {
             folder_project_id(&app, child).await,
             file_project_id(&app, file).await
         )
+    );
+}
+
+/// 一般フォルダ配下へ移動されたプロジェクトルートも起点になる。
+///
+/// 修正前はプロジェクトルートを一般フォルダの下へ移動できたので、`parent_id` を持つ
+/// プロジェクトルートが残りうる。ドライブ直下だけを起点にすると、その配下の NULL の
+/// 子孫が修復されないまま「成功」し、プロジェクト非メンバーから見え続ける。
+#[tokio::test]
+async fn backfill_repairs_a_project_root_moved_under_a_plain_folder() {
+    let app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    // 一般ツリーの配下へ移されたプロジェクトルート
+    let plain_root = insert_folder(&app, tp.tenant_id, owner.id, None, None).await;
+    let moved_root = insert_folder(
+        &app,
+        tp.tenant_id,
+        owner.id,
+        Some(plain_root),
+        Some(tp.project_id),
+    )
+    .await;
+    let moved_root_file = insert_file(&app, tp.tenant_id, Some(moved_root), owner.id).await;
+
+    // 修正前の create_folder で作られた配下（project_id は NULL のまま）
+    let child = insert_folder(&app, tp.tenant_id, owner.id, Some(moved_root), None).await;
+    let grandchild = insert_folder(&app, tp.tenant_id, owner.id, Some(child), None).await;
+    let child_file = insert_file(&app, tp.tenant_id, Some(child), owner.id).await;
+    let grandchild_file = insert_file(&app, tp.tenant_id, Some(grandchild), owner.id).await;
+
+    run_backfill(&app).await;
+
+    assert_eq!(
+        folder_project_id(&app, child).await,
+        Some(tp.project_id),
+        "移動済みルートの子が一般フォルダのまま残っている"
+    );
+    assert_eq!(
+        folder_project_id(&app, grandchild).await,
+        Some(tp.project_id)
+    );
+    assert_eq!(file_project_id(&app, child_file).await, Some(tp.project_id));
+    assert_eq!(
+        file_project_id(&app, grandchild_file).await,
+        Some(tp.project_id)
+    );
+    assert_eq!(
+        file_project_id(&app, moved_root_file).await,
+        Some(tp.project_id)
+    );
+    assert_eq!(
+        folder_project_id(&app, moved_root).await,
+        Some(tp.project_id),
+        "ルート自身は変わらない"
+    );
+    assert_eq!(
+        folder_project_id(&app, plain_root).await,
+        None,
+        "上に向かっては伝播しない"
+    );
+}
+
+/// 階層の深さで打ち切らない。
+///
+/// API に深さの上限は無いので、途中で止めると残りが NULL のまま「成功」する。
+/// 実装の打ち切り値（かつては 64）をまたぐ深さで確かめる。
+#[tokio::test]
+async fn backfill_reaches_folders_deeper_than_any_recursion_cutoff() {
+    let app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
+
+    let mut chain = Vec::new();
+    let mut parent = root;
+    for _ in 0..70 {
+        parent = insert_folder(&app, tp.tenant_id, owner.id, Some(parent), None).await;
+        chain.push(parent);
+    }
+    let deepest_file = insert_file(&app, tp.tenant_id, Some(parent), owner.id).await;
+
+    run_backfill(&app).await;
+
+    for (index, folder) in chain.iter().enumerate() {
+        assert_eq!(
+            folder_project_id(&app, *folder).await,
+            Some(tp.project_id),
+            "{}段目のフォルダが揃っていない",
+            index + 1
+        );
+    }
+    assert_eq!(
+        file_project_id(&app, deepest_file).await,
+        Some(tp.project_id),
+        "70段目のファイルが揃っていない"
+    );
+}
+
+/// プロジェクトツリーの中にある別プロジェクトのファイルも、書き換えずに失敗させる。
+///
+/// フォルダだけを止めてファイルを黙って上書きすると、そのファイルが別プロジェクトの
+/// メンバーへ公開される。フォルダと同じ向きの漏れなので、同じ扱いにする。
+#[tokio::test]
+async fn backfill_refuses_to_absorb_a_foreign_file_inside_a_project_tree() {
+    let app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+    let other_project = insert_extra_project(&app, tp.tenant_id).await;
+
+    let root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
+    let child = insert_folder(&app, tp.tenant_id, owner.id, Some(root), None).await;
+    let child_file = insert_file(&app, tp.tenant_id, Some(child), owner.id).await;
+
+    // 別プロジェクトのファイルが A のツリーに混ざっている状態
+    let foreign_file = insert_file(&app, tp.tenant_id, Some(child), owner.id).await;
+    set_file_project(&app, foreign_file, Some(other_project)).await;
+
+    let result = app.state.db.execute_unprepared(BACKFILL_SQL).await;
+
+    let foreign_after = file_project_id(&app, foreign_file).await;
+    let child_after = folder_project_id(&app, child).await;
+    let child_file_after = file_project_id(&app, child_file).await;
+    cleanup(&app, &[foreign_file, child_file], &[child, root]).await;
+
+    assert!(
+        result.is_err(),
+        "別プロジェクトのファイルが混ざったツリーは、書き換えずに失敗させる"
+    );
+    assert_eq!(
+        foreign_after,
+        Some(other_project),
+        "別プロジェクトのファイルを取り込まない"
+    );
+    assert_eq!(child_after, None, "止まったときは何も書き換えない");
+    assert_eq!(child_file_after, None);
+}
+
+/// 親子が循環していても終わる。
+///
+/// 深さで打ち切るのをやめたので、循環を辿り続けると止まらなくなる。`CYCLE` 句が
+/// それを防ぐ。循環の入口にあたるフォルダの配下は通常どおり揃う。
+#[tokio::test]
+async fn backfill_terminates_on_a_cycle_in_the_folder_tree() {
+    let app = TestApp::new().await;
+
+    let owner = app.insert_user(false, false).await;
+    let tp = app.insert_tenant_project(owner.id).await;
+
+    let root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
+    let child = insert_folder(&app, tp.tenant_id, owner.id, Some(root), None).await;
+
+    // validate_parent_folder が作らせない形を直接組む。
+    // 起点（project_id を持つ）とその子が互いを親にしている
+    let cyclic_root = insert_folder(&app, tp.tenant_id, owner.id, None, Some(tp.project_id)).await;
+    let cyclic_child = insert_folder(&app, tp.tenant_id, owner.id, Some(cyclic_root), None).await;
+    set_folder_parent(&app, cyclic_root, Some(cyclic_child)).await;
+
+    tokio::time::timeout(std::time::Duration::from_secs(60), run_backfill(&app))
+        .await
+        .expect("backfill が循環で終わらなくなっている");
+
+    let child_after = folder_project_id(&app, child).await;
+    let cyclic_child_after = folder_project_id(&app, cyclic_child).await;
+    cleanup(&app, &[], &[cyclic_root, cyclic_child]).await;
+
+    assert_eq!(child_after, Some(tp.project_id));
+    assert_eq!(
+        cyclic_child_after,
+        Some(tp.project_id),
+        "循環の入口の子は通常どおり継承する"
     );
 }
