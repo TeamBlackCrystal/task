@@ -687,14 +687,17 @@ async fn resolve_parent_task_id(
     }
 }
 
-/// 期限は RFC 3339、または `YYYY-MM-DD`（その日の終わりを UTC で取る）。
+/// 期限は RFC 3339、または `YYYY-MM-DD`（Web UI と同じ日の始まりを UTC で取る）。
+///
+/// Web の日付ピッカーは `localDateInputToIso`（frontend の `task-display.ts`）で
+/// `T00:00:00.000Z` を書く。CLI で日の終わりを取ると、同じ日付を指定したのに保存される
+/// 瞬間が別になり、UTC より東の時間帯では Web の表示が翌日へずれる。
 fn parse_deadline(flag: &str, raw: &str) -> Result<DateTime<Utc>> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(raw) {
         return Ok(parsed.with_timezone(&Utc));
     }
     if let Ok(date) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        let end_of_day = NaiveTime::from_hms_opt(23, 59, 59).expect("valid end-of-day time");
-        return Ok(Utc.from_utc_datetime(&date.and_time(end_of_day)));
+        return Ok(Utc.from_utc_datetime(&date.and_time(NaiveTime::MIN)));
     }
     Err(CliError::validation(format!(
         "{flag}: expected RFC 3339 (2026-09-30T12:00:00Z) or a date (2026-09-30), got {raw}"
@@ -1020,10 +1023,16 @@ mod tests {
         assert_eq!(err.exit_code, 2);
     }
 
+    /// 日付だけの指定は Web の日付ピッカーと同じ瞬間になること。
+    ///
+    /// frontend の `localDateInputToIso` は `2026-09-30` を `2026-09-30T00:00:00.000Z` に
+    /// するので、CLI もその日の始まりで揃える。日の終わり（23:59:59）にすると、JST で
+    /// 開いた Web に 10/1 08:59 と出て、指定した日付と 1 日ずれる。
+    /// **コードだけを直すと、この期待値と理由が食い違って気付ける。**
     #[test]
-    fn reads_a_bare_date_at_the_end_of_that_day() {
+    fn reads_a_bare_date_at_the_start_of_that_day() {
         let parsed = parse_deadline("--soft-deadline", "2026-09-30").unwrap();
-        assert_eq!(parsed.to_rfc3339(), "2026-09-30T23:59:59+00:00");
+        assert_eq!(parsed.to_rfc3339(), "2026-09-30T00:00:00+00:00");
 
         let exact = parse_deadline("--hard-deadline", "2026-09-30T12:00:00Z").unwrap();
         assert_eq!(exact.to_rfc3339(), "2026-09-30T12:00:00+00:00");
@@ -1113,8 +1122,9 @@ mod tests {
         });
         let json = serde_json::to_value(&body).unwrap();
 
-        assert_eq!(json["soft_deadline"], "2026-09-30T23:59:59Z");
-        assert_eq!(json["hard_deadline"], "2026-10-31T23:59:59Z");
+        // 日付だけの指定は日の始まり（parse_deadline の doc を参照）
+        assert_eq!(json["soft_deadline"], "2026-09-30T00:00:00Z");
+        assert_eq!(json["hard_deadline"], "2026-10-31T00:00:00Z");
         assert_eq!(json["estimated_minutes"], 90);
         assert_eq!(json["progress_pct"], 40);
         assert_eq!(json["parent_task_id"], uuid(7).to_string());
