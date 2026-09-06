@@ -273,7 +273,10 @@ OAuth の認可フローと解除規則は [OAuth ログイン](/features/auth-o
 - **連携済み**: `GET /v1/auth/oauth/connections`。プロバイダー名、`provider_email`、接続日時、
   self-hosted の `instance_url` を出す。解除は確認を挟んで
   `DELETE /v1/auth/oauth/connections/{provider}`（self-hosted は `instance_url` をクエリに添える）
-- **追加できる連携**: `GET /v1/auth/oauth/providers` のうち未連携のもの。ただし
+- **追加できる連携**: `GET /v1/auth/oauth/providers` のうち未連携のもの。連携済みかどうかは
+  開始用 slug ではなく `connection_provider`（連携一覧が返す識別子）で突き合わせる。
+  汎用 OIDC は開始用 slug が `oidc`、連携一覧の識別子が `oidc:{issuer}` で形が違い、
+  slug で比べると連携済みでも候補に残り続ける。ただし
   `requires_instance_url` のプロバイダー（GitLab セルフホスト）は、インスタンスが違えば
   別の連携として足せるので、1 件連携済みでも候補に残す。連携済みと同じインスタンス URL を
   入れた場合は開始しない（backend も `(provider, instance_url)` の重複を 409 で弾く）。
@@ -289,8 +292,12 @@ OAuth の認可フローと解除規則は [OAuth ログイン](/features/auth-o
 の印（sessionStorage）を根拠に出す。クエリだけで判定すると、その URL を開かせるだけで
 連携していない人に「連携しました」を、変更していない人に「失効しました」を読ませられる。
 印は操作を始める側が置き、戻ってきた画面が 1 回だけ消費する。連携についてはさらに、
-`GET /v1/auth/oauth/connections` にそのプロバイダーが実際に入っていることまで確かめてから出す
+`GET /v1/auth/oauth/connections` にその接続が実際に入っていることまで確かめてから出す
 （承認の途中で失敗してこの画面に戻らなかったとき、印だけが残って次の来訪で誤って出るのを防ぐ）。
+
+印にはプロバイダー名だけでなく `connection_provider` とインスタンス URL も入れて、
+開始したその接続が入ったことを確かめる。プロバイダー名だけで比べると、GitLab セルフホストの
+インスタンス A を連携済みのまま B の承認を中断した人に、A を見て「連携しました」が出る。
 
 ### 最後の認証方法
 

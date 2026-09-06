@@ -30,6 +30,17 @@ export function isKnownProvider(value: string): boolean {
   return Object.hasOwn(PROVIDER_LABELS, value);
 }
 
+/**
+ * 連携一覧が返す識別子の表示名。
+ *
+ * backend は連携を `OAuthSettings::db_provider_key` のキーで保存していて、汎用 OIDC だけ
+ * `oidc:{issuer}` になる。開始用 slug（`oidc`）と形が違うので、そのまま `providerLabel` に
+ * 渡すと issuer 付きの生の値が画面に出る。
+ */
+export function connectionProviderLabel(connectionProvider: string): string {
+  return providerLabel(connectionProvider.startsWith('oidc:') ? 'oidc' : connectionProvider);
+}
+
 export type OAuthStartOptions = {
   /** 承認後の戻り先（フロントの相対パス）。 */
   redirectAfter: string;

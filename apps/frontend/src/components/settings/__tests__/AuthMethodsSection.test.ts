@@ -7,6 +7,8 @@ import type { components } from '@/generated/api';
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 const INSTANCE_URL = 'https://gitlab.example.com';
+/** 汎用 OIDC の連携は issuer 込みで保存される（backend の `db_provider_key`）。 */
+const OIDC_CONNECTION = 'oidc:https://idp.example.com';
 
 function user(hasPassword: boolean): components['schemas']['UserResponse'] {
   return {
@@ -124,6 +126,15 @@ function clickBodyButton(label: string) {
   const button = bodyButton(label);
   if (!button) throw new Error(`button "${label}" not found`);
   button.click();
+}
+
+/** `/oauth/providers` の 1 件。OIDC だけ連携一覧の識別子が slug と違う。 */
+function provider(slug: string, connectionProvider = slug): Provider {
+  return {
+    provider: slug,
+    connection_provider: connectionProvider,
+    requires_instance_url: slug === 'gitlab_selfhosted',
+  };
 }
 
 function connection(overrides: Partial<Connection> = {}): Connection {
@@ -254,7 +265,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
           instance_url: INSTANCE_URL,
         }),
       ],
-      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+      providers: [provider('gitlab_selfhosted')],
     });
     mountSection(true);
     await flushPromises();
@@ -270,7 +281,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('self-hosted は連携済みでも別のインスタンスを開始できる', async () => {
     stubFetch({
       connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
-      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+      providers: [provider('gitlab_selfhosted')],
     });
     const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     const wrapper = mountSection(true);
@@ -291,7 +302,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('連携済みと同じインスタンスは開始しない', async () => {
     stubFetch({
       connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
-      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+      providers: [provider('gitlab_selfhosted')],
     });
     const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     const wrapper = mountSection(true);
@@ -311,10 +322,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('未連携のプロバイダーだけ追加候補に出す', async () => {
     stubFetch({
       connections: [connection({ provider: 'github' })],
-      providers: [
-        { provider: 'github', requires_instance_url: false },
-        { provider: 'google', requires_instance_url: false },
-      ],
+      providers: [provider('github'), provider('google')],
     });
     mountSection(true);
     await flushPromises();
@@ -326,7 +334,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('self-hosted はインスタンス URL 未入力だと連携ボタンを押せない', async () => {
     stubFetch({
       connections: [],
-      providers: [{ provider: 'gitlab_selfhosted', requires_instance_url: true }],
+      providers: [provider('gitlab_selfhosted')],
     });
     const assignSpy = vi.spyOn(window.location, 'assign').mockImplementation(() => {});
     const wrapper = mountSection(true);
@@ -352,10 +360,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
         connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL }),
         connection({ provider: 'github' }),
       ],
-      providers: [
-        { provider: 'gitlab_selfhosted', requires_instance_url: true },
-        { provider: 'github', requires_instance_url: false },
-      ],
+      providers: [provider('gitlab_selfhosted'), provider('github')],
     });
     mountSection(true);
     await flushPromises();
@@ -379,7 +384,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('最後の認証方法はサーバーの拒否をそのまま伝える', async () => {
     stubFetch({
       connections: [connection({ provider: 'github' })],
-      providers: [{ provider: 'github', requires_instance_url: false }],
+      providers: [provider('github')],
       disconnectError: { status: 403, message: 'oauth-last-auth-method' },
     });
     mountSection(false);
@@ -396,7 +401,7 @@ describe('AuthMethodsSection の OAuth 連携', () => {
   it('認証方法が1つだけなら解除前に注意を出す', async () => {
     stubFetch({
       connections: [connection({ provider: 'github' })],
-      providers: [{ provider: 'github', requires_instance_url: false }],
+      providers: [provider('github')],
     });
     mountSection(false);
     await flushPromises();
@@ -404,11 +409,26 @@ describe('AuthMethodsSection の OAuth 連携', () => {
     expect(document.body.textContent).toContain('これが最後の認証方法の可能性があります。');
   });
 
+  // backend は OIDC の連携を `oidc:{issuer}` で保存する。開始用 slug の `oidc` で
+  // 突き合わせると、連携済みでも候補に残り続ける
+  it('OIDC は連携済みなら追加候補に出さない', async () => {
+    stubFetch({
+      connections: [connection({ provider: OIDC_CONNECTION })],
+      providers: [provider('oidc', OIDC_CONNECTION)],
+    });
+    mountSection(true);
+    await flushPromises();
+
+    // issuer 付きの生の識別子ではなく表示名で出る
+    expect(document.body.textContent).toContain('OIDC');
+    expect(document.body.textContent).not.toContain('追加できる連携');
+  });
+
   /** パスキーも認証方法。数え落とすと最後でないのに注意が出る。 */
   it('パスキーがあれば最後の認証方法の注意を出さない', async () => {
     stubFetch({
       connections: [connection({ provider: 'github' })],
-      providers: [{ provider: 'github', requires_instance_url: false }],
+      providers: [provider('github')],
       passkeyCount: 1,
     });
     mountSection(false);
@@ -424,9 +444,12 @@ describe('AuthMethodsSection の成功通知', () => {
     window.history.replaceState(state, '', `/settings/security${search}`);
   }
 
-  /** 「連携する」を押した側が置く印。 */
-  function markStarted(provider: string) {
-    window.sessionStorage.setItem(OAUTH_LINK_NOTICE, provider);
+  /** 「連携する」を押した側が置く印。連携一覧で突き合わせる識別子まで含む。 */
+  function markStarted(slug: string, connectionProvider = slug, instanceUrl = '') {
+    window.sessionStorage.setItem(
+      OAUTH_LINK_NOTICE,
+      JSON.stringify({ provider: slug, connectionProvider, instanceUrl }),
+    );
   }
 
   it('自分で始めた連携が一覧に入っていれば通知を出す', async () => {
@@ -460,6 +483,47 @@ describe('AuthMethodsSection の成功通知', () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain('を連携しました。');
+  });
+
+  // 開始用 slug は `oidc` だが、連携一覧は `oidc:{issuer}` を返す。slug で突き合わせると
+  // 連携できていても通知が出ない
+  it('OIDC は issuer 付きの識別子で一覧と突き合わせる', async () => {
+    stubFetch({ connections: [connection({ provider: OIDC_CONNECTION })], providers: [] });
+    markStarted('oidc', OIDC_CONNECTION);
+    enterWith('');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('OIDC を連携しました。');
+  });
+
+  // インスタンス A を連携済みのまま B の承認を中断して開き直すと、B は連携していない。
+  // プロバイダー名だけで突き合わせると A を見て成功と判定してしまう
+  it('別のインスタンスが連携済みでも、開始した方が入るまで通知しない', async () => {
+    stubFetch({
+      connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
+      providers: [],
+    });
+    markStarted('gitlab_selfhosted', 'gitlab_selfhosted', 'https://gitlab.internal.example.com');
+    enterWith('');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('を連携しました。');
+  });
+
+  it('開始したインスタンスが一覧に入っていれば通知を出す', async () => {
+    stubFetch({
+      connections: [connection({ provider: 'gitlab_selfhosted', instance_url: INSTANCE_URL })],
+      providers: [],
+    });
+    // 末尾のスラッシュ違いは同じインスタンスとして扱う
+    markStarted('gitlab_selfhosted', 'gitlab_selfhosted', `${INSTANCE_URL}/`);
+    enterWith('');
+    const wrapper = mountSection();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('GitLab (セルフホスト) を連携しました。');
   });
 
   it('印は一度きりで、開き直しても通知は出ない', async () => {

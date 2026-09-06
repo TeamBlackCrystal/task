@@ -320,6 +320,14 @@ async fn oauth_providers_lists_only_configured() {
         Some(true),
         "gitlab_selfhosted must require instance_url"
     );
+
+    // 連携一覧（/oauth/connections）で同じ連携を指す識別子。OIDC だけ `oidc:{issuer}` になり
+    // 開始用 slug と一致しないため、画面はこの値で突き合わせる。
+    assert_eq!(
+        selfhosted["connection_provider"].as_str(),
+        Some("gitlab_selfhosted"),
+        "connection_provider must be present for matching against connections"
+    );
 }
 
 #[tokio::test]

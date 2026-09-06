@@ -26,9 +26,19 @@ import {
   useOAuthProvidersQuery,
   usePasskeysQuery,
 } from '@/lib/api-vue-query';
-import { countAuthMethods, formatConnectedAt, type OAuthConnection } from '@/lib/auth-methods';
+import {
+  countAuthMethods,
+  formatConnectedAt,
+  type OAuthConnection,
+  type OAuthProvider,
+} from '@/lib/auth-methods';
 import { consumeNotice, markNotice, OAUTH_LINK_NOTICE } from '@/lib/one-time-notice';
-import { isKnownProvider, providerLabel, startOAuth } from '@/lib/oauth-providers';
+import {
+  connectionProviderLabel,
+  isKnownProvider,
+  providerLabel,
+  startOAuth,
+} from '@/lib/oauth-providers';
 import type { components } from '@/generated/api';
 
 const props = defineProps<{ user: components['schemas']['UserResponse'] }>();
@@ -48,16 +58,48 @@ const confirmingKey = ref<string | null>(null);
 const rowError = ref<Record<string, string>>({});
 const instanceDrafts = ref<Record<string, string>>({});
 
-/** 連携を開始したプロバイダー。連携一覧に現れるまで通知を保留する。 */
-const pendingLinked = ref<string | null>(null);
+/**
+ * 連携を開始した接続。連携一覧に現れるまで通知を保留する。
+ *
+ * プロバイダー名だけでは足りない。GitLab セルフホストはインスタンスごとに別の連携なので、
+ * インスタンス A を連携済みのまま B の承認を中断しても、A を見て成功と判定してしまう。
+ * OIDC は開始用 slug（`oidc`）と連携一覧の識別子（`oidc:{issuer}`）が違うため、
+ * 突き合わせ用の識別子も一緒に持つ。
+ */
+type PendingLink = {
+  /** 開始用 slug。通知文の表示名に使う。 */
+  provider: string;
+  /** 連携一覧で同じ連携を指す識別子。 */
+  connectionProvider: string;
+  /** インスタンス URL を取らないプロバイダーでは空文字。 */
+  instanceUrl: string;
+};
+
+const pendingLinked = ref<PendingLink | null>(null);
+
+function parsePendingLink(raw: string | null): PendingLink | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingLink>;
+    if (typeof parsed.provider !== 'string' || !isKnownProvider(parsed.provider)) return null;
+    if (typeof parsed.connectionProvider !== 'string' || !parsed.connectionProvider) return null;
+    return {
+      provider: parsed.provider,
+      connectionProvider: parsed.connectionProvider,
+      instanceUrl: typeof parsed.instanceUrl === 'string' ? parsed.instanceUrl : '',
+    };
+  } catch {
+    return null;
+  }
+}
 
 onMounted(() => {
   const params = new URLSearchParams(window.location.search);
   // コールバックが失敗すると backend が ?oauth_error= を付けてここへ戻す。
   oauthFailed.value = params.has('oauth_error');
   // 通知の根拠は URL ではなく、連携を始めたときにこのタブへ置いた印。
-  const started = consumeNotice(OAUTH_LINK_NOTICE);
-  if (!oauthFailed.value && started && isKnownProvider(started)) pendingLinked.value = started;
+  const started = parsePendingLink(consumeNotice(OAUTH_LINK_NOTICE));
+  if (!oauthFailed.value) pendingLinked.value = started;
   if (oauthFailed.value) {
     // 再読み込みで同じ通知が出ないよう、印だけ URL から落とす。
     // state は引き継ぐ（null を渡すと vike のクライアントルーターの state を捨てる）
@@ -68,15 +110,20 @@ onMounted(() => {
 const connections = computed<OAuthConnection[]>(
   () => connectionsQuery.data.value?.connections ?? [],
 );
-// 実際に連携一覧へ入ったことまで確かめてから通知する。開始の印だけを見ると、
+// 開始したその接続が一覧へ入ったことまで確かめてから通知する。開始の印だけを見ると、
 // 承認の途中で失敗してこの画面に戻らなかったとき、次にここを開いた時点で誤って出る
 watch(
   [pendingLinked, connections],
   () => {
-    const provider = pendingLinked.value;
-    if (!provider) return;
-    if (!connections.value.some((connection) => connection.provider === provider)) return;
-    flash.value = `${providerLabel(provider)} を連携しました。`;
+    const pending = pendingLinked.value;
+    if (!pending) return;
+    const linked = connections.value.some(
+      (connection) =>
+        connection.provider === pending.connectionProvider &&
+        normalizeInstance(connection.instance_url ?? '') === normalizeInstance(pending.instanceUrl),
+    );
+    if (!linked) return;
+    flash.value = `${providerLabel(pending.provider)} を連携しました。`;
     pendingLinked.value = null;
   },
   { immediate: true },
@@ -102,7 +149,7 @@ const linkedProviders = computed(() =>
   connections.value.map((connection) => ({
     key: connectionKey(connection),
     connection,
-    label: providerLabel(connection.provider),
+    label: connectionProviderLabel(connection.provider),
   })),
 );
 
@@ -113,11 +160,14 @@ const linkedProviders = computed(() =>
  * backend は (provider, provider_user_id, instance_url) で接続を識別していて、インスタンスが
  * 違えば別の連携として足せる。プロバイダー名だけで消すと、2 つ目のインスタンスを画面から
  * 追加できなくなる。
+ *
+ * 突き合わせは開始用 slug ではなく `connection_provider` で行う。OIDC は連携一覧が
+ * `oidc:{issuer}` を返すため、slug で比べると連携済みでも候補に残り続ける。
  */
 const availableProviders = computed(() => {
   const linked = new Set(connections.value.map((connection) => connection.provider));
   return providers.value.filter(
-    (provider) => provider.requires_instance_url || !linked.has(provider.provider),
+    (provider) => provider.requires_instance_url || !linked.has(provider.connection_provider),
   );
 });
 
@@ -151,10 +201,12 @@ const linkedInstances = computed(() => {
 });
 
 /** 入力中のインスタンスが既に連携済みか。承認画面へ飛ばす前に気づけるようにする。 */
-function instanceAlreadyLinked(provider: string): boolean {
-  const draft = instanceDrafts.value[provider]?.trim();
+function instanceAlreadyLinked(provider: OAuthProvider): boolean {
+  const draft = instanceDrafts.value[provider.provider]?.trim();
   if (!draft) return false;
-  return (linkedInstances.value.get(provider) ?? []).includes(normalizeInstance(draft));
+  return (linkedInstances.value.get(provider.connection_provider) ?? []).includes(
+    normalizeInstance(draft),
+  );
 }
 
 const PROVIDER_ICONS: Record<string, Component> = {
@@ -169,24 +221,30 @@ function providerIcon(provider: string): Component {
   return Object.hasOwn(PROVIDER_ICONS, provider) ? PROVIDER_ICONS[provider] : PhKey;
 }
 
-function providerHint(provider: components['schemas']['OAuthProviderItem']): string {
+function providerHint(provider: OAuthProvider): string {
   if (!provider.requires_instance_url) {
     return `${providerLabel(provider.provider)} アカウントでサインインできるようにします`;
   }
-  return linkedInstances.value.has(provider.provider)
+  return linkedInstances.value.has(provider.connection_provider)
     ? '別のインスタンス URL を指定して、もう1つ連携できます'
     : 'インスタンス URL を指定して連携します';
 }
 
-function onLink(provider: components['schemas']['OAuthProviderItem']) {
+function onLink(provider: OAuthProvider) {
   const instanceUrl = provider.requires_instance_url
     ? instanceDrafts.value[provider.provider]?.trim()
     : undefined;
-  if (provider.requires_instance_url && (!instanceUrl || instanceAlreadyLinked(provider.provider)))
-    return;
+  if (provider.requires_instance_url && (!instanceUrl || instanceAlreadyLinked(provider))) return;
 
   // 戻ってきたときの通知はこの印だけを根拠にする（URL には何も足さない）
-  markNotice(OAUTH_LINK_NOTICE, provider.provider);
+  markNotice(
+    OAUTH_LINK_NOTICE,
+    JSON.stringify({
+      provider: provider.provider,
+      connectionProvider: provider.connection_provider,
+      instanceUrl: instanceUrl ?? '',
+    } satisfies PendingLink),
+  );
   startOAuth(provider.provider, {
     redirectAfter: SECURITY_PATH,
     errorRedirectAfter: SECURITY_PATH,
@@ -216,7 +274,7 @@ async function onUnlink(connection: OAuthConnection) {
       },
       parseAs: 'text',
     });
-    flash.value = `${providerLabel(connection.provider)} の連携を解除しました。`;
+    flash.value = `${connectionProviderLabel(connection.provider)} の連携を解除しました。`;
     await queryClient.invalidateQueries({ queryKey: oauthConnectionsQueryOptions().queryKey });
   } catch (e) {
     rowError.value[key] =
@@ -384,8 +442,7 @@ async function onPasswordSet() {
               size="sm"
               :disabled="
                 provider.requires_instance_url &&
-                (!instanceDrafts[provider.provider]?.trim() ||
-                  instanceAlreadyLinked(provider.provider))
+                (!instanceDrafts[provider.provider]?.trim() || instanceAlreadyLinked(provider))
               "
               @click="onLink(provider)"
             >
@@ -406,7 +463,7 @@ async function onPasswordSet() {
                 :model-value="instanceDrafts[provider.provider] ?? ''"
                 @update:model-value="(v) => (instanceDrafts[provider.provider] = String(v))"
               />
-              <FieldDescription v-if="instanceAlreadyLinked(provider.provider)" role="alert">
+              <FieldDescription v-if="instanceAlreadyLinked(provider)" role="alert">
                 このインスタンスは連携済みです。別のインスタンス URL を入力してください。
               </FieldDescription>
               <FieldDescription v-else>

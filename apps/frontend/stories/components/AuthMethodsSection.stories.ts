@@ -43,9 +43,13 @@ const selfHostedConnection: Connection = {
 };
 
 const allProviders = [
-  { provider: 'github', requires_instance_url: false },
-  { provider: 'google', requires_instance_url: false },
-  { provider: 'gitlab_selfhosted', requires_instance_url: true },
+  { provider: 'github', connection_provider: 'github', requires_instance_url: false },
+  { provider: 'google', connection_provider: 'google', requires_instance_url: false },
+  {
+    provider: 'gitlab_selfhosted',
+    connection_provider: 'gitlab_selfhosted',
+    requires_instance_url: true,
+  },
 ];
 
 const jsonResponse = (data: unknown, status = 200) =>

@@ -49,6 +49,9 @@ pub struct OAuthConnectionsResponse {
 pub struct OAuthProviderItem {
     /// プロバイダー slug（github | gitlab | gitlab_selfhosted | google | oidc）
     pub provider: String,
+    /// 連携一覧（`/oauth/connections`）でこのプロバイダーを指す識別子。
+    /// 汎用 OIDC は現在設定中の issuer を含む `oidc:{issuer}` で、開始用 slug と一致しない
+    pub connection_provider: String,
     /// ログイン開始時に self-hosted インスタンス URL の入力が必要か（gitlab_selfhosted のみ true）
     pub requires_instance_url: bool,
 }
