@@ -35,6 +35,7 @@ import {
 import { consumeNotice, markNotice, OAUTH_LINK_NOTICE } from '@/lib/one-time-notice';
 import {
   connectionProviderLabel,
+  connectionProviderSlug,
   isKnownProvider,
   providerLabel,
   startOAuth,
@@ -337,7 +338,10 @@ async function onPasswordSet() {
       <div v-for="item in linkedProviders" :key="item.key" class="flex flex-col">
         <div class="flex flex-wrap items-center gap-3 p-4">
           <span class="bg-secondary flex size-9 shrink-0 items-center justify-center rounded-lg">
-            <component :is="providerIcon(item.connection.provider)" class="size-5" />
+            <component
+              :is="providerIcon(connectionProviderSlug(item.connection.provider))"
+              class="size-5"
+            />
           </span>
           <div class="min-w-52 flex-1 overflow-hidden">
             <div class="flex flex-wrap items-center gap-2">

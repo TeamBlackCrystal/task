@@ -30,6 +30,11 @@ export function isKnownProvider(value: string): boolean {
   return Object.hasOwn(PROVIDER_LABELS, value);
 }
 
+/** 連携一覧の識別子を開始用 slug に変換する。 */
+export function connectionProviderSlug(connectionProvider: string): string {
+  return connectionProvider.startsWith('oidc:') ? 'oidc' : connectionProvider;
+}
+
 /**
  * 連携一覧が返す識別子の表示名。
  *
@@ -38,7 +43,7 @@ export function isKnownProvider(value: string): boolean {
  * 渡すと issuer 付きの生の値が画面に出る。
  */
 export function connectionProviderLabel(connectionProvider: string): string {
-  return providerLabel(connectionProvider.startsWith('oidc:') ? 'oidc' : connectionProvider);
+  return providerLabel(connectionProviderSlug(connectionProvider));
 }
 
 export type OAuthStartOptions = {

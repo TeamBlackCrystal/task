@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { isKnownProvider, providerLabel } from '@/lib/oauth-providers';
+import {
+  connectionProviderLabel,
+  connectionProviderSlug,
+  isKnownProvider,
+  providerLabel,
+} from '@/lib/oauth-providers';
 
 describe('oauth-providers', () => {
   it('知っているプロバイダーは表示名を返す', () => {
@@ -18,5 +23,17 @@ describe('oauth-providers', () => {
       expect(providerLabel(key)).toBe(key);
       expect(isKnownProvider(key)).toBe(false);
     }
+  });
+
+  it('OIDC の連携識別子は開始用 slug と表示名に変換する', () => {
+    expect(connectionProviderSlug('oidc:https://idp.example.com')).toBe('oidc');
+    expect(connectionProviderLabel('oidc:https://idp.example.com')).toBe('OIDC');
+  });
+
+  it('OIDC 以外の連携識別子は変えない', () => {
+    expect(connectionProviderSlug('github')).toBe('github');
+    expect(connectionProviderSlug('oidcish:https://idp.example.com')).toBe(
+      'oidcish:https://idp.example.com',
+    );
   });
 });
